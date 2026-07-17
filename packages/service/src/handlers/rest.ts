@@ -15,6 +15,7 @@ import { DdbAuthRepo } from '../data/ddb-auth-repo.js';
 import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
 import { ApiKeyService } from '../keys/service.js';
 import { getSigningKey } from '../config/signing-key.js';
+import { requireAccessScheme, subjectFromContext } from './request-context.js';
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
@@ -59,13 +60,16 @@ export const handler = async (
       case 'GET /me':
         return json(200, { subject: subjectFromContext(event) } satisfies SessionResponse);
       case 'POST /keys':
+        requireAccessScheme(event);
         return json(
           201,
           await getKeyService().create(optionalString(parseOptionalBody(event), 'name')),
         );
       case 'GET /keys':
+        requireAccessScheme(event);
         return json(200, { keys: await getKeyService().list() } satisfies ListApiKeysResponse);
       case 'DELETE /keys/{id}':
+        requireAccessScheme(event);
         await getKeyService().revoke(requirePathParam(event, 'id'));
         return noContent();
       default:
@@ -129,19 +133,6 @@ function requirePathParam(event: APIGatewayProxyEventV2, name: string): string {
     throw authErrors.invalidRequest(`Path parameter "${name}" is required.`);
   }
   return value;
-}
-
-function subjectFromContext(event: APIGatewayProxyEventV2): string {
-  const requestContext = event.requestContext as unknown as {
-    authorizer?: { lambda?: Record<string, unknown> };
-  };
-  const subject = requestContext.authorizer?.lambda?.sub;
-  // The authorizer guards this route, so this should always be present; fail
-  // loud rather than emit an empty subject if the wiring ever regresses.
-  if (typeof subject !== 'string') {
-    throw authErrors.invalidToken();
-  }
-  return subject;
 }
 
 function toErrorResponse(error: unknown): APIGatewayProxyStructuredResultV2 {

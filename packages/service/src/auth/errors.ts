@@ -38,4 +38,5 @@ export const authErrors = {
       retryAfterSeconds,
     ),
   invalidToken: () => new AuthError('invalid_token', 401, 'Invalid or expired token.'),
+  forbidden: (message = 'Forbidden.') => new AuthError('forbidden', 403, message),
 };
