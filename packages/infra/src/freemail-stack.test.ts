@@ -51,6 +51,18 @@ describe('FreeMailStack', () => {
     });
   });
 
+  it('wires SES sending: identity for the email domain + config set + bounce/complaint topic', () => {
+    const template = synth(makeConfig({ emailDomain: 'mail.example.com' }));
+    template.resourceCountIs('AWS::SES::EmailIdentity', 1);
+    template.hasResourceProperties('AWS::SES::EmailIdentity', {
+      EmailIdentity: 'mail.example.com',
+      MailFromAttributes: { MailFromDomain: 'bounce.mail.example.com' },
+    });
+    template.resourceCountIs('AWS::SES::ConfigurationSet', 1);
+    template.resourceCountIs('AWS::SNS::Topic', 1);
+    template.hasOutput('SesProductionAccessNote', {});
+  });
+
   it('creates a hosted zone when mode is "create" and outputs name servers', () => {
     const template = synth(makeConfig({ hostedZone: { mode: 'create', zoneName: 'example.com' } }));
     template.resourceCountIs('AWS::Route53::HostedZone', 1);
