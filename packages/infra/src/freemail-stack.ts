@@ -35,6 +35,9 @@ export class FreeMailStack extends Stack {
     const api = new ApiConstruct(this, 'Api', {
       authTable: data.authTable,
       apiKeysTable: data.apiKeysTable,
+      emailsTable: data.emailsTable,
+      emailDomain: config.emailDomain,
+      sesConfigurationSetName: ses.configurationSet.configurationSetName,
     });
 
     // Insertion points for later slices:

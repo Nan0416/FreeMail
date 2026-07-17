@@ -36,13 +36,28 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('exposes 8 routes: 4 public auth routes + 4 protected (me + 3 key routes)', () => {
+  it('exposes 9 routes: 4 public auth routes + 5 protected (me + 3 key routes + send)', () => {
     const template = synth();
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 8);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 9);
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const authorizationTypes = routes.map((r) => r.Properties.AuthorizationType);
-    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(4);
+    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(5);
     expect(authorizationTypes.filter((t) => t !== 'CUSTOM')).toHaveLength(4);
+  });
+
+  it('grants the REST handler SES send permission scoped to an identity (not *)', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: ['ses:SendEmail', 'ses:SendRawEmail'],
+            // Scoped to the domain identity ARN (a token), never a bare '*'.
+            Resource: Match.not('*'),
+          }),
+        ]),
+      },
+    });
   });
 
   it('runs both handlers on arm64 Node 22 with the expected environment', () => {

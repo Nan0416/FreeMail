@@ -7,13 +7,23 @@
  * `/keys` manages agent API keys (behind the authorizer); #6 send adds more routes
  * here, and #7's MCP server is a separate handler on the same HTTP API.
  */
-import type { AuthErrorBody, ListApiKeysResponse, SessionResponse } from '@freemail/shared';
+import type {
+  AuthErrorBody,
+  EmailAttachment,
+  ListApiKeysResponse,
+  SendEmailRequest,
+  SessionResponse,
+} from '@freemail/shared';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { AuthService } from '../auth/service.js';
 import { AuthError, authErrors } from '../auth/errors.js';
 import { DdbAuthRepo } from '../data/ddb-auth-repo.js';
 import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
+import { DdbEmailsRepo } from '../data/ddb-emails-repo.js';
 import { ApiKeyService } from '../keys/service.js';
+import { EmailService } from '../email/service.js';
+import { EmailError, emailErrors } from '../email/errors.js';
+import { SesV2Sender } from '../email/ses-sender.js';
 import { getSigningKey } from '../config/signing-key.js';
 import { requireAccessScheme, subjectFromContext } from './request-context.js';
 
@@ -22,6 +32,8 @@ const JSON_HEADERS = { 'content-type': 'application/json' };
 // Reused across warm invocations; the signing key is cached inside getSigningKey.
 let repo: DdbAuthRepo | undefined;
 let keysRepo: DdbApiKeysRepo | undefined;
+let emailsRepo: DdbEmailsRepo | undefined;
+let sesSender: SesV2Sender | undefined;
 
 function getRepo(): DdbAuthRepo {
   const tableName = process.env.AUTH_TABLE;
@@ -39,6 +51,20 @@ function getKeyService(): ApiKeyService {
   }
   keysRepo ??= new DdbApiKeysRepo(tableName);
   return new ApiKeyService({ repo: keysRepo });
+}
+
+function getEmailService(): EmailService {
+  const emailDomain = process.env.EMAIL_DOMAIN;
+  if (!emailDomain) {
+    throw new Error('EMAIL_DOMAIN is not set.');
+  }
+  const tableName = process.env.EMAILS_TABLE;
+  if (!tableName) {
+    throw new Error('EMAILS_TABLE is not set.');
+  }
+  emailsRepo ??= new DdbEmailsRepo(tableName);
+  sesSender ??= new SesV2Sender({ configurationSetName: process.env.SES_CONFIGURATION_SET });
+  return new EmailService({ ses: sesSender, emails: emailsRepo, emailDomain });
 }
 
 export const handler = async (
@@ -72,6 +98,10 @@ export const handler = async (
         requireAccessScheme(event);
         await getKeyService().revoke(requirePathParam(event, 'id'));
         return noContent();
+      case 'POST /emails':
+        // Dual-scheme by design: unlike /keys (access-only), a Bearer human AND an
+        // x-api-key agent may send — so NO requireAccessScheme here.
+        return json(200, await getEmailService().send(parseSendEmailBody(parseBody(event))));
       default:
         return json(404, {
           error: 'invalid_request',
@@ -135,16 +165,97 @@ function requirePathParam(event: APIGatewayProxyEventV2, name: string): string {
   return value;
 }
 
+/**
+ * Coerce untrusted JSON into a {@link SendEmailRequest} shape (types only). The
+ * semantic rules — sender domain, recipient presence, caps — live in
+ * {@link EmailService} so REST and the MCP tool share them.
+ */
+function parseSendEmailBody(body: Record<string, unknown>): SendEmailRequest {
+  const request: SendEmailRequest = { from: requireString(body, 'from') };
+  const fromName = optionalString(body, 'fromName');
+  if (fromName !== undefined) {
+    request.fromName = fromName;
+  }
+  const subject = optionalString(body, 'subject');
+  if (subject !== undefined) {
+    request.subject = subject;
+  }
+  const text = optionalString(body, 'text');
+  if (text !== undefined) {
+    request.text = text;
+  }
+  const html = optionalString(body, 'html');
+  if (html !== undefined) {
+    request.html = html;
+  }
+  const to = optionalStringArray(body, 'to');
+  if (to !== undefined) {
+    request.to = to;
+  }
+  const cc = optionalStringArray(body, 'cc');
+  if (cc !== undefined) {
+    request.cc = cc;
+  }
+  const bcc = optionalStringArray(body, 'bcc');
+  if (bcc !== undefined) {
+    request.bcc = bcc;
+  }
+  const attachments = optionalAttachments(body);
+  if (attachments !== undefined) {
+    request.attachments = attachments;
+  }
+  return request;
+}
+
+function optionalStringArray(body: Record<string, unknown>, field: string): string[] | undefined {
+  const value = body[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw emailErrors.invalidRequest(`"${field}" must be an array of strings.`);
+  }
+  return value as string[];
+}
+
+function optionalAttachments(body: Record<string, unknown>): EmailAttachment[] | undefined {
+  const value = body.attachments;
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value)) {
+    throw emailErrors.invalidRequest('"attachments" must be an array.');
+  }
+  return value.map((item, index) => {
+    if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+      throw emailErrors.invalidRequest(`"attachments[${index}]" must be an object.`);
+    }
+    const record = item as Record<string, unknown>;
+    const { filename, contentType, contentBase64 } = record;
+    if (
+      typeof filename !== 'string' ||
+      typeof contentType !== 'string' ||
+      typeof contentBase64 !== 'string'
+    ) {
+      throw emailErrors.invalidRequest(
+        `"attachments[${index}]" must have string filename, contentType, and contentBase64.`,
+      );
+    }
+    return { filename, contentType, contentBase64 };
+  });
+}
+
 function toErrorResponse(error: unknown): APIGatewayProxyStructuredResultV2 {
-  if (error instanceof AuthError) {
+  if (error instanceof AuthError || error instanceof EmailError) {
+    const retryAfter = error instanceof AuthError ? error.retryAfterSeconds : undefined;
     const headers =
-      error.retryAfterSeconds !== undefined
-        ? { ...JSON_HEADERS, 'retry-after': String(error.retryAfterSeconds) }
+      retryAfter !== undefined
+        ? { ...JSON_HEADERS, 'retry-after': String(retryAfter) }
         : JSON_HEADERS;
     return {
       statusCode: error.status,
       headers,
-      body: JSON.stringify({ error: error.code, message: error.message } satisfies AuthErrorBody),
+      body: JSON.stringify({ error: error.code, message: error.message }),
     };
   }
   console.error('Unhandled error in REST handler', error);
