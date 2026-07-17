@@ -1,6 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { FreeMailClient } from '../api/client.js';
-import { createTokenStore, type TokenStore } from '../api/token-store.js';
 
 type Status = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -20,47 +19,41 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export interface AuthProviderProps {
   apiBaseUrl: string;
-  /** Injectable for tests (fetch stub + storage stub). */
+  /** Injectable for tests (fetch stub). */
   fetchImpl?: typeof fetch;
-  tokenStore?: TokenStore;
   children: React.ReactNode;
 }
 
 export function AuthProvider({
   apiBaseUrl,
   fetchImpl,
-  tokenStore,
   children,
 }: AuthProviderProps): React.JSX.Element {
   const [status, setStatus] = useState<Status>('loading');
   const [subject, setSubject] = useState<string | null>(null);
-  const tokens = useMemo(() => tokenStore ?? createTokenStore(), [tokenStore]);
 
   const client = useMemo(
     () =>
       new FreeMailClient({
         baseUrl: apiBaseUrl,
-        tokens,
         fetchImpl,
         onAuthLost: () => {
           setSubject(null);
           setStatus('unauthenticated');
         },
       }),
-    [apiBaseUrl, tokens, fetchImpl],
+    [apiBaseUrl, fetchImpl],
   );
 
-  // On boot, if a refresh token survived a reload, validate it; otherwise sign-in.
+  // The session cookies are httpOnly, so the SPA cannot tell whether it has one
+  // without asking the server: probe `/me` on boot (it transparently tries a cookie
+  // refresh first), and drop to sign-in if there is no valid session.
   const bootstrapped = useRef(false);
   useEffect(() => {
     if (bootstrapped.current) {
       return;
     }
     bootstrapped.current = true;
-    if (!client.hasSession()) {
-      setStatus('unauthenticated');
-      return;
-    }
     client
       .getSession()
       .then((session) => {
@@ -79,15 +72,13 @@ export function AuthProvider({
       subject,
       client,
       login: async (password) => {
-        await client.login(password);
-        const session = await client.getSession();
+        const session = await client.login(password);
         setSubject(session.subject);
         setStatus('authenticated');
       },
       setPasswordAndLogin: async (password) => {
         await client.setPassword(password);
-        await client.login(password);
-        const session = await client.getSession();
+        const session = await client.login(password);
         setSubject(session.subject);
         setStatus('authenticated');
       },

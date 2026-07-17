@@ -32,15 +32,12 @@ export interface LoginRequest {
   password: string;
 }
 
-export interface RefreshRequest {
-  refreshToken: string;
-}
-
-export interface LogoutRequest {
-  refreshToken: string;
-}
-
-/** A freshly minted access + refresh pair. `expiresIn` is the access token's lifetime in seconds. */
+/**
+ * A freshly minted access + refresh pair. As of #31 this is an INTERNAL contract
+ * between the service and the REST handler (which turns it into httpOnly cookies);
+ * the web surface never sees these token strings — refresh/logout read the refresh
+ * token from the cookie, never a request body or query.
+ */
 export interface TokenPair {
   tokenType: 'Bearer';
   accessToken: string;
@@ -48,13 +45,16 @@ export interface TokenPair {
   expiresIn: number;
 }
 
-export type LoginResponse = TokenPair;
-export type RefreshResponse = TokenPair;
-
 export interface SessionResponse {
   /** The authenticated subject — always the single-tenant owner. */
   subject: string;
 }
+
+/**
+ * The body a successful login/refresh returns to the web app. The tokens themselves
+ * ride in `Set-Cookie` (httpOnly), so the wire body only echoes the session subject.
+ */
+export type LoginResponse = SessionResponse;
 
 export interface AuthErrorBody {
   error: AuthErrorCode;

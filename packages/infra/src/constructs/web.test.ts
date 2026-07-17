@@ -3,6 +3,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import type { FreeMailConfig } from '@freemail/shared';
 import { FreeMailStack } from '../freemail-stack.js';
+import { rewriteApiPath, rewriteSpaPath } from './web.js';
 
 const config: FreeMailConfig = {
   region: 'us-east-1',
@@ -16,24 +17,29 @@ function synth(): Template {
 }
 
 describe('WebConstruct', () => {
-  it('serves the SPA from one CloudFront distribution with an SPA fallback', () => {
+  it('serves the SPA from one CloudFront distribution', () => {
     const template = synth();
     template.resourceCountIs('AWS::CloudFront::Distribution', 1);
     template.hasResourceProperties('AWS::CloudFront::Distribution', {
+      DistributionConfig: { DefaultRootObject: 'index.html' },
+    });
+  });
+
+  it('routes SPA client paths via a CloudFront Function, NOT distribution-wide error responses', () => {
+    const template = synth();
+    // Two functions: SPA routing (default behavior) + /api prefix strip (proxy behavior).
+    template.resourceCountIs('AWS::CloudFront::Function', 2);
+    // The default (S3) behavior serves index.html via a viewer-request function.
+    template.hasResourceProperties('AWS::CloudFront::Distribution', {
       DistributionConfig: {
-        DefaultRootObject: 'index.html',
-        CustomErrorResponses: Match.arrayWith([
-          Match.objectLike({
-            ErrorCode: 403,
-            ResponseCode: 200,
-            ResponsePagePath: '/index.html',
-          }),
-          Match.objectLike({
-            ErrorCode: 404,
-            ResponseCode: 200,
-            ResponsePagePath: '/index.html',
-          }),
-        ]),
+        DefaultCacheBehavior: {
+          FunctionAssociations: Match.arrayWith([
+            Match.objectLike({ EventType: 'viewer-request' }),
+          ]),
+        },
+        // Custom error responses would be distribution-wide and mask real API 403/404s
+        // coming back through the /api proxy — they must be gone.
+        CustomErrorResponses: Match.absent(),
       },
     });
   });
@@ -41,13 +47,41 @@ describe('WebConstruct', () => {
   it('fronts the private bucket with Origin Access Control (no public bucket)', () => {
     const template = synth();
     template.resourceCountIs('AWS::CloudFront::OriginAccessControl', 1);
-    // The web bucket stays public-access-blocked (asserted in freemail-stack.test);
-    // CloudFront reads it via an OAC-scoped bucket policy.
     template.hasResourceProperties('AWS::S3::BucketPolicy', {
       PolicyDocument: {
         Statement: Match.arrayWith([
+          Match.objectLike({ Principal: { Service: 'cloudfront.amazonaws.com' } }),
+        ]),
+      },
+    });
+  });
+
+  it('proxies /api/* same-origin to the HTTPS API: no caching, all methods, prefix stripped', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::CloudFront::Distribution', {
+      DistributionConfig: {
+        CacheBehaviors: Match.arrayWith([
           Match.objectLike({
-            Principal: { Service: 'cloudfront.amazonaws.com' },
+            PathPattern: '/api/*',
+            // ALLOW_ALL includes the write methods the API needs.
+            AllowedMethods: Match.arrayWith(['POST', 'DELETE']),
+            // Managed CACHING_DISABLED + an origin-request policy (forward cookies/headers).
+            CachePolicyId: Match.anyValue(),
+            OriginRequestPolicyId: Match.anyValue(),
+            // /api is stripped by a viewer-request function before origin routing.
+            FunctionAssociations: Match.arrayWith([
+              Match.objectLike({ EventType: 'viewer-request' }),
+            ]),
+          }),
+        ]),
+      },
+    });
+    // The proxy origin is a custom HTTPS-only origin (the HTTP API), not S3.
+    template.hasResourceProperties('AWS::CloudFront::Distribution', {
+      DistributionConfig: {
+        Origins: Match.arrayWith([
+          Match.objectLike({
+            CustomOriginConfig: Match.objectLike({ OriginProtocolPolicy: 'https-only' }),
           }),
         ]),
       },
@@ -56,7 +90,6 @@ describe('WebConstruct', () => {
 
   it('deploys the SPA in two cache tiers: immutable assets + no-cache root/config', () => {
     const template = synth();
-    // Two BucketDeployments: hashed assets (long-cache) + root files & config.json (no-cache).
     template.resourceCountIs('Custom::CDKBucketDeployment', 2);
     template.hasResourceProperties('Custom::CDKBucketDeployment', {
       SystemMetadata: { 'cache-control': Match.stringLikeRegexp('immutable') },
@@ -68,7 +101,6 @@ describe('WebConstruct', () => {
 
   it('invalidates index.html + config.json on deploy so a stale endpoint cannot pin', () => {
     const template = synth();
-    // Exactly one deployment (the root/config tier) carries a CloudFront invalidation.
     const invalidating = Object.values(
       template.findResources('Custom::CDKBucketDeployment'),
     ).filter((resource) => resource.Properties.DistributionId !== undefined);
@@ -80,5 +112,33 @@ describe('WebConstruct', () => {
 
   it('outputs the web app URL', () => {
     synth().hasOutput('WebAppUrl', {});
+  });
+});
+
+describe('rewriteApiPath (proxy prefix strip — boundary)', () => {
+  it('strips exactly the /api prefix for real API routes', () => {
+    expect(rewriteApiPath('/api/auth/login')).toBe('/auth/login');
+    expect(rewriteApiPath('/api/emails/abc/attachments/0')).toBe('/emails/abc/attachments/0');
+    expect(rewriteApiPath('/api/')).toBe('/');
+    expect(rewriteApiPath('/api')).toBe('/');
+  });
+
+  it('does NOT match a lookalike prefix like /apiary', () => {
+    expect(rewriteApiPath('/apiary')).toBe('/apiary');
+    expect(rewriteApiPath('/apiary/keys')).toBe('/apiary/keys');
+  });
+});
+
+describe('rewriteSpaPath (client-route fallback)', () => {
+  it('serves index.html for extensionless client routes', () => {
+    expect(rewriteSpaPath('/')).toBe('/index.html');
+    expect(rewriteSpaPath('/inbox')).toBe('/index.html');
+    expect(rewriteSpaPath('/keys/new')).toBe('/index.html');
+  });
+
+  it('leaves real files (with an extension) untouched', () => {
+    expect(rewriteSpaPath('/assets/app-abc123.js')).toBe('/assets/app-abc123.js');
+    expect(rewriteSpaPath('/config.json')).toBe('/config.json');
+    expect(rewriteSpaPath('/index.html')).toBe('/index.html');
   });
 });

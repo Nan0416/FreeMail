@@ -2,11 +2,13 @@
  * Lambda REQUEST authorizer for the HTTP API (SIMPLE response format).
  *
  * Dual-scheme by design (`DESIGN.md § Auth`: "a Lambda authorizer covers both
- * REST access-tokens and MCP API-keys"): a `Bearer` access JWT authorizes REST
- * routes, and an `x-api-key` header authorizes the MCP server's agent keys,
- * validated against the hashed-keys table. Because either header may be the
- * credential, the CDK authorizer runs with no fixed identity source and caching
- * off, so this function always sees the full request and picks the scheme.
+ * REST access-tokens and MCP API-keys"). As of #31 the human/web access token
+ * arrives ONLY as the `__Host-fm_access` httpOnly cookie (Bearer was dropped — no
+ * non-browser human caller depends on it), while an `x-api-key` header authorizes
+ * the MCP server's agent keys, validated against the hashed-keys table. Because
+ * either credential may be present, the CDK authorizer runs with no fixed identity
+ * source and caching off, so this function always sees the full request — a stale
+ * cache entry keyed on a now-authoritative cookie would be a session-confusion bug.
  */
 import type {
   APIGatewayRequestAuthorizerEventV2,
@@ -15,6 +17,7 @@ import type {
 import { getSigningKey } from '../config/signing-key.js';
 import { verifyAccessToken } from '../auth/jwt.js';
 import { OWNER_SUBJECT } from '../auth/service.js';
+import { ACCESS_COOKIE, DUPLICATE_COOKIE, readCookie } from '../auth/cookies.js';
 import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
 import { ApiKeyService } from '../keys/service.js';
 
@@ -46,11 +49,16 @@ export const handler = async (
   event: APIGatewayRequestAuthorizerEventV2,
 ): Promise<Result | typeof DENY> => {
   const headers = event.headers ?? {};
-  const bearer = extractBearer(headers.authorization ?? headers.Authorization);
 
-  if (bearer) {
+  // Human/web credential: the access JWT in the __Host-fm_access cookie. A duplicate
+  // (injected) same-name cookie is rejected outright rather than guessed.
+  const access = readCookie(event.cookies, ACCESS_COOKIE);
+  if (access === DUPLICATE_COOKIE) {
+    return DENY;
+  }
+  if (typeof access === 'string') {
     const result = await verifyAccessToken(
-      bearer,
+      access,
       await getSigningKey(),
       Math.floor(Date.now() / 1000),
     );
@@ -60,9 +68,9 @@ export const handler = async (
     return DENY;
   }
 
-  // MCP agents present an `x-api-key`. Validate it against the hashed-keys table
-  // and, on success, authorize as the single-tenant owner — identical to a Bearer
-  // token — so downstream routes need not care which scheme was used.
+  // No access cookie → the only other credential is an agent's `x-api-key` (MCP).
+  // Validate it against the hashed-keys table and, on success, authorize as the
+  // single-tenant owner, so downstream routes need not care which scheme was used.
   const apiKey = headers['x-api-key'];
   if (apiKey) {
     const keyId = await getApiKeyService().verify(apiKey);
@@ -74,14 +82,3 @@ export const handler = async (
 
   return DENY;
 };
-
-function extractBearer(authorization: string | undefined): string | null {
-  if (!authorization) {
-    return null;
-  }
-  const [scheme, token] = authorization.split(' ');
-  if (scheme?.toLowerCase() !== 'bearer' || !token) {
-    return null;
-  }
-  return token.trim();
-}

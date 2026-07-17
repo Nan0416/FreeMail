@@ -1,26 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { createTokenStore } from '../api/token-store.js';
 import { AuthProvider } from '../auth/auth-context.js';
 import { ComposeView } from './ComposeView.js';
-
-function memoryStorage(): Storage {
-  const map = new Map<string, string>();
-  return {
-    get length() {
-      return map.size;
-    },
-    clear: () => map.clear(),
-    getItem: (key) => map.get(key) ?? null,
-    key: (index) => Array.from(map.keys())[index] ?? null,
-    removeItem: (key) => {
-      map.delete(key);
-    },
-    setItem: (key, value) => {
-      map.set(key, value);
-    },
-  };
-}
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -29,21 +10,29 @@ function json(status: number, body: unknown): Response {
   });
 }
 
+function pathOf(url: unknown): string {
+  return new URL(String(url)).pathname;
+}
+
 function renderCompose(fetchImpl: typeof fetch) {
   return render(
-    <AuthProvider
-      apiBaseUrl="http://api.test"
-      fetchImpl={fetchImpl}
-      tokenStore={createTokenStore(memoryStorage())}
-    >
+    <AuthProvider apiBaseUrl="http://api.test" fetchImpl={fetchImpl}>
       <ComposeView />
     </AuthProvider>,
   );
 }
 
+function emailCalls(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>) {
+  return fetchMock.mock.calls.filter(([url]) => pathOf(url) === '/emails');
+}
+
 describe('ComposeView', () => {
   it('requires at least one recipient before sending', async () => {
-    const fetchMock = vi.fn<typeof fetch>();
+    // The boot `/me` probe is served; a send would hit `/emails`.
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (pathOf(url) === '/me') return json(200, { subject: 'owner' });
+      throw new Error(`unexpected ${pathOf(url)}`);
+    });
     renderCompose(fetchMock);
 
     fireEvent.change(screen.getByLabelText('From'), { target: { value: 'me@x.com' } });
@@ -51,13 +40,14 @@ describe('ComposeView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('at least one recipient');
-    expect(fetchMock).not.toHaveBeenCalled();
+    expect(emailCalls(fetchMock)).toHaveLength(0);
   });
 
   it('sends the composed email and reports the message id', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () =>
-      json(200, { id: 'm1', messageId: 'ses-123', sentAt: '2026-07-17T00:00:00.000Z' }),
-    );
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (pathOf(url) === '/me') return json(200, { subject: 'owner' });
+      return json(200, { id: 'm1', messageId: 'ses-123', sentAt: '2026-07-17T00:00:00.000Z' });
+    });
     renderCompose(fetchMock);
 
     fireEvent.change(screen.getByLabelText('From'), { target: { value: 'me@x.com' } });
@@ -67,9 +57,10 @@ describe('ComposeView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
     expect(await screen.findByRole('status')).toHaveTextContent('ses-123');
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const [url, init] = fetchMock.mock.calls[0];
+    await waitFor(() => expect(emailCalls(fetchMock)).toHaveLength(1));
+    const [url, init] = emailCalls(fetchMock)[0];
     expect(url).toBe('http://api.test/emails');
+    expect(init?.credentials).toBe('include');
     expect(JSON.parse(String(init?.body))).toEqual({
       from: 'me@x.com',
       to: ['a@y.com', 'b@y.com'],
@@ -79,21 +70,20 @@ describe('ComposeView', () => {
   });
 
   it('sends the body as html when the HTML format is selected', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () =>
-      json(200, { id: 'm2', messageId: 'ses-456', sentAt: '2026-07-17T00:00:00.000Z' }),
-    );
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (pathOf(url) === '/me') return json(200, { subject: 'owner' });
+      return json(200, { id: 'm2', messageId: 'ses-456', sentAt: '2026-07-17T00:00:00.000Z' });
+    });
     renderCompose(fetchMock);
 
     fireEvent.change(screen.getByLabelText('From'), { target: { value: 'me@x.com' } });
     fireEvent.change(screen.getByLabelText('To'), { target: { value: 'a@y.com' } });
     fireEvent.change(screen.getByLabelText('Body format'), { target: { value: 'html' } });
-    fireEvent.change(screen.getByLabelText('Message'), {
-      target: { value: '<p>hi</p>' },
-    });
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: '<p>hi</p>' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const [, init] = fetchMock.mock.calls[0];
+    await waitFor(() => expect(emailCalls(fetchMock)).toHaveLength(1));
+    const [, init] = emailCalls(fetchMock)[0];
     const parsed = JSON.parse(String(init?.body));
     expect(parsed).toEqual({ from: 'me@x.com', to: ['a@y.com'], html: '<p>hi</p>' });
     expect(parsed).not.toHaveProperty('text');

@@ -1,26 +1,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { createTokenStore } from '../api/token-store.js';
 import { AuthProvider } from '../auth/auth-context.js';
 import { KeysView } from './KeysView.js';
-
-function memoryStorage(): Storage {
-  const map = new Map<string, string>();
-  return {
-    get length() {
-      return map.size;
-    },
-    clear: () => map.clear(),
-    getItem: (key) => map.get(key) ?? null,
-    key: (index) => Array.from(map.keys())[index] ?? null,
-    removeItem: (key) => {
-      map.delete(key);
-    },
-    setItem: (key, value) => {
-      map.set(key, value);
-    },
-  };
-}
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -31,11 +12,7 @@ function json(status: number, body: unknown): Response {
 
 function renderKeys(fetchImpl: typeof fetch) {
   return render(
-    <AuthProvider
-      apiBaseUrl="http://api.test"
-      fetchImpl={fetchImpl}
-      tokenStore={createTokenStore(memoryStorage())}
-    >
+    <AuthProvider apiBaseUrl="http://api.test" fetchImpl={fetchImpl}>
       <KeysView />
     </AuthProvider>,
   );
@@ -48,6 +25,7 @@ describe('KeysView', () => {
   it('shows a created key exactly once and clears it from the DOM on dismiss', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url, init) => {
       const path = new URL(String(url)).pathname;
+      if (path === '/me') return json(200, { subject: 'owner' });
       if (path === '/keys' && (init?.method ?? 'GET') === 'GET') return json(200, { keys: [] });
       if (path === '/keys' && init?.method === 'POST')
         return json(201, { ...SUMMARY, key: RAW_KEY });
@@ -76,6 +54,7 @@ describe('KeysView', () => {
   it('revokes a key after an inline confirm', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url, init) => {
       const path = new URL(String(url)).pathname;
+      if (path === '/me') return json(200, { subject: 'owner' });
       if (path === '/keys' && (init?.method ?? 'GET') === 'GET') {
         return json(200, { keys: [SUMMARY] });
       }

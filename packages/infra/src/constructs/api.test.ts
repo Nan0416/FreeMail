@@ -26,6 +26,15 @@ describe('ApiConstruct', () => {
     template.hasOutput('ApiEndpoint', {});
   });
 
+  it('configures NO CORS (the web app is same-origin via the CloudFront /api proxy)', () => {
+    const template = synth();
+    // The wildcard was removed, not replaced — a same-origin API grants the browser
+    // no cross-origin access, and ambient SameSite=Strict cookies never reach this host.
+    template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
+      CorsConfiguration: Match.absent(),
+    });
+  });
+
   it('wires a dual-scheme SIMPLE request authorizer', () => {
     const template = synth();
     template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);

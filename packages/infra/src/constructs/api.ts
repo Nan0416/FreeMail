@@ -149,17 +149,13 @@ export class ApiConstruct extends Construct {
     this.httpApi = new apigwv2.HttpApi(this, 'HttpApi', {
       apiName: 'FreeMail',
       description: 'FreeMail REST + MCP API.',
-      // Bearer tokens (not cookies) → no credentials, so a wildcard origin is safe
-      // and lets the SPA call the API before a custom app domain is configured.
-      corsPreflight: {
-        allowOrigins: ['*'],
-        allowMethods: [
-          apigwv2.CorsHttpMethod.GET,
-          apigwv2.CorsHttpMethod.POST,
-          apigwv2.CorsHttpMethod.DELETE,
-        ],
-        allowHeaders: ['authorization', 'content-type'],
-      },
+      // NO CORS (#31): the web app calls the API SAME-ORIGIN through the CloudFront
+      // `/api/*` proxy, so the browser never makes a cross-origin request and never
+      // needs cross-origin permission. The wildcard was removed rather than replaced
+      // — a same-origin API grants no browser cross-origin access at all. The direct
+      // API Gateway URL stays reachable by non-browser `x-api-key` (MCP) callers,
+      // which are not subject to CORS; ambient SameSite=Strict cookies are never sent
+      // to this host, so there is no CSRF surface here.
     });
 
     // Public (no token yet): set-password, login, refresh, logout.
