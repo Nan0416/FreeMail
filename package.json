@@ -1,0 +1,40 @@
+{
+  "name": "freemail",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Self-hosted, single-tenant email service for agents and humans on AWS SES.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "packages/shared",
+    "packages/service",
+    "packages/cli",
+    "packages/infra",
+    "packages/web"
+  ],
+  "scripts": {
+    "build": "tsc -b && npm run build -w @freemail/web",
+    "clean": "tsc -b --clean && rimraf \"packages/*/dist\" \"packages/web/dist\"",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@types/node": "^22.10.5",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "globals": "^15.14.0",
+    "prettier": "^3.4.2",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.19.0",
+    "vite": "^7.0.0",
+    "vitest": "^3.0.0"
+  }
+}
