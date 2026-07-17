@@ -34,16 +34,26 @@ function isConditionalCheckFailed(error: unknown): boolean {
   return (error as { name?: string })?.name === 'ConditionalCheckFailedException';
 }
 
+/** The slice of the DynamoDB document client this repo uses — injectable so the CAS logic is testable against a fake. */
+export interface AuthDocClient {
+  send(command: GetCommand | PutCommand | DeleteCommand): Promise<{
+    Item?: Record<string, unknown>;
+    Attributes?: Record<string, unknown>;
+  }>;
+}
+
 export class DdbAuthRepo implements AuthRepo {
-  private readonly doc: DynamoDBDocumentClient;
+  private readonly doc: AuthDocClient;
 
   constructor(
     private readonly tableName: string,
-    client: DynamoDBClient = new DynamoDBClient({}),
+    doc?: AuthDocClient,
   ) {
-    this.doc = DynamoDBDocumentClient.from(client, {
-      marshallOptions: { removeUndefinedValues: true },
-    });
+    this.doc =
+      doc ??
+      (DynamoDBDocumentClient.from(new DynamoDBClient({}), {
+        marshallOptions: { removeUndefinedValues: true },
+      }) as unknown as AuthDocClient);
   }
 
   async createPasswordHash(hash: string): Promise<boolean> {
@@ -87,9 +97,10 @@ export class DdbAuthRepo implements AuthRepo {
   }
 
   async clearLockout(): Promise<void> {
-    // Unconditional: a successful login is an authoritative reset. Racing a
-    // concurrent failure can at worst re-establish a fresh window (safe direction);
-    // it can never undercount, since every failure goes through the CAS above.
+    // Unconditional delete: a successful login is an authoritative reset. A failure
+    // that read the row before this delete cannot resurrect the old count — its
+    // version-guarded update (below) fails against the now-absent row and retries
+    // into a fresh window (count 1) — so clearing can never undercount.
     await this.doc.send(new DeleteCommand({ TableName: this.tableName, Key: LOCKOUT_KEY }));
   }
 
@@ -116,15 +127,26 @@ export class DdbAuthRepo implements AuthRepo {
     ttlEpochSeconds: number,
     expectedVersion: number,
   ): Promise<boolean> {
+    // Guard split by what we read, so the create path can't be abused by a stale
+    // reader. A read of an absent row (version 0) may only *create* it, and fails if
+    // anyone created it meanwhile. A read of an existing row must match that exact
+    // version — it deliberately does NOT fall back to attribute_not_exists, so a
+    // snapshot taken before a clear() delete cannot resurrect the stale count: its
+    // update fails against the absent row, retries, and starts a fresh window.
+    const guard =
+      expectedVersion === 0
+        ? { ConditionExpression: 'attribute_not_exists(#v)' }
+        : {
+            ConditionExpression: '#v = :expected',
+            ExpressionAttributeValues: { ':expected': expectedVersion },
+          };
     try {
       await this.doc.send(
         new PutCommand({
           TableName: this.tableName,
           Item: { ...LOCKOUT_KEY, ...next, version: expectedVersion + 1, ttl: ttlEpochSeconds },
-          // Commit only if nobody else advanced the row since we read it.
-          ConditionExpression: 'attribute_not_exists(#v) OR #v = :expected',
           ExpressionAttributeNames: { '#v': 'version' },
-          ExpressionAttributeValues: { ':expected': expectedVersion },
+          ...guard,
         }),
       );
       return true;
