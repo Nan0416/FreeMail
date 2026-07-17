@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_REGION, isSubdomainOrEqual, parseFreeMailConfig } from './config.js';
+import {
+  DEFAULT_REGION,
+  isSubdomainOrEqual,
+  normalizeDomain,
+  parseFreeMailConfig,
+} from './config.js';
 
 const base = {
   hostedZone: { mode: 'create', zoneName: 'example.com' },
@@ -73,8 +78,43 @@ describe('parseFreeMailConfig', () => {
     ).toThrow(/must be a boolean/);
   });
 
+  it('rejects a region other than us-east-1', () => {
+    expect(() => parseFreeMailConfig({ ...base, region: 'us-west-2' })).toThrow(
+      /must be us-east-1/,
+    );
+  });
+
+  it('canonicalizes domains (case + trailing dot) before validating', () => {
+    const config = parseFreeMailConfig({
+      ...base,
+      hostedZone: { mode: 'create', zoneName: 'Example.COM.' },
+      emailDomain: 'MAIL.Example.com.',
+      appDomain: 'App.Example.com',
+    });
+    expect(config.hostedZone.zoneName).toBe('example.com');
+    expect(config.emailDomain).toBe('mail.example.com');
+    expect(config.appDomain).toBe('app.example.com');
+  });
+
+  it('enforces the inbound MX acknowledgement (enabled ⇒ confirmed)', () => {
+    expect(() =>
+      parseFreeMailConfig({ ...base, inbound: { enabled: true, confirmInboundMx: false } }),
+    ).toThrow(/confirmInboundMx/);
+    // enabled + confirmed is accepted.
+    expect(
+      parseFreeMailConfig({ ...base, inbound: { enabled: true, confirmInboundMx: true } }).inbound,
+    ).toEqual({ enabled: true, confirmInboundMx: true });
+  });
+
   it('rejects non-object input', () => {
     expect(() => parseFreeMailConfig(null)).toThrow(/expected a JSON object/);
     expect(() => parseFreeMailConfig('nope')).toThrow(/expected a JSON object/);
+  });
+});
+
+describe('normalizeDomain', () => {
+  it('trims, lowercases, and drops a trailing dot', () => {
+    expect(normalizeDomain('  Example.COM.  ')).toBe('example.com');
+    expect(normalizeDomain('mail.example.com')).toBe('mail.example.com');
   });
 });

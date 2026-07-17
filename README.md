@@ -52,3 +52,8 @@ See [`DESIGN.md § Deploy UX`](./DESIGN.md).
 > **Note:** SES starts in sandbox mode. Sending to arbitrary recipients requires
 > [SES production access](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html)
 > — a one-time manual request per AWS account.
+
+> **Your data is retained on teardown.** The mail S3 buckets and DynamoDB tables
+> use a `RETAIN` removal policy so `cdk destroy` never silently deletes your
+> email. That means a destroy leaves those buckets and tables behind as orphaned
+> resources — delete them by hand if you truly want them gone.

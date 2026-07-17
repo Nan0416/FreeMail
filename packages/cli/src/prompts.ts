@@ -5,7 +5,7 @@
  */
 import { existsSync } from 'node:fs';
 import { confirm, input, select } from '@inquirer/prompts';
-import { isSubdomainOrEqual, type HostedZoneConfig } from '@freemail/shared';
+import { isSubdomainOrEqual, normalizeDomain, type HostedZoneConfig } from '@freemail/shared';
 import { type InitAnswers, type InitIo, writeConfig } from './init.js';
 import { listHostedZones } from './route53.js';
 
@@ -34,12 +34,12 @@ async function resolveHostedZone(): Promise<HostedZoneConfig> {
   });
 
   if (!exists) {
-    const zoneName = (
+    const zoneName = normalizeDomain(
       await input({
         message: 'Domain to create a new Route53 hosted zone for (e.g. example.com):',
         validate: requireDomain,
-      })
-    ).trim();
+      }),
+    );
     return { mode: 'create', zoneName };
   }
 
@@ -61,17 +61,17 @@ async function resolveHostedZone(): Promise<HostedZoneConfig> {
     if (choice !== MANUAL_ENTRY) {
       const zone = zones.find((z) => z.id === choice);
       if (zone) {
-        return { mode: 'import', zoneName: zone.name, hostedZoneId: zone.id };
+        return { mode: 'import', zoneName: normalizeDomain(zone.name), hostedZoneId: zone.id };
       }
     }
   }
 
-  const zoneName = (
+  const zoneName = normalizeDomain(
     await input({
       message: 'Hosted zone domain (e.g. example.com):',
       validate: requireDomain,
-    })
-  ).trim();
+    }),
+  );
   const hostedZoneId = (
     await input({
       message: 'Hosted zone ID (e.g. Z0123456ABCDEF):',
@@ -84,15 +84,15 @@ async function resolveHostedZone(): Promise<HostedZoneConfig> {
 export async function promptAnswers(): Promise<InitAnswers> {
   const hostedZone = await resolveHostedZone();
 
-  const emailDomain = (
+  const emailDomain = normalizeDomain(
     await input({
       message: `Email domain — the zone apex or a subdomain (e.g. mail.${hostedZone.zoneName}):`,
       default: hostedZone.zoneName,
       validate: (value) =>
-        isSubdomainOrEqual(value.trim(), hostedZone.zoneName) ||
+        isSubdomainOrEqual(normalizeDomain(value), hostedZone.zoneName) ||
         `Must be ${hostedZone.zoneName} or a subdomain of it.`,
-    })
-  ).trim();
+    }),
+  );
 
   const appDomain = await optionalInput(
     'Custom domain for the web app (optional; blank = CloudFront default):',

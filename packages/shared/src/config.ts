@@ -7,7 +7,7 @@
  * silently defaulting.
  */
 
-/** Default (and only supported) region — inbound SES + CloudFront ACM certs both require us-east-1. */
+/** The only supported region — inbound SES + CloudFront ACM certs both require us-east-1. */
 export const DEFAULT_REGION = 'us-east-1';
 
 export type HostedZoneMode = 'import' | 'create';
@@ -26,8 +26,8 @@ export interface InboundConfig {
   enabled: boolean;
   /**
    * Explicit acknowledgement of the MX override that enabling inbound performs.
-   * Enabling inbound points the email domain's MX at SES; this flag must be
-   * `true` before inbound can be deployed (enforced at synth).
+   * Enabling inbound points the email domain's MX at SES; this must be `true`
+   * before inbound can be enabled (enforced here and independently at synth).
    */
   confirmInboundMx: boolean;
 }
@@ -45,7 +45,12 @@ export interface FreeMailConfig {
   inbound: InboundConfig;
 }
 
-/** True when `domain` equals `parent` or is a subdomain of it. */
+/** Canonicalize a domain: trim, lowercase, drop a trailing dot (DNS is case-insensitive). */
+export function normalizeDomain(domain: string): string {
+  return domain.trim().toLowerCase().replace(/\.$/, '');
+}
+
+/** True when `domain` equals `parent` or is a subdomain of it. Both should be normalized first. */
 export function isSubdomainOrEqual(domain: string, parent: string): boolean {
   return domain === parent || domain.endsWith(`.${parent}`);
 }
@@ -55,6 +60,14 @@ function requireNonEmptyString(value: unknown, field: string): string {
     throw new Error(`FreeMail config: "${field}" must be a non-empty string.`);
   }
   return value;
+}
+
+function requireDomain(value: unknown, field: string): string {
+  const normalized = normalizeDomain(requireNonEmptyString(value, field));
+  if (normalized.length === 0) {
+    throw new Error(`FreeMail config: "${field}" must be a valid domain.`);
+  }
+  return normalized;
 }
 
 function requireBoolean(value: unknown, field: string): boolean {
@@ -70,7 +83,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Validate and normalize an unknown value into a `FreeMailConfig`, throwing on
- * any structural or semantic problem. `region` defaults to us-east-1 when absent.
+ * any structural or semantic problem. Domains are canonicalized; `region`
+ * defaults to (and must equal) us-east-1.
  */
 export function parseFreeMailConfig(input: unknown): FreeMailConfig {
   if (!isRecord(input)) {
@@ -79,6 +93,11 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
 
   const region =
     input.region === undefined ? DEFAULT_REGION : requireNonEmptyString(input.region, 'region');
+  if (region !== DEFAULT_REGION) {
+    throw new Error(
+      `FreeMail config: "region" must be ${DEFAULT_REGION} (the only supported region).`,
+    );
+  }
 
   if (!isRecord(input.hostedZone)) {
     throw new Error('FreeMail config: "hostedZone" must be an object.');
@@ -87,17 +106,21 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
   if (mode !== 'import' && mode !== 'create') {
     throw new Error('FreeMail config: "hostedZone.mode" must be "import" or "create".');
   }
-  const zoneName = requireNonEmptyString(input.hostedZone.zoneName, 'hostedZone.zoneName');
+  const zoneName = requireDomain(input.hostedZone.zoneName, 'hostedZone.zoneName');
   let hostedZoneId: string | undefined;
   if (mode === 'import') {
-    hostedZoneId = requireNonEmptyString(input.hostedZone.hostedZoneId, 'hostedZone.hostedZoneId');
+    // Zone IDs are case-sensitive — do not normalize.
+    hostedZoneId = requireNonEmptyString(
+      input.hostedZone.hostedZoneId,
+      'hostedZone.hostedZoneId',
+    ).trim();
   } else if (input.hostedZone.hostedZoneId !== undefined) {
     throw new Error(
       'FreeMail config: "hostedZone.hostedZoneId" is only valid when mode is "import".',
     );
   }
 
-  const emailDomain = requireNonEmptyString(input.emailDomain, 'emailDomain');
+  const emailDomain = requireDomain(input.emailDomain, 'emailDomain');
   if (!isSubdomainOrEqual(emailDomain, zoneName)) {
     throw new Error(
       `FreeMail config: "emailDomain" (${emailDomain}) must equal or be a subdomain of the hosted zone (${zoneName}).`,
@@ -105,9 +128,9 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
   }
 
   const appDomain =
-    input.appDomain === undefined ? undefined : requireNonEmptyString(input.appDomain, 'appDomain');
+    input.appDomain === undefined ? undefined : requireDomain(input.appDomain, 'appDomain');
   const apiDomain =
-    input.apiDomain === undefined ? undefined : requireNonEmptyString(input.apiDomain, 'apiDomain');
+    input.apiDomain === undefined ? undefined : requireDomain(input.apiDomain, 'apiDomain');
 
   if (!isRecord(input.inbound)) {
     throw new Error('FreeMail config: "inbound" must be an object.');
@@ -116,6 +139,12 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
     enabled: requireBoolean(input.inbound.enabled, 'inbound.enabled'),
     confirmInboundMx: requireBoolean(input.inbound.confirmInboundMx, 'inbound.confirmInboundMx'),
   };
+  if (inbound.enabled && !inbound.confirmInboundMx) {
+    throw new Error(
+      'FreeMail config: inbound is enabled but "inbound.confirmInboundMx" is not true. ' +
+        'Acknowledge the MX override before enabling inbound.',
+    );
+  }
 
   return {
     region,
