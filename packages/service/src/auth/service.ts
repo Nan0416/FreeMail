@@ -94,13 +94,20 @@ export class AuthService {
     return this.issueTokens(this.now());
   }
 
-  /** Revoke the presented refresh token. Idempotent — an unknown token is a no-op. */
+  /**
+   * Revoke the presented refresh token. Idempotent — an unknown token is a no-op.
+   *
+   * This invalidates the refresh credential immediately, but the access token is
+   * stateless: any already-issued access token stays valid until its short expiry
+   * ({@link ACCESS_TOKEN_TTL_SECONDS}). That window is the deliberate trade-off for
+   * keeping token verification off the database on the hot path.
+   */
   async logout(refreshToken: string): Promise<void> {
     await this.repo.consumeRefreshToken(hashRefreshToken(refreshToken));
   }
 
   private async issueTokens(now: number): Promise<TokenPair> {
-    const accessToken = signAccessToken(this.signingKey, {
+    const accessToken = await signAccessToken(this.signingKey, {
       subject: OWNER_SUBJECT,
       issuedAt: now,
       ttlSeconds: ACCESS_TOKEN_TTL_SECONDS,

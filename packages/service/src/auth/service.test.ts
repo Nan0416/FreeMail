@@ -95,7 +95,7 @@ describe('AuthService.login', () => {
     expect(tokens.expiresIn).toBeGreaterThan(0);
     expect(repo.refreshTokens.size).toBe(1);
 
-    const verified = verifyAccessToken(tokens.accessToken, KEY, NOW);
+    const verified = await verifyAccessToken(tokens.accessToken, KEY, NOW);
     expect(verified.valid).toBe(true);
     expect(verified.valid && verified.claims.sub).toBe(OWNER_SUBJECT);
   });

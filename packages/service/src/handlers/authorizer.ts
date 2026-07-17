@@ -36,7 +36,11 @@ export const handler = async (
   const bearer = extractBearer(headers.authorization ?? headers.Authorization);
 
   if (bearer) {
-    const result = verifyAccessToken(bearer, await getSigningKey(), Math.floor(Date.now() / 1000));
+    const result = await verifyAccessToken(
+      bearer,
+      await getSigningKey(),
+      Math.floor(Date.now() / 1000),
+    );
     if (result.valid) {
       return { isAuthorized: true, context: { sub: result.claims.sub, scheme: 'access' } };
     }

@@ -25,10 +25,6 @@ const HANDLERS_DIR = join(
   'handlers',
 );
 
-// The AWS SDK v3 is provided by the Node 22 Lambda runtime, so keep it out of the
-// bundle rather than shipping a second copy.
-const BUNDLING = { externalModules: ['@aws-sdk/*'], target: 'node22' };
-
 export interface ApiConstructProps {
   /** Single-tenant password hash + rotating refresh tokens + lockout counters. */
   authTable: dynamodb.Table;
@@ -152,7 +148,8 @@ export class ApiConstruct extends Construct {
       memorySize: props.memorySize ?? 256,
       description: props.description,
       environment: props.environment,
-      bundling: BUNDLING,
+      // Bundle everything (incl. the AWS SDK v3 clients) rather than relying on the
+      // runtime-provided SDK, so the deployed version is pinned and reproducible.
     });
   }
 }
