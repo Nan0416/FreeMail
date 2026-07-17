@@ -1,4 +1,10 @@
-import { DeleteCommand, GetCommand, PutCommand, type PutCommandInput } from '@aws-sdk/lib-dynamodb';
+import {
+  DeleteCommand,
+  GetCommand,
+  PutCommand,
+  UpdateCommand,
+  type PutCommandInput,
+} from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { isLockedOut } from '../auth/lockout.js';
 import { DdbAuthRepo, type AuthDocClient } from './ddb-auth-repo.js';
@@ -56,6 +62,22 @@ class FakeDoc implements AuthDocClient {
       return Promise.resolve(
         command.input.ReturnValues === 'ALL_OLD' ? { Attributes: existing } : {},
       );
+    }
+    if (command instanceof UpdateCommand) {
+      // Models the lockout reset: SET count/window 0, ADD version 1, REMOVE lockedUntil.
+      const key = keyOf(command.input.Key);
+      const existing = this.store.get(key) ?? { ...command.input.Key };
+      const names = command.input.ExpressionAttributeNames ?? {};
+      const values = command.input.ExpressionAttributeValues ?? {};
+      const versionAttr = names['#v'];
+      const currentVersion = typeof existing[versionAttr] === 'number' ? existing[versionAttr] : 0;
+      const next = { ...existing };
+      next.failedCount = values[':zero'];
+      next.windowStartedAt = values[':zero'];
+      next[versionAttr] = (currentVersion as number) + (values[':one'] as number);
+      delete next.lockedUntil;
+      this.store.set(key, next);
+      return Promise.resolve({});
     }
     return Promise.reject(new Error('unsupported command'));
   }
@@ -150,22 +172,55 @@ describe('DdbAuthRepo — lockout CAS', () => {
     expect(doc.store.get('auth|lockout')?.version).toBe(3);
   });
 
-  it('does not resurrect a stale count when the row is cleared mid-flight', async () => {
+  it('advances the version and resets the counters on clear', async () => {
+    const doc = new FakeDoc();
+    const repo = new DdbAuthRepo('t', doc);
+    await repo.registerFailedAttempt(NOW); // version 1
+    await repo.registerFailedAttempt(NOW); // version 2
+
+    await repo.clearLockout();
+
+    const row = doc.store.get('auth|lockout');
+    expect(row?.version).toBe(3);
+    expect(row?.failedCount).toBe(0);
+    expect(row?.lockedUntil).toBeUndefined();
+  });
+
+  it('does not resurrect a stale count when a clear advances the version mid-flight', async () => {
     const doc = new FakeDoc();
     seedLockout(doc, { failedCount: 4, version: 5 });
     const repo = new DdbAuthRepo('t', doc);
 
-    // A successful login clears the row between our read (count 4) and our write.
+    // A successful login's reset advances the version between our read (count 4) and
+    // our write — the exact interleaving powerbanana flagged.
+    doc.onceBeforePut(() => {
+      void repo.clearLockout();
+    });
+
+    const committed = await repo.registerFailedAttempt(NOW);
+
+    // The stale count-5 write fails the version guard, retries against the reset
+    // (count 0) state, and applies a fresh window — never the resurrected count 5.
+    expect(committed.failedCount).toBe(1);
+    expect(committed.lockedUntil).toBeUndefined();
+    expect(doc.puts).toHaveLength(2);
+    expect(doc.puts.every((put) => put.ConditionExpression === '#v = :expected')).toBe(true);
+    expect(doc.store.get('auth|lockout')?.version).toBe(7);
+  });
+
+  it('retries a stale update against an absent row as a fresh create (split guard)', async () => {
+    const doc = new FakeDoc();
+    seedLockout(doc, { failedCount: 4, version: 5 });
+    const repo = new DdbAuthRepo('t', doc);
+
+    // Defense in depth: if the row is absent at write time, the version-matched
+    // update fails and the retry falls to the create guard with a fresh count 1.
     doc.onceBeforePut(() => doc.store.delete('auth|lockout'));
 
     const committed = await repo.registerFailedAttempt(NOW);
 
-    // The stale count-5 write must fail against the absent row and retry into a fresh
-    // window — count 1, version 1 — not resurrect count 5 via the create branch.
     expect(committed.failedCount).toBe(1);
-    expect(committed.lockedUntil).toBeUndefined();
     expect(doc.store.get('auth|lockout')?.version).toBe(1);
-    expect(doc.puts).toHaveLength(2);
     expect(doc.puts[0].ConditionExpression).toBe('#v = :expected');
     expect(doc.puts[1].ConditionExpression).toBe('attribute_not_exists(#v)');
   });

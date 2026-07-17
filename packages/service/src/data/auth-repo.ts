@@ -32,7 +32,11 @@ export interface AuthRepo {
    */
   registerFailedAttempt(nowSeconds: number): Promise<LockoutState>;
 
-  /** Clear lockout counters after a successful login. */
+  /**
+   * Reset lockout counters after a successful login. Must ADVANCE the same version
+   * the failed-attempt CAS uses (not merely delete), so an in-flight failure that
+   * read the pre-reset state cannot land afterward and resurrect a stale count.
+   */
   clearLockout(): Promise<void>;
 
   /** Persist a refresh token by its hash, expiring at `ttlEpochSeconds` (DynamoDB TTL). */

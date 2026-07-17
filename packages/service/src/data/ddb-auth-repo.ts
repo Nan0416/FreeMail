@@ -2,12 +2,14 @@
  * DynamoDB-backed {@link AuthRepo} over #2's single-table `authTable` (pk/sk,
  * `ttl` attribute). Layout:
  *   - password  → pk `auth`, sk `password`   { hash }
- *   - lockout   → pk `auth`, sk `lockout`     { failedCount, windowStartedAt, lockedUntil?, version, ttl }
+ *   - lockout   → pk `auth`, sk `lockout`     { failedCount, windowStartedAt, lockedUntil?, version }
  *   - refresh   → pk `refresh`, sk `<hash>`   { ttl }
  *
- * The lockout row carries a `version` so failed-attempt increments are a versioned
- * compare-and-swap (see {@link registerFailedAttempt}) rather than a lost-update-
- * prone read-modify-write.
+ * The single lockout row carries a monotonic `version`: failed-attempt increments
+ * are a versioned compare-and-swap, and the success reset ADVANCES the version too
+ * (never deletes), so a stale pre-reset writer can never resurrect the old count.
+ * The row has no TTL — it's one tiny permanent row, and staleness is handled in the
+ * policy (an elapsed window resets the count), so the version never regresses.
  */
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
@@ -15,13 +17,9 @@ import {
   DynamoDBDocumentClient,
   GetCommand,
   PutCommand,
+  UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
-import {
-  FAILURE_WINDOW_SECONDS,
-  INITIAL_LOCKOUT_STATE,
-  LOCKOUT_SECONDS,
-  registerFailure,
-} from '../auth/lockout.js';
+import { INITIAL_LOCKOUT_STATE, registerFailure } from '../auth/lockout.js';
 import type { LockoutState } from '../auth/lockout.js';
 import { optimisticUpdate, type VersionedValue } from './optimistic.js';
 import type { AuthRepo } from './auth-repo.js';
@@ -36,7 +34,7 @@ function isConditionalCheckFailed(error: unknown): boolean {
 
 /** The slice of the DynamoDB document client this repo uses — injectable so the CAS logic is testable against a fake. */
 export interface AuthDocClient {
-  send(command: GetCommand | PutCommand | DeleteCommand): Promise<{
+  send(command: GetCommand | PutCommand | DeleteCommand | UpdateCommand): Promise<{
     Item?: Record<string, unknown>;
     Attributes?: Record<string, unknown>;
   }>;
@@ -87,21 +85,29 @@ export class DdbAuthRepo implements AuthRepo {
   }
 
   async registerFailedAttempt(nowSeconds: number): Promise<LockoutState> {
-    // Keep the row until any window + lock it could still enforce has elapsed.
-    const ttl = nowSeconds + FAILURE_WINDOW_SECONDS + LOCKOUT_SECONDS;
     return optimisticUpdate<LockoutState>(
       () => this.readLockout(),
       (current) => registerFailure(current ?? INITIAL_LOCKOUT_STATE, nowSeconds),
-      (next, expectedVersion) => this.writeLockoutIfVersion(next, ttl, expectedVersion),
+      (next, expectedVersion) => this.writeLockoutIfVersion(next, expectedVersion),
     );
   }
 
   async clearLockout(): Promise<void> {
-    // Unconditional delete: a successful login is an authoritative reset. A failure
-    // that read the row before this delete cannot resurrect the old count — its
-    // version-guarded update (below) fails against the now-absent row and retries
-    // into a fresh window (count 1) — so clearing can never undercount.
-    await this.doc.send(new DeleteCommand({ TableName: this.tableName, Key: LOCKOUT_KEY }));
+    // A successful login resets the counters AND advances the version in one atomic
+    // update (never a delete). Advancing the version is what makes the reset safe: a
+    // concurrent failure that read the pre-reset version now fails its version-guarded
+    // put, retries, re-reads the cleared state, and applies to a fresh window (count 1)
+    // — it can neither resurrect the old count nor undercount.
+    await this.doc.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: LOCKOUT_KEY,
+        UpdateExpression:
+          'SET failedCount = :zero, windowStartedAt = :zero ADD #v :one REMOVE lockedUntil',
+        ExpressionAttributeNames: { '#v': 'version' },
+        ExpressionAttributeValues: { ':zero': 0, ':one': 1 },
+      }),
+    );
   }
 
   private async readLockout(): Promise<VersionedValue<LockoutState>> {
@@ -124,15 +130,13 @@ export class DdbAuthRepo implements AuthRepo {
 
   private async writeLockoutIfVersion(
     next: LockoutState,
-    ttlEpochSeconds: number,
     expectedVersion: number,
   ): Promise<boolean> {
-    // Guard split by what we read, so the create path can't be abused by a stale
-    // reader. A read of an absent row (version 0) may only *create* it, and fails if
-    // anyone created it meanwhile. A read of an existing row must match that exact
-    // version — it deliberately does NOT fall back to attribute_not_exists, so a
-    // snapshot taken before a clear() delete cannot resurrect the stale count: its
-    // update fails against the absent row, retries, and starts a fresh window.
+    // Guard split by what we read. A read of an absent row (version 0 — only the
+    // first-ever write, since the reset advances rather than deletes) may only
+    // *create* it. A read of an existing row must match that exact version and does
+    // NOT fall back to attribute_not_exists, so a stale snapshot can never resurrect
+    // a count: it fails, retries, and re-reads the current (possibly reset) state.
     const guard =
       expectedVersion === 0
         ? { ConditionExpression: 'attribute_not_exists(#v)' }
@@ -144,7 +148,7 @@ export class DdbAuthRepo implements AuthRepo {
       await this.doc.send(
         new PutCommand({
           TableName: this.tableName,
-          Item: { ...LOCKOUT_KEY, ...next, version: expectedVersion + 1, ttl: ttlEpochSeconds },
+          Item: { ...LOCKOUT_KEY, ...next, version: expectedVersion + 1 },
           ExpressionAttributeNames: { '#v': 'version' },
           ...guard,
         }),
