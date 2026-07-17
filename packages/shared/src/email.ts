@@ -211,9 +211,17 @@ export const MAX_EMAIL_PAGE_SIZE = 100;
 export const ATTACHMENT_URL_TTL_SECONDS = 60;
 
 /**
- * Per-body-part cap for the reader. Received bodies are materialized from raw MIME on
- * demand; this bounds how much of a (capped) body we return so the Lambda→API Gateway
- * response stays well under the 6 MB proxy limit. A larger body is truncated
- * (`bodyTruncated: true`); the raw message is always retained in S3.
+ * Per-body-part raw UTF-8 byte cap for the reader. Received bodies are materialized from
+ * raw MIME on demand; each part (text / html) is truncated to this many bytes. A larger
+ * body is truncated (`bodyTruncated: true`); the raw message is always retained in S3.
  */
 export const MAX_READ_BODY_BYTES = 1024 * 1024;
+
+/**
+ * Hard ceiling on the JSON-escaped `{text, html}` payload for one message detail. JSON
+ * escaping can inflate a hostile body (control chars → `\uXXXX`, i.e. 6×), so beyond the
+ * per-part byte cap the assembled body is shrunk until it fits this — keeping the whole
+ * response comfortably under the ~6 MB Lambda / API Gateway proxy response limit
+ * (headroom left for the envelope + attachment metadata).
+ */
+export const MAX_EMAIL_BODY_RESPONSE_BYTES = 4 * 1024 * 1024;

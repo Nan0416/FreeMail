@@ -21,6 +21,7 @@ import {
   type EmailDetail,
   type EmailListItem,
   type ListEmailsResponse,
+  MAX_EMAIL_BODY_RESPONSE_BYTES,
   MAX_READ_BODY_BYTES,
 } from '@freemail/shared';
 import {
@@ -48,6 +49,7 @@ import {
   parseInbound,
 } from '../inbound/parse.js';
 import { decideExposure } from '../inbound/verdicts.js';
+import { fitBodyToBudget } from './body-budget.js';
 import { contentDispositionForDownload } from './content-disposition.js';
 import { decodeEmailRef, encodeEmailRef } from './email-ref.js';
 import { emailErrors } from './errors.js';
@@ -211,13 +213,17 @@ export class EmailReadService {
     if (!parsed.exposed) {
       return {};
     }
-    const truncated =
-      parsed.textBody?.length === MAX_READ_BODY_BYTES ||
-      parsed.htmlBody?.length === MAX_READ_BODY_BYTES;
+    // Bound the returned body in real UTF-8 bytes (the parser retains by char count) and
+    // hard-cap the JSON-escaped payload so a hostile body can't exceed the Lambda response
+    // budget — see fitBodyToBudget.
+    const fitted = fitBodyToBudget(parsed.textBody, parsed.htmlBody, {
+      partCapBytes: MAX_READ_BODY_BYTES,
+      serializedBudgetBytes: MAX_EMAIL_BODY_RESPONSE_BYTES,
+    });
     return {
-      ...(parsed.textBody !== undefined ? { text: parsed.textBody } : {}),
-      ...(parsed.htmlBody !== undefined ? { html: parsed.htmlBody } : {}),
-      ...(truncated ? { bodyTruncated: true } : {}),
+      ...(fitted.text !== undefined ? { text: fitted.text } : {}),
+      ...(fitted.html !== undefined ? { html: fitted.html } : {}),
+      ...(fitted.truncated ? { bodyTruncated: true } : {}),
     };
   }
 

@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { MAX_READ_BODY_BYTES } from '@freemail/shared';
+import { MAX_EMAIL_BODY_RESPONSE_BYTES, MAX_READ_BODY_BYTES } from '@freemail/shared';
 import { describe, expect, it } from 'vitest';
 import {
   type EmailsReadRepo,
@@ -226,13 +226,29 @@ describe('EmailReadService.getEmail', () => {
     expect(rawMime.getStreamCalls).toEqual(['inbound/i1']);
   });
 
-  it('flags bodyTruncated when a body part hits the read cap', async () => {
+  it('flags bodyTruncated when a body part exceeds the read cap', async () => {
     const repo = new FakeRepo();
     const rawMime = new FakeRawMime();
-    const { fn } = fakeParse({ htmlBody: 'x'.repeat(MAX_READ_BODY_BYTES) });
+    const { fn } = fakeParse({ htmlBody: 'x'.repeat(MAX_READ_BODY_BYTES + 100) });
     const handle = repo.put(INBOUND_PARTITION, inboundRow());
 
     const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail(handle);
+    expect(detail.bodyTruncated).toBe(true);
+    expect(Buffer.byteLength(detail.html ?? '', 'utf8')).toBeLessThanOrEqual(MAX_READ_BODY_BYTES);
+  });
+
+  it('keeps the response under the Lambda budget for a pathological (JSON-inflating) body', async () => {
+    const repo = new FakeRepo();
+    const rawMime = new FakeRawMime();
+    // Control chars each JSON-escape to \u00XX (6×); a naive char-count cap would blow 6 MB.
+    const dense = '\x01'.repeat(3 * 1024 * 1024);
+    const { fn } = fakeParse({ textBody: dense, htmlBody: dense });
+    const handle = repo.put(INBOUND_PARTITION, inboundRow());
+
+    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail(handle);
+    const responseBytes = Buffer.byteLength(JSON.stringify(detail), 'utf8');
+    // Well under the ~6 MB proxy limit (body budget + small envelope/metadata slack).
+    expect(responseBytes).toBeLessThanOrEqual(MAX_EMAIL_BODY_RESPONSE_BYTES + 64 * 1024);
     expect(detail.bodyTruncated).toBe(true);
   });
 
