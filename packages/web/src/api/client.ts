@@ -73,13 +73,14 @@ export class FreeMailClient {
     });
   }
 
-  /** Best-effort server-side revoke; the server clears both cookies. */
+  /**
+   * Sign out: the server revokes the refresh token and clears both cookies. ONLY a
+   * successful (2xx) response clears the httpOnly cookies, so a non-2xx or network
+   * failure is PROPAGATED — the caller must surface a retriable error and must not
+   * report a sign-out, because the session is still live.
+   */
   async logout(): Promise<void> {
-    try {
-      await this.request('POST', '/auth/logout', { auth: false });
-    } catch {
-      // A failed server revoke must not block sign-out; the UI drops the session regardless.
-    }
+    await this.request('POST', '/auth/logout', { auth: false });
   }
 
   // --- authenticated ---

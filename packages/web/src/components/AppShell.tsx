@@ -12,6 +12,22 @@ type Tab = 'compose' | 'keys';
 export function AppShell(): React.JSX.Element {
   const { subject, logout } = useAuth();
   const [tab, setTab] = useState<Tab>('compose');
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+
+  // Only a successful server response clears the httpOnly session cookies, so a failed
+  // sign-out leaves the session live — surface a retriable error, never a false sign-out.
+  const handleSignOut = async () => {
+    setSigningOut(true);
+    setSignOutError(null);
+    try {
+      await logout();
+    } catch {
+      setSignOutError('Sign-out failed — you are still signed in. Please retry.');
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   return (
     <div className="shell">
@@ -37,9 +53,14 @@ export function AppShell(): React.JSX.Element {
         </nav>
         <div className="shell-account">
           {subject && <span className="muted">Signed in as {subject}</span>}
-          <button type="button" onClick={() => void logout()}>
-            Sign out
+          <button type="button" onClick={() => void handleSignOut()} disabled={signingOut}>
+            {signingOut ? 'Signing out…' : 'Sign out'}
           </button>
+          {signOutError && (
+            <span role="alert" className="error">
+              {signOutError}
+            </span>
+          )}
         </div>
       </header>
       <main className="shell-main">{tab === 'compose' ? <ComposeView /> : <KeysView />}</main>

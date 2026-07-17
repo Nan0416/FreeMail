@@ -179,13 +179,13 @@ describe('FreeMailClient (cookie auth)', () => {
     });
   });
 
-  it('logout posts to the revoke endpoint with no body and does not throw on failure', async () => {
+  it('logout posts to the revoke endpoint with no body and resolves on a 2xx', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(null, { status: 204 }));
     const client = makeClient(fetchMock);
 
-    await client.logout();
+    await expect(client.logout()).resolves.toBeUndefined();
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(`${BASE}/auth/logout`);
     expect(init?.method).toBe('POST');
@@ -193,12 +193,22 @@ describe('FreeMailClient (cookie auth)', () => {
     expect(init?.credentials).toBe('include');
   });
 
-  it('swallows a logout server error (sign-out proceeds locally)', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () => {
-      throw new TypeError('network down');
-    });
-    const client = makeClient(fetchMock);
-    await expect(client.logout()).resolves.toBeUndefined();
+  it('PROPAGATES a logout failure — only a 2xx clears the httpOnly cookies', async () => {
+    // Non-2xx: the server did not confirm a clean revoke → the caller must know.
+    const nonOk = makeClient(
+      vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(json(500, { error: 'invalid_request', message: 'retry' })),
+    );
+    await expect(nonOk.logout()).rejects.toMatchObject({ status: 500 });
+
+    // Network failure: the request never reached the server → cookies untouched.
+    const networkDown = makeClient(
+      vi.fn<typeof fetch>(async () => {
+        throw new TypeError('network down');
+      }),
+    );
+    await expect(networkDown.logout()).rejects.toBeInstanceOf(TypeError);
   });
 
   it('surfaces the server error body as a typed ApiError', async () => {

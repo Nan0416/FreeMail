@@ -353,4 +353,16 @@ describe('rest handler — logout clears both cookies (POST, idempotent)', () =>
     expect(authMocks.logout).not.toHaveBeenCalled();
     expect(allCleared(res.cookies)).toBe(true);
   });
+
+  it('still clears both AND returns non-2xx when server-side revocation throws', async () => {
+    authMocks.logout.mockRejectedValue(new Error('store unavailable'));
+    const res = await handler(
+      authEvent('POST /auth/logout', { cookies: [`${REFRESH_COOKIE}=RT`] }),
+    );
+    // Non-2xx so the client knows the revoke wasn't clean...
+    expect(res.statusCode).toBe(500);
+    expect(res.headers?.['cache-control']).toBe('no-store');
+    // ...but the "always clear" contract still holds (best-effort remove the browser copy).
+    expect(allCleared(res.cookies)).toBe(true);
+  });
 });

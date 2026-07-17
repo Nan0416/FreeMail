@@ -167,17 +167,35 @@ async function handleRefresh(
 }
 
 /**
- * Best-effort server-side revoke of the presented refresh token, then always clear
- * both cookies (idempotent — even with no cookie or a duplicate present). The
- * refresh credential is read only from the cookie, never a body/query.
+ * Server-side revoke of the presented refresh token, then always clear both cookies.
+ * Since the tokens are httpOnly, ONLY this response's `Set-Cookie` can clear the
+ * browser copy — so both clears are emitted on EVERY path, including when revocation
+ * throws. A revocation failure returns a non-2xx (the client must not report a clean
+ * sign-out when the server session may still be live) but still attaches the clears
+ * to best-effort remove the browser copy. The refresh credential is read only from
+ * the cookie, never a body/query.
  */
 async function handleLogout(
   event: APIGatewayProxyEventV2,
   service: AuthService,
 ): Promise<APIGatewayProxyStructuredResultV2> {
   const cookie = readCookie(event.cookies, REFRESH_COOKIE);
-  if (typeof cookie === 'string') {
-    await service.logout(cookie);
+  try {
+    if (typeof cookie === 'string') {
+      await service.logout(cookie);
+    }
+  } catch {
+    // Revocation failed (e.g. a transient store error): still clear the browser copy,
+    // but signal non-2xx so the client surfaces a retriable failure instead of a lie.
+    return {
+      statusCode: 500,
+      headers: { ...JSON_HEADERS, ...NO_STORE_HEADERS },
+      cookies: clearSessionCookies(),
+      body: JSON.stringify({
+        error: 'invalid_request',
+        message: 'Sign-out could not complete. Please retry.',
+      }),
+    };
   }
   return authNoContent(clearSessionCookies());
 }
