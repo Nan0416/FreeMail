@@ -57,6 +57,7 @@ export class FreeMailStack extends Stack {
         emailDomain: config.emailDomain,
         region: config.region,
         mailBucket: data.mailBucket,
+        emailsTable: data.emailsTable,
       });
     }
 

@@ -1,7 +1,20 @@
-import { App, Stack, aws_route53 as route53, aws_s3 as s3 } from 'aws-cdk-lib';
+import {
+  App,
+  Stack,
+  aws_dynamodb as dynamodb,
+  aws_route53 as route53,
+  aws_s3 as s3,
+} from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import { InboundConstruct } from './inbound.js';
+
+function emailsTable(stack: Stack): dynamodb.Table {
+  return new dynamodb.Table(stack, 'EmailsTable', {
+    partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
+    sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
+  });
+}
 
 function synth(emailDomain = 'mail.example.com', zoneName = 'example.com'): Template {
   const stack = new Stack(new App(), 'TestStack', {
@@ -14,6 +27,7 @@ function synth(emailDomain = 'mail.example.com', zoneName = 'example.com'): Temp
     emailDomain,
     region: 'us-east-1',
     mailBucket,
+    emailsTable: emailsTable(stack),
   });
   return Template.fromStack(stack);
 }
@@ -105,7 +119,68 @@ describe('InboundConstruct', () => {
       emailDomain: 'mail.example.com',
       region: 'us-east-1',
       mailBucket,
+      emailsTable: emailsTable(stack),
     });
     expect(inbound.ruleSet.receiptRuleSetName).toBeTruthy();
+  });
+
+  describe('parser pipeline', () => {
+    it('triggers the parser Lambda on ObjectCreated scoped to the inbound/ prefix', () => {
+      const template = synth();
+      // S3 → Lambda notifications are wired via the BucketNotifications custom resource.
+      template.hasResourceProperties('Custom::S3BucketNotifications', {
+        NotificationConfiguration: {
+          LambdaFunctionConfigurations: Match.arrayWith([
+            Match.objectLike({
+              Events: ['s3:ObjectCreated:*'],
+              Filter: {
+                Key: {
+                  FilterRules: Match.arrayWith([{ Name: 'prefix', Value: 'inbound/' }]),
+                },
+              },
+            }),
+          ]),
+        },
+      });
+    });
+
+    it('configures async retry + an on-failure SQS DLQ (S3 async invocation, not an SQS source)', () => {
+      const template = synth();
+      template.resourceCountIs('AWS::SQS::Queue', 1);
+      template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
+        MaximumRetryAttempts: 2,
+        DestinationConfig: {
+          OnFailure: { Destination: Match.anyValue() },
+        },
+      });
+    });
+
+    it('grants the parser read + write + delete on the mail bucket (raw read, attachment write, cleanup)', () => {
+      const template = synth();
+      template.hasResourceProperties('AWS::IAM::Policy', {
+        PolicyDocument: {
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Action: Match.arrayWith(['s3:GetObject*', 's3:DeleteObject*', 's3:PutObject']),
+              Effect: 'Allow',
+            }),
+          ]),
+        },
+      });
+    });
+
+    it('grants the parser write (PutItem) on the emails table', () => {
+      const template = synth();
+      template.hasResourceProperties('AWS::IAM::Policy', {
+        PolicyDocument: {
+          Statement: Match.arrayWith([
+            Match.objectLike({
+              Action: Match.arrayWith(['dynamodb:PutItem']),
+              Effect: 'Allow',
+            }),
+          ]),
+        },
+      });
+    });
   });
 });
