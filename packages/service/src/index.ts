@@ -23,3 +23,13 @@ export {
 export { generateRefreshToken, hashRefreshToken } from './auth/refresh-token.js';
 export * from './auth/lockout.js';
 export type { AuthRepo } from './data/auth-repo.js';
+export { ApiKeyService, type ApiKeyServiceDeps } from './keys/service.js';
+export {
+  generateApiKey,
+  parseApiKey,
+  hashApiKeySecret,
+  verifyApiKeySecret,
+  type GeneratedApiKey,
+  type ParsedApiKey,
+} from './keys/api-key.js';
+export type { ApiKeyRecord, ApiKeysRepo } from './data/keys-repo.js';

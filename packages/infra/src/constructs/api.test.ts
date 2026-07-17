@@ -36,12 +36,12 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('exposes 5 routes: 4 public auth routes + 1 protected route', () => {
+  it('exposes 8 routes: 4 public auth routes + 4 protected (me + 3 key routes)', () => {
     const template = synth();
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 5);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 8);
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const authorizationTypes = routes.map((r) => r.Properties.AuthorizationType);
-    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(1);
+    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(4);
     expect(authorizationTypes.filter((t) => t !== 'CUSTOM')).toHaveLength(4);
   });
 
@@ -53,8 +53,19 @@ describe('ApiConstruct', () => {
       Environment: {
         Variables: Match.objectLike({
           AUTH_TABLE: Match.anyValue(),
+          API_KEYS_TABLE: Match.anyValue(),
           SIGNING_KEY_SECRET_ID: Match.anyValue(),
         }),
+      },
+    });
+  });
+
+  it('gives the authorizer the API-keys table so it can validate presented keys', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Description: Match.stringLikeRegexp('authorizer'),
+      Environment: {
+        Variables: Match.objectLike({ API_KEYS_TABLE: Match.anyValue() }),
       },
     });
   });

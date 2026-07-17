@@ -3,12 +3,10 @@
  *
  * Dual-scheme by design (`DESIGN.md § Auth`: "a Lambda authorizer covers both
  * REST access-tokens and MCP API-keys"): a `Bearer` access JWT authorizes REST
- * routes, and an `x-api-key` header is the seam for the MCP server's agent keys.
- * Because either header may be the credential, the CDK authorizer runs with no
- * fixed identity source and caching off, so this function always sees the full
- * request and picks the scheme.
- *
- * #4 implements the access-token branch; the API-key branch is validated in #5.
+ * routes, and an `x-api-key` header authorizes the MCP server's agent keys,
+ * validated against the hashed-keys table. Because either header may be the
+ * credential, the CDK authorizer runs with no fixed identity source and caching
+ * off, so this function always sees the full request and picks the scheme.
  */
 import type {
   APIGatewayRequestAuthorizerEventV2,
@@ -16,10 +14,25 @@ import type {
 } from 'aws-lambda';
 import { getSigningKey } from '../config/signing-key.js';
 import { verifyAccessToken } from '../auth/jwt.js';
+import { OWNER_SUBJECT } from '../auth/service.js';
+import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
+import { ApiKeyService } from '../keys/service.js';
 
 interface AuthorizerContext {
   sub: string;
-  scheme: 'access';
+  scheme: 'access' | 'apiKey';
+}
+
+// Reused across warm invocations. Verification is a table read; no signing key needed.
+let apiKeyService: ApiKeyService | undefined;
+
+function getApiKeyService(): ApiKeyService {
+  const tableName = process.env.API_KEYS_TABLE;
+  if (!tableName) {
+    throw new Error('API_KEYS_TABLE is not set.');
+  }
+  apiKeyService ??= new ApiKeyService({ repo: new DdbApiKeysRepo(tableName) });
+  return apiKeyService;
 }
 
 type Result = APIGatewaySimpleAuthorizerWithContextResult<AuthorizerContext>;
@@ -47,9 +60,15 @@ export const handler = async (
     return DENY;
   }
 
-  // Seam for #5: MCP agents present an `x-api-key`. Until key validation lands,
-  // an API key never authorizes — we deny rather than silently allow.
-  if (headers['x-api-key']) {
+  // MCP agents present an `x-api-key`. Validate it against the hashed-keys table
+  // and, on success, authorize as the single-tenant owner — identical to a Bearer
+  // token — so downstream routes need not care which scheme was used.
+  const apiKey = headers['x-api-key'];
+  if (apiKey) {
+    const keyId = await getApiKeyService().verify(apiKey);
+    if (keyId) {
+      return { isAuthorized: true, context: { sub: OWNER_SUBJECT, scheme: 'apiKey' } };
+    }
     return DENY;
   }
 
