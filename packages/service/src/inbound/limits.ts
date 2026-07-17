@@ -51,6 +51,13 @@ export const MAX_SNIPPET_CHARS = 300;
 /** Max HTML input fed to the snippet parser — bounds the parser work itself, not just its output. */
 export const MAX_HTML_SNIPPET_INPUT_BYTES = 512 * 1024;
 
+/**
+ * How much of a text/HTML body we RETAIN after parsing. The snippet needs only a few
+ * hundred chars, so we never hold the full (attacker-controlled) body in memory —
+ * it's sliced to this the moment the body event fires, before any snippet work.
+ */
+export const MAX_SNIPPET_SOURCE_BYTES = 512 * 1024;
+
 /** Max addresses retained per header (to/cc); extras are dropped. */
 export const MAX_ADDRESSES_PER_HEADER = 50;
 

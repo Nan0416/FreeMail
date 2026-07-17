@@ -30,6 +30,7 @@ import {
   MAX_HEADER_BLOCK_BYTES,
   MAX_HTML_BODY_BYTES,
   MAX_MIME_PARTS,
+  MAX_SNIPPET_SOURCE_BYTES,
   MAX_TEXT_BODY_BYTES,
 } from './limits.js';
 import { normalizeAddressList, normalizeFrom, sanitizeSubject } from './sanitize.js';
@@ -89,6 +90,8 @@ export interface ParseLimits {
   maxAttachmentTotalBytes: number;
   maxTextBodyBytes: number;
   maxHtmlBodyBytes: number;
+  /** How much body we RETAIN for snippet derivation — a small slice; we never hold the full body. */
+  maxSnippetSourceBytes: number;
 }
 
 const DEFAULT_LIMITS: ParseLimits = {
@@ -99,6 +102,7 @@ const DEFAULT_LIMITS: ParseLimits = {
   maxAttachmentTotalBytes: MAX_ATTACHMENT_TOTAL_BYTES,
   maxTextBodyBytes: MAX_TEXT_BODY_BYTES,
   maxHtmlBodyBytes: MAX_HTML_BODY_BYTES,
+  maxSnippetSourceBytes: MAX_SNIPPET_SOURCE_BYTES,
 };
 
 /**
@@ -236,8 +240,11 @@ export function parseInbound(
         ) {
           return degrade('limit_exceeded');
         }
-        if (typeof data.text === 'string') textBody = data.text;
-        if (typeof data.html === 'string') htmlBody = data.html;
+        // Retain only a snippet-sized slice — never hold the full body in memory.
+        if (typeof data.text === 'string')
+          textBody = data.text.slice(0, limits.maxSnippetSourceBytes);
+        if (typeof data.html === 'string')
+          htmlBody = data.html.slice(0, limits.maxSnippetSourceBytes);
       }
     });
 

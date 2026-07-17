@@ -34,6 +34,7 @@ const looseLimits = (over: Partial<ParseLimits> = {}): ParseLimits => ({
   maxAttachmentTotalBytes: 30 * 1024 * 1024,
   maxTextBodyBytes: 10 * 1024 * 1024,
   maxHtmlBodyBytes: 10 * 1024 * 1024,
+  maxSnippetSourceBytes: 512 * 1024,
   ...over,
 });
 
@@ -295,6 +296,25 @@ describe('parseInbound — limits', () => {
     );
     expect(p.parseStatus).toBe('limit_exceeded');
     expect(p.exposed).toBe(false);
+  });
+
+  it('retains only a snippet-sized slice of an under-cap body — never the full body', async () => {
+    // Body is under the quarantine cap but far larger than we need for a snippet.
+    const p = await parseInbound(
+      mime([
+        'X-SES-Virus-Verdict: PASS',
+        'From: a@x.com',
+        'Content-Type: text/plain',
+        '',
+        'y'.repeat(50 * 1024),
+        '',
+      ]),
+      new FakeSink(),
+      looseLimits({ maxTextBodyBytes: 1024 * 1024, maxSnippetSourceBytes: 100 }),
+    );
+    expect(p.parseStatus).toBe('ok');
+    expect(p.exposed).toBe(true);
+    expect(p.textBody!.length).toBeLessThanOrEqual(100); // not the full 50 KB
   });
 });
 
