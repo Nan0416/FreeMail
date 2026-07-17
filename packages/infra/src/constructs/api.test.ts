@@ -35,6 +35,15 @@ describe('ApiConstruct', () => {
     });
   });
 
+  it('enables NO API-Gateway access logging (so the Cookie header can never be logged)', () => {
+    const template = synth();
+    // Both credentials now ride the Cookie header on every request; access logging is
+    // off entirely, so no access log can capture or leak it.
+    template.hasResourceProperties('AWS::ApiGatewayV2::Stage', {
+      AccessLogSettings: Match.absent(),
+    });
+  });
+
   it('wires a dual-scheme SIMPLE request authorizer', () => {
     const template = synth();
     template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);

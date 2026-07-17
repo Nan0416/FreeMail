@@ -315,6 +315,27 @@ describe('rest handler — refresh reads the cookie only, clears on every failur
   });
 });
 
+describe('rest handler — never logs the Cookie header', () => {
+  it('does not leak cookie values into logs on the unhandled-error path', async () => {
+    const SECRET = 'super-secret-refresh-token-value';
+    // Force the generic (non-AuthError) error path, which is the only place the
+    // handler logs — it must log the error, never the request/cookies.
+    authMocks.refresh.mockRejectedValue(new Error('boom'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await handler(
+        authEvent('POST /auth/refresh', { cookies: [`${REFRESH_COOKIE}=${SECRET}`] }),
+      );
+      expect(res.statusCode).toBe(500);
+      const logged = errorSpy.mock.calls.map((args) => args.map(String).join(' ')).join('\n');
+      expect(logged).not.toContain(SECRET);
+      expect(logged).not.toContain(REFRESH_COOKIE);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
 describe('rest handler — logout clears both cookies (POST, idempotent)', () => {
   it('revokes the presented refresh token and clears both (204, no-store)', async () => {
     const res = await handler(

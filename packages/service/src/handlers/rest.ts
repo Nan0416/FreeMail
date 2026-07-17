@@ -80,9 +80,11 @@ export const handler = async (
         );
       }
       case 'POST /auth/refresh':
-        return handleRefresh(event, service);
+        // Awaited so an unexpected (non-AuthError) rejection is normalized by the
+        // outer catch (clean 500, no cookie logged) rather than escaping the handler.
+        return await handleRefresh(event, service);
       case 'POST /auth/logout':
-        return handleLogout(event, service);
+        return await handleLogout(event, service);
       case 'GET /me':
         return json(200, { subject: subjectFromContext(event) } satisfies SessionResponse);
       case 'POST /keys':
