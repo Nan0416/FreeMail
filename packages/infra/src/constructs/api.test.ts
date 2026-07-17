@@ -36,12 +36,12 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('exposes 10 routes: 4 public auth routes + 6 protected (me + 3 key routes + send + mcp)', () => {
+  it('exposes 13 routes: 4 public auth + 9 protected (me + 3 keys + send + 3 reads + mcp)', () => {
     const template = synth();
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 10);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 13);
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const authorizationTypes = routes.map((r) => r.Properties.AuthorizationType);
-    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(6);
+    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(9);
     expect(authorizationTypes.filter((t) => t !== 'CUSTOM')).toHaveLength(4);
   });
 
@@ -69,8 +69,23 @@ describe('ApiConstruct', () => {
         Variables: Match.objectLike({
           AUTH_TABLE: Match.anyValue(),
           API_KEYS_TABLE: Match.anyValue(),
+          // The read routes need the mail bucket (raw MIME re-parse + attachment presign).
+          MAIL_BUCKET: Match.anyValue(),
           SIGNING_KEY_SECRET_ID: Match.anyValue(),
         }),
+      },
+    });
+  });
+
+  it('grants the REST handler read access to the mail bucket (for body re-parse + presign)', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([
+          Match.objectLike({
+            Action: Match.arrayWith([Match.stringLikeRegexp('s3:GetObject')]),
+          }),
+        ]),
       },
     });
   });
@@ -86,6 +101,8 @@ describe('ApiConstruct', () => {
           // Authentication is the shared authorizer's job — the MCP handler needs none of these.
           AUTH_TABLE: Match.absent(),
           API_KEYS_TABLE: Match.absent(),
+          // Reads are the REST surface — the MCP (send-only) handler gets no mail-bucket access.
+          MAIL_BUCKET: Match.absent(),
           SIGNING_KEY_SECRET_ID: Match.absent(),
         }),
       },

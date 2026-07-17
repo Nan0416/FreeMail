@@ -38,6 +38,7 @@ export class FreeMailStack extends Stack {
       authTable: data.authTable,
       apiKeysTable: data.apiKeysTable,
       emailsTable: data.emailsTable,
+      mailBucket: data.mailBucket,
       emailDomain: config.emailDomain,
       sesConfigurationSetName: ses.configurationSet.configurationSetName,
     });

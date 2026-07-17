@@ -21,4 +21,10 @@ export class EmailError extends Error {
 export const emailErrors = {
   invalidRequest: (message: string) => new EmailError('invalid_request', 400, message),
   invalidSender: (message: string) => new EmailError('invalid_sender', 400, message),
+  /**
+   * The requested message / attachment does not exist. Also used for a malformed
+   * message handle — a bad handle is indistinguishable from a missing row on purpose,
+   * so nothing about the id space or storage layout leaks.
+   */
+  notFound: (message: string) => new EmailError('not_found', 404, message),
 };
