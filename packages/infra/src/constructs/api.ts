@@ -28,16 +28,17 @@ const HANDLERS_DIR = join(
 export interface ApiConstructProps {
   /** Single-tenant password hash + rotating refresh tokens + lockout counters. */
   authTable: dynamodb.Table;
-  /** Hashed agent API keys — the authorizer reads these once #5 lands its key branch. */
+  /** Hashed agent API keys — the REST handler manages them; the authorizer validates presented keys. */
   apiKeysTable: dynamodb.Table;
 }
 
 /**
  * The HTTP API skeleton: one HTTP API fronted by a dual-scheme Lambda authorizer,
- * with the auth routes (public) and a protected `GET /me` wired to a single REST
- * handler. Later slices plug in through the exposed `httpApi`/`authorizer` and the
- * `addRestRoute` helper — REST slices (#5 keys, #6 send) reuse the same handler;
- * the MCP server (#7) adds its own route + integration behind the same authorizer.
+ * with the auth routes (public), a protected `GET /me`, and the `/keys`
+ * management routes wired to a single REST handler. Later slices plug in through
+ * the exposed `httpApi`/`authorizer` and the `addRestRoute` helper — REST slices
+ * (#6 send) reuse the same handler; the MCP server (#7) adds its own route +
+ * integration behind the same authorizer.
  *
  * API Gateway itself stays unauthenticated (managed CORS answers preflight, auth
  * routes are open); all authentication happens in the backend authorizer.
@@ -66,18 +67,24 @@ export class ApiConstruct extends Construct {
       memorySize: 1024, // more vCPU so the scrypt hash on login stays sub-second
       environment: {
         AUTH_TABLE: authTable.tableName,
+        API_KEYS_TABLE: apiKeysTable.tableName,
         SIGNING_KEY_SECRET_ID: this.signingKey.secretName,
       },
     });
     authTable.grantReadWriteData(this.restHandler);
+    // The REST handler mints, lists, and revokes keys.
+    apiKeysTable.grantReadWriteData(this.restHandler);
     this.signingKey.grantRead(this.restHandler);
 
     this.authorizerHandler = this.nodeFunction('AuthorizerHandler', 'authorizer.ts', {
-      description: 'FreeMail Lambda authorizer (access tokens; API keys in #5).',
-      environment: { SIGNING_KEY_SECRET_ID: this.signingKey.secretName },
+      description: 'FreeMail Lambda authorizer (access tokens + API keys).',
+      environment: {
+        API_KEYS_TABLE: apiKeysTable.tableName,
+        SIGNING_KEY_SECRET_ID: this.signingKey.secretName,
+      },
     });
     this.signingKey.grantRead(this.authorizerHandler);
-    // #5 reads hashed keys here; harmless least-privilege grant until then.
+    // The authorizer only reads hashed keys to validate a presented one.
     apiKeysTable.grantReadData(this.authorizerHandler);
 
     this.authorizer = new HttpLambdaAuthorizer('Authorizer', this.authorizerHandler, {
@@ -98,7 +105,11 @@ export class ApiConstruct extends Construct {
       // and lets the SPA call the API before a custom app domain is configured.
       corsPreflight: {
         allowOrigins: ['*'],
-        allowMethods: [apigwv2.CorsHttpMethod.GET, apigwv2.CorsHttpMethod.POST],
+        allowMethods: [
+          apigwv2.CorsHttpMethod.GET,
+          apigwv2.CorsHttpMethod.POST,
+          apigwv2.CorsHttpMethod.DELETE,
+        ],
         allowHeaders: ['authorization', 'content-type'],
       },
     });
@@ -110,11 +121,16 @@ export class ApiConstruct extends Construct {
     this.addRestRoute('/auth/logout', apigwv2.HttpMethod.POST);
     // Protected sample route — proves the authorizer end to end.
     this.addRestRoute('/me', apigwv2.HttpMethod.GET, { authorized: true });
+
+    // Agent API-key management (access-token authed).
+    this.addRestRoute('/keys', apigwv2.HttpMethod.POST, { authorized: true });
+    this.addRestRoute('/keys', apigwv2.HttpMethod.GET, { authorized: true });
+    this.addRestRoute('/keys/{id}', apigwv2.HttpMethod.DELETE, { authorized: true });
   }
 
   /**
    * Add a route served by the shared REST handler. `authorized` puts it behind the
-   * dual-scheme authorizer. Later REST slices (#5/#6) call this; the MCP slice (#7)
+   * dual-scheme authorizer. Later REST slices (#6) call this; the MCP slice (#7)
    * adds its own integration via `httpApi`/`authorizer` directly.
    */
   addRestRoute(

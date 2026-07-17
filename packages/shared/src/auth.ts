@@ -21,7 +21,8 @@ export type AuthErrorCode =
   | 'password_not_set'
   | 'invalid_credentials'
   | 'account_locked'
-  | 'invalid_token';
+  | 'invalid_token'
+  | 'forbidden';
 
 export interface SetPasswordRequest {
   password: string;
