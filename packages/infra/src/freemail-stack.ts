@@ -5,6 +5,7 @@ import type { FreeMailConfig } from '@freemail/shared';
 import { ApiConstruct } from './constructs/api.js';
 import { DataConstruct } from './constructs/data.js';
 import { DnsConstruct } from './constructs/dns.js';
+import { InboundConstruct } from './constructs/inbound.js';
 import { SesConstruct } from './constructs/ses.js';
 import { WebConstruct, resolveWebAssetPath } from './constructs/web.js';
 
@@ -48,8 +49,18 @@ export class FreeMailStack extends Stack {
       assetPath: resolveWebAssetPath(),
     });
 
+    // Optional inbound: SES receipt rule set → S3 + the inbound MX record. Gated on
+    // config; the warn/throw acknowledgement above fires first.
+    if (config.inbound.enabled) {
+      new InboundConstruct(this, 'Inbound', {
+        hostedZone: dns.hostedZone,
+        emailDomain: config.emailDomain,
+        region: config.region,
+        mailBucket: data.mailBucket,
+      });
+    }
+
     // Insertion points for later slices:
-    //   SES  → optional inbound receipt (dns.hostedZone MX + data.mailBucket)
     //   Web  → a custom app domain (dns.hostedZone + ACM) is Phase 3 (#15)
 
     new CfnOutput(this, 'HostedZoneId', { value: dns.hostedZone.hostedZoneId });
@@ -102,7 +113,10 @@ export class FreeMailStack extends Stack {
     Annotations.of(this).addWarning(
       `Inbound email is ENABLED: FreeMail will set the MX record for "${config.emailDomain}" to AWS SES, ` +
         'overriding any existing mail routing for that domain. Use a dedicated subdomain (e.g. mail.example.com) ' +
-        'to avoid clobbering existing email.',
+        "to avoid clobbering existing email. It will also TAKE OVER the region's single active SES receipt " +
+        'rule set (an account-global, region-wide singleton), replacing whatever set is currently active — ' +
+        'if another SES-receiving app in this account/region relies on the active rule set, this will disrupt ' +
+        'it (the previously-active set name is logged on activation for recovery).',
     );
     if (!config.inbound.confirmInboundMx) {
       throw new Error(
