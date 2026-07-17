@@ -181,20 +181,24 @@ describe('EmailService.send', () => {
     expect(ses.calls).toHaveLength(0);
   });
 
-  it('rejects non-canonical base64 (wrong length) that Buffer.from would silently truncate', async () => {
-    const { service, ses } = makeService();
-    await expect(
-      service.send(
-        request({
-          attachments: [
-            // 5 chars — not a multiple of 4; Buffer.from would drop the trailing char.
-            { filename: 'x.bin', contentType: 'application/octet-stream', contentBase64: 'AAAAA' },
-          ],
-        }),
-      ),
-    ).rejects.toMatchObject({ code: 'invalid_request' });
-    expect(ses.calls).toHaveLength(0);
-  });
+  // Malformed base64 that Buffer.from would silently truncate/ignore, so it must be
+  // rejected outright: a lone char, all-padding, wrong length, and a non-alphabet char.
+  it.each(['A', '====', 'AAAAA', 'AA*A'])(
+    'rejects non-canonical base64 attachment content %j',
+    async (contentBase64) => {
+      const { service, ses } = makeService();
+      await expect(
+        service.send(
+          request({
+            attachments: [
+              { filename: 'x.bin', contentType: 'application/octet-stream', contentBase64 },
+            ],
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 'invalid_request' });
+      expect(ses.calls).toHaveLength(0);
+    },
+  );
 
   it('rejects attachments whose total exceeds the size cap (before sending)', async () => {
     const { service, ses } = makeService();

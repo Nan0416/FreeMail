@@ -87,9 +87,9 @@ describe('buildRawMime', () => {
     expect(raw).not.toContain('\r\nX-Injected: yes');
   });
 
-  it('round-trips attachment bytes (output base64 decodes to the input)', async () => {
-    const content = Buffer.from([0, 1, 2, 3, 250, 251, 252, 253, 10, 13]);
-    const inputBase64 = content.toString('base64');
+  it('round-trips attachment bytes (decode the output part == input bytes)', async () => {
+    // All byte values, large enough that the base64 wraps across lines.
+    const content = Buffer.from(Array.from({ length: 180 }, (_, i) => (i * 7 + 3) % 256));
     const raw = (
       await buildRawMime({
         from: 'sender@example.com',
@@ -102,15 +102,19 @@ describe('buildRawMime', () => {
           {
             filename: 'f.bin',
             contentType: 'application/octet-stream',
-            contentBase64: inputBase64,
+            contentBase64: content.toString('base64'),
           },
         ],
       })
     ).toString('utf8');
 
-    // The exact input base64 survives into the composed message → payload intact.
-    expect(raw).toContain(inputBase64);
-    expect(Buffer.from(inputBase64, 'base64').equals(content)).toBe(true);
+    // Pull the base64 payload out of the composed message and decode it back.
+    const match = raw.match(
+      /application\/octet-stream[\s\S]*?\r\n\r\n([A-Za-z0-9+/\r\n=]+?)\r\n--/,
+    );
+    expect(match).not.toBeNull();
+    const decoded = Buffer.from((match?.[1] ?? '').replace(/[\r\n]/g, ''), 'base64');
+    expect(decoded.equals(content)).toBe(true);
   });
 
   it('embeds an attachment as base64', async () => {
