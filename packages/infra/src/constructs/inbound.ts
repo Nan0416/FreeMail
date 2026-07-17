@@ -12,6 +12,7 @@ import {
   custom_resources as cr,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import { buildActivateHandlerSource } from '../inbound/activate-rule-set.js';
 
 export interface InboundConstructProps {
   /** The Route53 zone that owns the email domain — the inbound MX record is written here. */
@@ -89,10 +90,11 @@ export class InboundConstruct extends Construct {
    * manual step would silently get no mail. We auto-activate via a custom resource
    * so "one `cdk deploy` = done" holds.
    *
-   * onCreate/Update activates ours (replacing whatever was active — the stack warns
-   * about this takeover), logging the previously-active set for recovery. onDelete
-   * deactivates ours ONLY if it is still the active set, so tearing down FreeMail
-   * never clears an unrelated set that became active in the meantime.
+   * FAIL SAFE (see `decideActivation`): onCreate/Update activates ours only when
+   * nothing or ours is already active; if a DIFFERENT set is active it aborts the
+   * deploy with a clear error rather than silently clobbering account-global state.
+   * That makes teardown trivial — onDelete just deactivates ours (and only if it is
+   * still the active set).
    */
   private activateRuleSet(ruleSetName: string): void {
     const onEvent = new lambda.Function(this, 'ActivateRuleSetFn', {
@@ -100,9 +102,7 @@ export class InboundConstruct extends Construct {
       handler: 'index.handler',
       timeout: Duration.seconds(30),
       description: "Activates FreeMail's SES receipt rule set (the region-wide active singleton).",
-      code: lambda.Code.fromInline(ACTIVATE_RULE_SET_SOURCE),
-      // This handler logs the previously-active rule set on takeover (recovery info),
-      // so give it a retained, disposable log group rather than the unbounded default.
+      code: lambda.Code.fromInline(buildActivateHandlerSource()),
       logGroup: new logs.LogGroup(this, 'ActivateRuleSetLogs', {
         retention: logs.RetentionDays.THREE_MONTHS,
         removalPolicy: RemovalPolicy.DESTROY,
@@ -127,36 +127,3 @@ export class InboundConstruct extends Construct {
     });
   }
 }
-
-/**
- * CloudFormation custom-resource handler (run by the CDK Provider framework, which
- * owns the response protocol — this just implements the logic). Uses the SES v1
- * client bundled in the Lambda runtime; no build-time dependency.
- */
-const ACTIVATE_RULE_SET_SOURCE = [
-  "const { SESClient, DescribeActiveReceiptRuleSetCommand, SetActiveReceiptRuleSetCommand } = require('@aws-sdk/client-ses');",
-  'const ses = new SESClient({});',
-  'exports.handler = async (event) => {',
-  '  const ruleSetName = event.ResourceProperties.RuleSetName;',
-  '  const active = await ses.send(new DescribeActiveReceiptRuleSetCommand({}));',
-  '  const activeName = active && active.Metadata ? active.Metadata.Name : undefined;',
-  "  if (event.RequestType === 'Delete') {",
-  '    if (activeName === ruleSetName) {',
-  '      await ses.send(new SetActiveReceiptRuleSetCommand({}));',
-  "      console.log('Deactivated FreeMail receipt rule set', ruleSetName);",
-  '    } else {',
-  "      console.log('Active receipt rule set is not ours; leaving it untouched', { activeName, ruleSetName });",
-  '    }',
-  '    return { PhysicalResourceId: event.PhysicalResourceId };',
-  '  }',
-  '  if (activeName && activeName !== ruleSetName) {',
-  "    console.warn('Replacing previously-active SES receipt rule set', { previous: activeName, now: ruleSetName });",
-  '  }',
-  '  await ses.send(new SetActiveReceiptRuleSetCommand({ RuleSetName: ruleSetName }));',
-  "  console.log('Activated FreeMail receipt rule set', ruleSetName);",
-  '  return {',
-  '    PhysicalResourceId: ruleSetName,',
-  "    Data: { PreviousActiveRuleSet: activeName && activeName !== ruleSetName ? activeName : '' },",
-  '  };',
-  '};',
-].join('\n');

@@ -114,9 +114,10 @@ describe('FreeMailStack', () => {
     });
     const annotations = Annotations.fromStack(stack);
     annotations.hasWarning('*', Match.stringLikeRegexp('Inbound email is ENABLED'));
-    // The warning must surface the second footgun: taking over the region's single
-    // active SES receipt rule set, not just the MX record.
-    annotations.hasWarning('*', Match.stringLikeRegexp('active SES receipt'));
+    // The warning must surface the second footgun: FreeMail becoming the region's
+    // single active receipt rule set, with a fail-safe deploy on conflict.
+    annotations.hasWarning('*', Match.stringLikeRegexp('receipt rule set'));
+    annotations.hasWarning('*', Match.stringLikeRegexp('deploy FAILS'));
   });
 
   it('does not warn when inbound is disabled', () => {

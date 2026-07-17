@@ -113,10 +113,10 @@ export class FreeMailStack extends Stack {
     Annotations.of(this).addWarning(
       `Inbound email is ENABLED: FreeMail will set the MX record for "${config.emailDomain}" to AWS SES, ` +
         'overriding any existing mail routing for that domain. Use a dedicated subdomain (e.g. mail.example.com) ' +
-        "to avoid clobbering existing email. It will also TAKE OVER the region's single active SES receipt " +
-        'rule set (an account-global, region-wide singleton), replacing whatever set is currently active — ' +
-        'if another SES-receiving app in this account/region relies on the active rule set, this will disrupt ' +
-        'it (the previously-active set name is logged on activation for recovery).',
+        "to avoid clobbering existing email. It will also make FreeMail's SES receipt rule set the region's " +
+        'single active set (an account-global, region-wide singleton). If a DIFFERENT receipt rule set is ' +
+        'already active in this account/region, the deploy FAILS rather than overriding it — deactivate that ' +
+        'set, or deploy FreeMail to a dedicated account/region, before enabling inbound.',
     );
     if (!config.inbound.confirmInboundMx) {
       throw new Error(
