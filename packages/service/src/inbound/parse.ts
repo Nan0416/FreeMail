@@ -22,12 +22,15 @@ import type { Readable } from 'node:stream';
 import { MailParser, type AddressObject } from 'mailparser';
 import type { InboundAttachmentDescriptor, InboundParseStatus } from '../data/emails-repo.js';
 import { InboundLimitError } from './errors.js';
-import { HeaderCaptureStream, parseHeaderLines, type HeaderLine } from './headers.js';
+import { InboundScanStream, parseHeaderLines, type HeaderLine } from './headers.js';
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_TOTAL_BYTES,
   MAX_ATTACHMENTS,
+  MAX_HEADER_BLOCK_BYTES,
+  MAX_HTML_BODY_BYTES,
   MAX_MIME_PARTS,
+  MAX_TEXT_BODY_BYTES,
 } from './limits.js';
 import { normalizeAddressList, normalizeFrom, sanitizeSubject } from './sanitize.js';
 import { extractVerdicts, type Verdicts } from './verdicts.js';
@@ -80,16 +83,22 @@ interface AttachmentNode {
 /** Resource limits for one parse — defaults to the module constants; overridable in tests. */
 export interface ParseLimits {
   maxParts: number;
+  maxHeaderBlockBytes: number;
   maxAttachments: number;
   maxAttachmentBytes: number;
   maxAttachmentTotalBytes: number;
+  maxTextBodyBytes: number;
+  maxHtmlBodyBytes: number;
 }
 
 const DEFAULT_LIMITS: ParseLimits = {
   maxParts: MAX_MIME_PARTS,
+  maxHeaderBlockBytes: MAX_HEADER_BLOCK_BYTES,
   maxAttachments: MAX_ATTACHMENTS,
   maxAttachmentBytes: MAX_ATTACHMENT_BYTES,
   maxAttachmentTotalBytes: MAX_ATTACHMENT_TOTAL_BYTES,
+  maxTextBodyBytes: MAX_TEXT_BODY_BYTES,
+  maxHtmlBodyBytes: MAX_HTML_BODY_BYTES,
 };
 
 /**
@@ -103,12 +112,17 @@ export function parseInbound(
   limits: ParseLimits = DEFAULT_LIMITS,
 ): Promise<ParsedInbound> {
   return new Promise<ParsedInbound>((resolve, reject) => {
-    const capture = new HeaderCaptureStream();
+    const scan = new InboundScanStream({
+      maxParts: limits.maxParts,
+      maxHeaderBlockBytes: limits.maxHeaderBlockBytes,
+    });
     const parser = new MailParser({
       skipHtmlToText: true,
       skipTextToHtml: true,
       skipImageLinks: true,
       skipTextLinks: true,
+      // Bound MailParser's own HTML processing, not just our retained snippet input.
+      maxHtmlLengthToParse: limits.maxHtmlBodyBytes,
     });
 
     let outcome: 'pending' | 'settled' = 'pending';
@@ -131,14 +145,14 @@ export function parseInbound(
 
     const ensureVerdicts = (): void => {
       if (verdicts) return;
-      const lines: HeaderLine[] = parseHeaderLines(capture.block);
+      const lines: HeaderLine[] = parseHeaderLines(scan.block);
       verdicts = extractVerdicts(lines);
       exposed = verdicts.virusVerdict === 'PASS';
     };
 
     const teardown = (): void => {
       source.destroy();
-      capture.destroy();
+      scan.destroy();
       parser.destroy();
     };
 
@@ -181,7 +195,6 @@ export function parseInbound(
     };
 
     let attachmentCount = 0;
-    let partCount = 0;
     let totalBytes = 0;
 
     parser.on('headers', (headers) => {
@@ -197,15 +210,14 @@ export function parseInbound(
         date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined;
     });
 
+    // The scan stream counts MIME parts structurally over the raw bytes and enforces
+    // the header-block size — neither is visible from MailParser's aggregated events.
+    scan.on('breach', () => degrade('limit_exceeded'));
+
     parser.on('data', (data) => {
       if (outcome === 'settled') {
         if (data.type === 'attachment') safeRelease(data);
         return;
-      }
-      partCount++;
-      if (partCount > limits.maxParts) {
-        if (data.type === 'attachment') safeRelease(data);
-        return degrade('limit_exceeded');
       }
       if (data.type === 'attachment') {
         attachmentCount++;
@@ -217,6 +229,13 @@ export function parseInbound(
         pending++;
         void handleAttachment(data as AttachmentNode, attachmentCount - 1);
       } else {
+        // A body larger than the cap is a resource-exhaustion attempt → quarantine.
+        if (
+          (typeof data.text === 'string' && data.text.length > limits.maxTextBodyBytes) ||
+          (typeof data.html === 'string' && data.html.length > limits.maxHtmlBodyBytes)
+        ) {
+          return degrade('limit_exceeded');
+        }
         if (typeof data.text === 'string') textBody = data.text;
         if (typeof data.html === 'string') htmlBody = data.html;
       }
@@ -230,7 +249,7 @@ export function parseInbound(
     });
     // The S3 source / passthrough erroring mid-download is infra → retry.
     source.on('error', (err) => failInfra(err instanceof Error ? err : new Error(String(err))));
-    capture.on('error', (err) => failInfra(err instanceof Error ? err : new Error(String(err))));
+    scan.on('error', (err) => failInfra(err instanceof Error ? err : new Error(String(err))));
 
     function maybeFinish(): void {
       if (outcome === 'settled' || !ended || pending > 0) return;
@@ -271,7 +290,7 @@ export function parseInbound(
       maybeFinish();
     }
 
-    source.pipe(capture).pipe(parser);
+    source.pipe(scan).pipe(parser);
   });
 }
 

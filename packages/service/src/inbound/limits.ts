@@ -17,8 +17,21 @@ export const MAX_RAW_MESSAGE_BYTES = 40 * 1024 * 1024;
 /** Only the leading header block is scanned for SES verdict lines; cap how much we buffer for it. */
 export const MAX_HEADER_BLOCK_BYTES = 256 * 1024;
 
-/** Max MIME parts (text + attachment nodes) we process before treating the message as hostile. */
+/**
+ * Max MIME boundary-delimiter lines before the message is treated as hostile. Counted
+ * structurally over the raw byte stream (lines beginning `--`), NOT from parser output
+ * events — streaming MailParser aggregates all text parts into ONE event, so counting
+ * events would let a thousand-`text/plain`-part bomb through. A conservative
+ * over-approximation of the real part count (fail-closed); no legitimate message has
+ * hundreds of `--`-prefixed lines.
+ */
 export const MAX_MIME_PARTS = 200;
+
+/** Max retained/parsed plain-text body bytes — a body over this quarantines (limit_exceeded). */
+export const MAX_TEXT_BODY_BYTES = 10 * 1024 * 1024;
+
+/** Max retained/parsed HTML body bytes — a body over this quarantines; also caps MailParser's own HTML work. */
+export const MAX_HTML_BODY_BYTES = 10 * 1024 * 1024;
 
 /** Max attachments extracted to S3 from one message. */
 export const MAX_ATTACHMENTS = 25;

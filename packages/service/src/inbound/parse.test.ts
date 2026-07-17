@@ -27,10 +27,13 @@ class FakeSink implements AttachmentSink {
 const mime = (lines: string[]): Readable => Readable.from(Buffer.from(lines.join('\r\n')));
 
 const looseLimits = (over: Partial<ParseLimits> = {}): ParseLimits => ({
-  maxParts: 100,
+  maxParts: 1000,
+  maxHeaderBlockBytes: 256 * 1024,
   maxAttachments: 25,
   maxAttachmentBytes: 15 * 1024 * 1024,
   maxAttachmentTotalBytes: 30 * 1024 * 1024,
+  maxTextBodyBytes: 10 * 1024 * 1024,
+  maxHtmlBodyBytes: 10 * 1024 * 1024,
   ...over,
 });
 
@@ -232,6 +235,66 @@ describe('parseInbound — limits', () => {
       looseLimits({ maxAttachmentTotalBytes: 4 }),
     );
     expect(p.parseStatus).toBe('limit_exceeded');
+  });
+
+  it('limit_exceeded on a multipart body with more than maxParts NON-attachment parts', async () => {
+    // Six text/plain parts (which MailParser aggregates into ONE event) — event-counting
+    // would miss this; the structural delimiter scan catches it.
+    const many = [
+      'X-SES-Virus-Verdict: PASS',
+      'From: a@x.com',
+      'Content-Type: multipart/mixed; boundary="B"',
+      '',
+    ];
+    for (let i = 0; i < 6; i++) many.push('--B', 'Content-Type: text/plain', '', `part ${i}`);
+    many.push('--B--', '');
+    const p = await parseInbound(mime(many), new FakeSink(), looseLimits({ maxParts: 3 }));
+    expect(p.parseStatus).toBe('limit_exceeded');
+    expect(p.exposed).toBe(false);
+  });
+
+  it('limit_exceeded on an oversized header block (no boundary within the cap)', async () => {
+    const noBoundary = 'X-SES-Virus-Verdict: PASS\r\nX-Filler: ' + 'a'.repeat(64 * 1024);
+    const p = await parseInbound(
+      mime([noBoundary]),
+      new FakeSink(),
+      looseLimits({ maxHeaderBlockBytes: 8 * 1024 }),
+    );
+    expect(p.parseStatus).toBe('limit_exceeded');
+  });
+
+  it('limit_exceeded on an oversized plain-text body', async () => {
+    const p = await parseInbound(
+      mime([
+        'X-SES-Virus-Verdict: PASS',
+        'From: a@x.com',
+        'Content-Type: text/plain',
+        '',
+        'x'.repeat(20 * 1024),
+        '',
+      ]),
+      new FakeSink(),
+      looseLimits({ maxTextBodyBytes: 4 * 1024 }),
+    );
+    expect(p.parseStatus).toBe('limit_exceeded');
+    expect(p.exposed).toBe(false);
+  });
+
+  it('limit_exceeded on an oversized HTML body', async () => {
+    const p = await parseInbound(
+      mime([
+        'X-SES-Virus-Verdict: PASS',
+        'From: a@x.com',
+        'Content-Type: text/html',
+        '',
+        '<p>' + 'a'.repeat(20 * 1024) + '</p>',
+        '',
+      ]),
+      new FakeSink(),
+      looseLimits({ maxHtmlBodyBytes: 4 * 1024 }),
+    );
+    expect(p.parseStatus).toBe('limit_exceeded');
+    expect(p.exposed).toBe(false);
   });
 });
 
