@@ -36,9 +36,6 @@ export interface EmailServiceDeps {
   generateId?: () => string;
 }
 
-/** Base64 (no whitespace) — `contentBase64` is validated against this after stripping newlines. */
-const BASE64_RE = /^[A-Za-z0-9+/]+={0,2}$/;
-
 export class EmailService {
   private readonly ses: SesSender;
   private readonly emails: EmailsRepo;
@@ -176,12 +173,16 @@ export class EmailService {
         typeof attachment.contentBase64 === 'string'
           ? attachment.contentBase64.replace(/\s+/g, '')
           : '';
-      if (contentBase64.length === 0 || !BASE64_RE.test(contentBase64)) {
+      const decoded = Buffer.from(contentBase64, 'base64');
+      // Canonical base64 only: decode then re-encode must round-trip. This rejects
+      // non-alphabet characters, bad padding, and non-multiple-of-4 lengths that
+      // Buffer.from would otherwise silently drop (corrupting the attachment).
+      if (contentBase64.length === 0 || decoded.toString('base64') !== contentBase64) {
         throw emailErrors.invalidRequest(
           `Attachment "${filename}" must have valid base64 content.`,
         );
       }
-      totalBytes += Buffer.from(contentBase64, 'base64').length;
+      totalBytes += decoded.length;
       if (totalBytes > MAX_ATTACHMENT_TOTAL_BYTES) {
         throw emailErrors.invalidRequest(
           `Total attachment size exceeds ${MAX_ATTACHMENT_TOTAL_BYTES} bytes.`,
