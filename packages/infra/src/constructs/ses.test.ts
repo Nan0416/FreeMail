@@ -48,6 +48,22 @@ describe('SesConstruct', () => {
     });
   });
 
+  it('logs bounce/complaint events via an SNS-subscribed Lambda audit consumer', () => {
+    const template = synth();
+    template.resourceCountIs('AWS::Lambda::Function', 1);
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Runtime: 'nodejs22.x',
+      LoggingConfig: { LogGroup: Match.anyValue() },
+    });
+    template.resourceCountIs('AWS::Logs::LogGroup', 1);
+    template.hasResourceProperties('AWS::Logs::LogGroup', { RetentionInDays: 90 });
+    template.resourceCountIs('AWS::SNS::Subscription', 1);
+    template.hasResourceProperties('AWS::SNS::Subscription', {
+      Protocol: 'lambda',
+      TopicArn: Match.anyValue(),
+    });
+  });
+
   it('writes all deliverability records to Route53 (3 DKIM + SPF + MAIL FROM MX/SPF + DMARC)', () => {
     const template = synth();
     template.resourceCountIs('AWS::Route53::RecordSet', 7);

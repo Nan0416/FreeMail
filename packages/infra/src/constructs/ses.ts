@@ -1,4 +1,13 @@
-import { aws_route53 as route53, aws_ses as ses, aws_sns as sns } from 'aws-cdk-lib';
+import {
+  Duration,
+  RemovalPolicy,
+  aws_lambda as lambda,
+  aws_logs as logs,
+  aws_route53 as route53,
+  aws_ses as ses,
+  aws_sns as sns,
+  aws_sns_subscriptions as subscriptions,
+} from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 
 export interface SesConstructProps {
@@ -25,7 +34,7 @@ function txt(value: string): string {
  * SES sending for the email domain, with the full set of deliverability records
  * (DKIM, SPF, custom MAIL FROM, DMARC) written into the Route53 zone, plus a
  * configuration set that auto-suppresses bounced/complained addresses and fans
- * every bounce/complaint out to SNS for logging.
+ * every bounce/complaint out to SNS, where an audit Lambda logs them to CloudWatch.
  *
  * The identity is a plain `Identity.domain` (not `publicHostedZone`) so it works
  * whether `emailDomain` is the zone apex or a subdomain, and so every DNS record
@@ -35,8 +44,10 @@ function txt(value: string): string {
 export class SesConstruct extends Construct {
   readonly emailIdentity: ses.EmailIdentity;
   readonly configurationSet: ses.ConfigurationSet;
-  /** Bounce & complaint notifications. Subscribe a logging / suppression-audit consumer in a later slice. */
+  /** Bounce & complaint notifications, consumed by the audit logger below (add richer consumers later). */
   readonly bounceComplaintTopic: sns.Topic;
+  /** Logs every bounce/complaint SNS notification to CloudWatch for audit. */
+  readonly bounceComplaintLogger: lambda.Function;
   /** Custom MAIL FROM subdomain (`bounce.<emailDomain>`) — keeps SPF/DMARC aligned with the From domain. */
   readonly mailFromDomain: string;
 
@@ -65,6 +76,7 @@ export class SesConstruct extends Construct {
         ses.EmailSendingEvent.DELIVERY_DELAY,
       ],
     });
+    this.bounceComplaintLogger = this.addBounceComplaintLogger();
 
     this.emailIdentity = new ses.EmailIdentity(this, 'Identity', {
       identity: ses.Identity.domain(emailDomain),
@@ -77,6 +89,38 @@ export class SesConstruct extends Construct {
     });
 
     this.writeAuthRecords(hostedZone, emailDomain, region);
+  }
+
+  /**
+   * A minimal audit consumer so bounce/complaint events aren't silently discarded:
+   * an inline Lambda subscribed to the SNS topic logs each notification to its own
+   * CloudWatch log group. Richer handling (alerting, a suppression-audit store) can
+   * subscribe to the same topic or replace this later.
+   */
+  private addBounceComplaintLogger(): lambda.Function {
+    const logGroup = new logs.LogGroup(this, 'BounceComplaintLogGroup', {
+      retention: logs.RetentionDays.THREE_MONTHS,
+      // Audit logs, not user data — safe to remove with the stack.
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+    const logger = new lambda.Function(this, 'BounceComplaintLogger', {
+      runtime: lambda.Runtime.NODEJS_22_X,
+      handler: 'index.handler',
+      timeout: Duration.seconds(10),
+      logGroup,
+      description: 'Logs SES bounce/complaint notifications to CloudWatch for audit.',
+      code: lambda.Code.fromInline(
+        [
+          'exports.handler = async (event) => {',
+          '  for (const record of event.Records ?? []) {',
+          "    console.log('SES bounce/complaint notification', record.Sns?.Message ?? JSON.stringify(record.Sns));",
+          '  }',
+          '};',
+        ].join('\n'),
+      ),
+    });
+    this.bounceComplaintTopic.addSubscription(new subscriptions.LambdaSubscription(logger));
+    return logger;
   }
 
   private writeAuthRecords(
