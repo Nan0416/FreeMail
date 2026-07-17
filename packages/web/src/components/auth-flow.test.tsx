@@ -1,26 +1,7 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { createTokenStore } from '../api/token-store.js';
 import { AuthProvider } from '../auth/auth-context.js';
 import { AuthGate } from './AuthGate.js';
-
-function memoryStorage(): Storage {
-  const map = new Map<string, string>();
-  return {
-    get length() {
-      return map.size;
-    },
-    clear: () => map.clear(),
-    getItem: (key) => map.get(key) ?? null,
-    key: (index) => Array.from(map.keys())[index] ?? null,
-    removeItem: (key) => {
-      map.delete(key);
-    },
-    setItem: (key, value) => {
-      map.set(key, value);
-    },
-  };
-}
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -31,32 +12,37 @@ function json(status: number, body: unknown): Response {
 
 function renderGate(fetchImpl: typeof fetch) {
   return render(
-    <AuthProvider
-      apiBaseUrl="http://api.test"
-      fetchImpl={fetchImpl}
-      tokenStore={createTokenStore(memoryStorage())}
-    >
+    <AuthProvider apiBaseUrl="http://api.test" fetchImpl={fetchImpl}>
       <AuthGate />
     </AuthProvider>,
   );
 }
 
-const PAIR = { tokenType: 'Bearer', accessToken: 'a', refreshToken: 'r', expiresIn: 900 };
+/** The boot probe finds no session: `/me` is denied and the cookie refresh fails. */
+function noSession(url: unknown): Response | null {
+  const path = new URL(String(url)).pathname;
+  if (path === '/me') return json(403, { error: 'invalid_token', message: 'no session' });
+  if (path === '/auth/refresh') return json(401, { error: 'invalid_token', message: 'no session' });
+  return null;
+}
 
 describe('AuthGate', () => {
   it('shows the sign-in form when there is no session', async () => {
-    const fetchMock = vi.fn<typeof fetch>();
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      const res = noSession(url);
+      if (res) return res;
+      throw new Error(`unexpected ${new URL(String(url)).pathname}`);
+    });
     renderGate(fetchMock);
     expect(await screen.findByRole('form', { name: 'Sign in' })).toBeInTheDocument();
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('signs in and shows the app shell', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
-      const path = new URL(String(url)).pathname;
-      if (path === '/auth/login') return json(200, PAIR);
-      if (path === '/me') return json(200, { subject: 'owner' });
-      throw new Error(`unexpected ${path}`);
+      const res = noSession(url);
+      if (res) return res;
+      if (new URL(String(url)).pathname === '/auth/login') return json(200, { subject: 'owner' });
+      throw new Error(`unexpected ${new URL(String(url)).pathname}`);
     });
     renderGate(fetchMock);
 
@@ -69,8 +55,36 @@ describe('AuthGate', () => {
     expect(screen.getByText('Signed in as owner')).toBeInTheDocument();
   });
 
+  it('keeps the session and surfaces a retriable error when sign-out fails', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      const res = noSession(url);
+      if (res) return res;
+      const path = new URL(String(url)).pathname;
+      if (path === '/auth/login') return json(200, { subject: 'owner' });
+      // The revoke fails: only a 2xx clears the httpOnly cookies, so the session is live.
+      if (path === '/auth/logout') return json(500, { error: 'invalid_request', message: 'retry' });
+      throw new Error(`unexpected ${path}`);
+    });
+    renderGate(fetchMock);
+
+    fireEvent.change(await screen.findByLabelText('Password'), {
+      target: { value: 'a-strong-password' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    await screen.findByRole('heading', { name: 'Compose' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    // The failure is surfaced, and the app shell stays — never a false sign-out.
+    expect(await screen.findByRole('alert')).toHaveTextContent('Sign-out failed');
+    expect(screen.getByRole('heading', { name: 'Compose' })).toBeInTheDocument();
+    expect(screen.queryByRole('form', { name: 'Sign in' })).not.toBeInTheDocument();
+  });
+
   it('flips to first-run set-password when the server reports password_not_set', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      const res = noSession(url);
+      if (res) return res;
       const path = new URL(String(url)).pathname;
       if (path === '/auth/login') {
         return json(400, { error: 'password_not_set', message: 'no password yet' });
@@ -104,6 +118,8 @@ describe('AuthGate', () => {
 
   it('validates matching passwords before first-run set-password', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      const res = noSession(url);
+      if (res) return res;
       const path = new URL(String(url)).pathname;
       if (path === '/auth/login') {
         return json(400, { error: 'password_not_set', message: 'no password yet' });

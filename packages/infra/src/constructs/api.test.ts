@@ -26,6 +26,24 @@ describe('ApiConstruct', () => {
     template.hasOutput('ApiEndpoint', {});
   });
 
+  it('configures NO CORS (the web app is same-origin via the CloudFront /api proxy)', () => {
+    const template = synth();
+    // The wildcard was removed, not replaced — a same-origin API grants the browser
+    // no cross-origin access, and ambient SameSite=Strict cookies never reach this host.
+    template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
+      CorsConfiguration: Match.absent(),
+    });
+  });
+
+  it('enables NO API-Gateway access logging (so the Cookie header can never be logged)', () => {
+    const template = synth();
+    // Both credentials now ride the Cookie header on every request; access logging is
+    // off entirely, so no access log can capture or leak it.
+    template.hasResourceProperties('AWS::ApiGatewayV2::Stage', {
+      AccessLogSettings: Match.absent(),
+    });
+  });
+
   it('wires a dual-scheme SIMPLE request authorizer', () => {
     const template = synth();
     template.resourceCountIs('AWS::ApiGatewayV2::Authorizer', 1);

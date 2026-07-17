@@ -1,13 +1,10 @@
 import type {
   CreateApiKeyResponse,
   ListApiKeysResponse,
-  RefreshResponse,
   SendEmailRequest,
   SendEmailResponse,
   SessionResponse,
-  TokenPair,
 } from '@freemail/shared';
-import type { TokenStore } from './token-store.js';
 
 /** A typed error carrying the server's `{ error, message }` body plus the HTTP status. */
 export class ApiError extends Error {
@@ -24,9 +21,8 @@ export class ApiError extends Error {
 type Method = 'GET' | 'POST' | 'DELETE';
 
 export interface FreeMailClientOptions {
-  /** API base URL (no trailing slash), from the runtime `config.json`. */
+  /** API base URL from the runtime `config.json` — the same-origin `/api` proxy path. */
   baseUrl: string;
-  tokens: TokenStore;
   /** Injectable for tests; defaults to a `fetch` that keeps the global binding. */
   fetchImpl?: typeof fetch;
   /** Invoked when auth is irrecoverably lost (a refresh failed) so the UI can drop to the sign-in screen. */
@@ -34,36 +30,32 @@ export interface FreeMailClientOptions {
 }
 
 /**
- * Thin typed client over the FreeMail REST API. All auth is Bearer (no cookies),
- * matching the API's wildcard-origin CORS. On a 401 for an authenticated request
- * it transparently refreshes once and retries:
+ * Thin typed client over the FreeMail REST API. Auth is entirely httpOnly cookies
+ * (#31): every request sends `credentials: 'include'` and NO `Authorization` header,
+ * and the SPA never reads, stores, or rotates a token — the browser attaches the
+ * `__Host-fm_access` / `__Host-fm_refresh` cookies and the server rotates them.
  *
- *  - **single-flight** — concurrent 401s share ONE in-flight `/auth/refresh`, so a
- *    burst of requests rotates the refresh token exactly once (rotation replaces
- *    the stored token immediately);
- *  - **retry-once** — the retried request is returned as-is even if it 401s again
+ * On a 401/403 for an authenticated request (an expired access cookie surfaces as a
+ * 403 from the authorizer) it transparently refreshes once and retries:
+ *
+ *  - **single-flight** — concurrent auth failures share ONE in-flight `/auth/refresh`
+ *    (the server rotates the refresh cookie exactly once);
+ *  - **retry-once** — the retried request is returned as-is even if it fails again
  *    (no refresh loop);
- *  - **clear-on-failure** — if the refresh itself fails, all auth state is dropped
- *    and `onAuthLost` fires.
+ *  - **clear-on-failure** — if the refresh itself fails, `onAuthLost` fires (the
+ *    server has already cleared both cookies on that path).
  */
 export class FreeMailClient {
   private readonly baseUrl: string;
-  private readonly tokens: TokenStore;
   private readonly fetchImpl: typeof fetch;
   private readonly onAuthLost?: () => void;
   private refreshInFlight: Promise<boolean> | null = null;
 
   constructor(opts: FreeMailClientOptions) {
     this.baseUrl = opts.baseUrl;
-    this.tokens = opts.tokens;
     // Wrap rather than pass `fetch` directly so the global `this` binding is kept.
     this.fetchImpl = opts.fetchImpl ?? ((input, init) => fetch(input, init));
     this.onAuthLost = opts.onAuthLost;
-  }
-
-  /** True when a refresh token is present — the app treats this as "has a session". */
-  hasSession(): boolean {
-    return this.tokens.getRefreshToken() !== null;
   }
 
   // --- unauthenticated ---
@@ -73,26 +65,22 @@ export class FreeMailClient {
     await this.request('POST', '/auth/set-password', { body: { password }, auth: false });
   }
 
-  /** Verify the password and store the issued token pair. */
-  async login(password: string): Promise<void> {
-    const pair = await this.request<TokenPair>('POST', '/auth/login', {
+  /** Verify the password; on success the server sets the session cookies. Returns the subject. */
+  async login(password: string): Promise<SessionResponse> {
+    return this.request<SessionResponse>('POST', '/auth/login', {
       body: { password },
       auth: false,
     });
-    this.tokens.setTokens(pair);
   }
 
-  /** Best-effort server-side revoke, then drop local auth state unconditionally. */
+  /**
+   * Sign out: the server revokes the refresh token and clears both cookies. ONLY a
+   * successful (2xx) response clears the httpOnly cookies, so a non-2xx or network
+   * failure is PROPAGATED — the caller must surface a retriable error and must not
+   * report a sign-out, because the session is still live.
+   */
   async logout(): Promise<void> {
-    const refreshToken = this.tokens.getRefreshToken();
-    this.tokens.clear();
-    if (refreshToken) {
-      try {
-        await this.request('POST', '/auth/logout', { body: { refreshToken }, auth: false });
-      } catch {
-        // Local state is already cleared; a failed server revoke must not block sign-out.
-      }
-    }
+    await this.request('POST', '/auth/logout', { auth: false });
   }
 
   // --- authenticated ---
@@ -128,38 +116,30 @@ export class FreeMailClient {
     path: string,
     opts: { body?: unknown; auth: boolean },
   ): Promise<T> {
-    const response = await this.rawRequest(method, path, opts.body, opts.auth);
-    if (response.status === 401 && opts.auth) {
+    const response = await this.rawRequest(method, path, opts.body);
+    // An expired access cookie is denied by the authorizer as a 403; a 401 is handled
+    // the same. Refresh once and retry only for authenticated requests.
+    if ((response.status === 401 || response.status === 403) && opts.auth) {
       const refreshed = await this.refreshTokens();
       if (refreshed) {
-        // Retry exactly once with the rotated access token — no loop on a second 401.
-        return this.parse<T>(await this.rawRequest(method, path, opts.body, true));
+        // Retry exactly once with the rotated cookies — no loop on a second failure.
+        return this.parse<T>(await this.rawRequest(method, path, opts.body));
       }
-      this.tokens.clear();
       this.onAuthLost?.();
     }
     return this.parse<T>(response);
   }
 
-  private async rawRequest(
-    method: Method,
-    path: string,
-    body: unknown,
-    auth: boolean,
-  ): Promise<Response> {
+  private async rawRequest(method: Method, path: string, body: unknown): Promise<Response> {
     const headers: Record<string, string> = {};
     if (body !== undefined) {
       headers['content-type'] = 'application/json';
     }
-    if (auth) {
-      const accessToken = this.tokens.getAccessToken();
-      if (accessToken) {
-        headers.authorization = `Bearer ${accessToken}`;
-      }
-    }
     return this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
       headers,
+      // The session cookies are httpOnly; the browser attaches them here.
+      credentials: 'include',
       body: body !== undefined ? JSON.stringify(body) : undefined,
     });
   }
@@ -175,22 +155,12 @@ export class FreeMailClient {
   }
 
   private async doRefresh(): Promise<boolean> {
-    const refreshToken = this.tokens.getRefreshToken();
-    if (!refreshToken) {
-      return false;
-    }
-    // Any refresh failure — a non-2xx OR a thrown network error — resolves to
-    // `false` so the caller runs the same clear + onAuthLost cleanup. A throw here
-    // must not escape past that cleanup.
+    // The refresh token rides in the httpOnly cookie — no body. Any failure (non-2xx
+    // OR a thrown network error) resolves to `false` so the caller runs onAuthLost;
+    // the server has already cleared both cookies on the non-2xx path.
     try {
-      const response = await this.rawRequest('POST', '/auth/refresh', { refreshToken }, false);
-      if (!response.ok) {
-        return false;
-      }
-      const pair = (await response.json()) as RefreshResponse;
-      // Rotation: replace the stored refresh token immediately.
-      this.tokens.setTokens(pair);
-      return true;
+      const response = await this.rawRequest('POST', '/auth/refresh', undefined);
+      return response.ok;
     } catch {
       return false;
     }

@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   Duration,
+  Fn,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
   aws_s3 as s3,
@@ -26,12 +27,55 @@ export function resolveWebAssetPath(): string {
   return existsSync(join(BUILT_SPA_DIR, 'index.html')) ? BUILT_SPA_DIR : PLACEHOLDER_DIR;
 }
 
+/**
+ * Strip the `/api` prefix the SPA uses to reach the same-origin API proxy, so the
+ * request that reaches the HTTP API origin matches its real route
+ * (`/api/auth/login` → `/auth/login`). Pure + exported so the rewrite boundary is
+ * unit-tested and then embedded verbatim into the CloudFront Function (deployed ===
+ * tested). MUST stay self-contained (no imports/closure) so `.toString()` yields
+ * runnable CloudFront JS. A lookalike prefix such as `/apiary` never reaches this
+ * (the `/api/*` behavior does not match it), but is left untouched regardless.
+ */
+export function rewriteApiPath(uri: string): string {
+  if (uri === '/api' || uri === '/api/') {
+    return '/';
+  }
+  if (uri.indexOf('/api/') === 0) {
+    return uri.substring(4);
+  }
+  return uri;
+}
+
+/**
+ * SPA client-routing fallback: a request with no file extension (a client route
+ * like `/inbox`, not `/assets/app-abc.js` or `/config.json`) is served `index.html`.
+ * This replaces distribution-wide 403/404 custom error responses — those are global
+ * and would mask real API 403/404 responses coming back through the `/api/*` proxy
+ * (an authorizer deny is a 403; a not-found is a 404). Pure + exported (same embed
+ * pattern as {@link rewriteApiPath}); only ever associated with the DEFAULT (S3)
+ * behavior, so it never runs on `/api/*`.
+ */
+export function rewriteSpaPath(uri: string): string {
+  return uri.indexOf('.') === -1 ? '/index.html' : uri;
+}
+
+function cloudFrontFunctionCode(pure: (uri: string) => string): string {
+  return `${pure.toString()}
+function handler(event) {
+  var request = event.request;
+  request.uri = ${pure.name}(request.uri);
+  return request;
+}`;
+}
+
 export interface WebConstructProps {
   /** The private S3 bucket that holds the built SPA (from {@link DataConstruct}). */
   webBucket: s3.Bucket;
   /**
-   * The HTTP API base URL. Written to `config.json` at deploy so the SPA learns it
-   * at runtime — it is a deploy-time CloudFormation value, unknown at `vite build`.
+   * The HTTP API base URL (e.g. `https://abc123.execute-api.us-east-1.amazonaws.com`).
+   * Its host backs the same-origin `/api/*` CloudFront proxy origin. The SPA itself
+   * calls the API at the relative same-origin path `/api`, so no cross-origin URL is
+   * baked into the bundle.
    */
   apiEndpoint: string;
   /** The SPA asset directory (built dist or placeholder). See {@link resolveWebAssetPath}. */
@@ -39,15 +83,21 @@ export interface WebConstructProps {
 }
 
 /**
- * CloudFront + S3 hosting for the React SPA. The private bucket is fronted by a
- * CloudFront distribution via Origin Access Control (no public bucket), with an
- * SPA fallback (403/404 → `index.html`).
+ * CloudFront + S3 hosting for the React SPA, plus a SAME-ORIGIN API proxy. The
+ * private bucket is fronted by a CloudFront distribution via Origin Access Control
+ * (no public bucket); a viewer-request CloudFront Function serves `index.html` for
+ * client routes.
  *
- * The API endpoint is injected at deploy as `config.json` (not baked into the
- * bundle), so `index.html` and `config.json` are served **no-cache** while the
- * content-hashed `/assets/*` are long-immutable — a redeploy that changes the API
- * endpoint or ships new code can never be masked by a stale cached `config.json`.
- * Each deploy also invalidates those two paths.
+ * The `/api/*` behavior proxies to the HTTP API origin so the web app is same-origin
+ * with the API — required for the httpOnly `SameSite=Strict` session cookies (#31)
+ * to be sent at all, and it means there is no CORS. That behavior is never cached
+ * (auth responses carry `Set-Cookie`), forwards every viewer header/cookie/query and
+ * the body (except `Host`), and strips the `/api` prefix before origin routing. The
+ * HTTP API's own authorizer stays the enforcement boundary — the proxy adds no new
+ * route surface.
+ *
+ * The SPA reads a runtime `config.json` (served no-cache, invalidated every deploy)
+ * that points it at the relative `/api`; content-hashed `/assets/*` stay long-immutable.
  */
 export class WebConstruct extends Construct {
   readonly distribution: cloudfront.Distribution;
@@ -55,6 +105,20 @@ export class WebConstruct extends Construct {
   constructor(scope: Construct, id: string, props: WebConstructProps) {
     super(scope, id);
     const { webBucket, apiEndpoint, assetPath } = props;
+
+    const spaRewrite = new cloudfront.Function(this, 'SpaRouting', {
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      comment: 'Serve index.html for SPA client routes (extensionless paths).',
+      code: cloudfront.FunctionCode.fromInline(cloudFrontFunctionCode(rewriteSpaPath)),
+    });
+    const apiRewrite = new cloudfront.Function(this, 'ApiPathRewrite', {
+      runtime: cloudfront.FunctionRuntime.JS_2_0,
+      comment: 'Strip the /api prefix before routing to the HTTP API origin.',
+      code: cloudfront.FunctionCode.fromInline(cloudFrontFunctionCode(rewriteApiPath)),
+    });
+
+    // The API endpoint is `https://<host>` (no trailing slash / stage) — take the host.
+    const apiHost = Fn.select(2, Fn.split('/', apiEndpoint));
 
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: 'FreeMail web app',
@@ -66,22 +130,28 @@ export class WebConstruct extends Construct {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        functionAssociations: [
+          { function: spaRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+        ],
       },
-      // SPA fallback: a private-bucket miss returns 403 (or 404) → serve index.html.
-      errorResponses: [
-        {
-          httpStatus: 403,
-          responseHttpStatus: 200,
-          responsePagePath: '/index.html',
-          ttl: Duration.minutes(5),
+      additionalBehaviors: {
+        // Same-origin API proxy: cookies are first-party to the CloudFront domain, so
+        // SameSite=Strict works and there is no CORS. Never cached (Set-Cookie); every
+        // viewer header/cookie/query + body forwarded to the API (except Host); `/api`
+        // stripped before origin routing.
+        '/api/*': {
+          origin: new origins.HttpOrigin(apiHost, {
+            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+          }),
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          functionAssociations: [
+            { function: apiRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+          ],
         },
-        {
-          httpStatus: 404,
-          responseHttpStatus: 200,
-          responsePagePath: '/index.html',
-          ttl: Duration.minutes(5),
-        },
-      ],
+      },
     });
 
     // Content-hashed assets: long-lived, immutable. `prune: false` so this deploy
@@ -99,12 +169,13 @@ export class WebConstruct extends Construct {
     });
 
     // index.html + the deploy-time config.json: no-cache, and invalidated every
-    // deploy so a changed API endpoint or new build propagates immediately.
+    // deploy so a new build propagates immediately. The SPA is same-origin with the
+    // API, so its base URL is the relative `/api` proxy path (not a cross-origin URL).
     new s3deploy.BucketDeployment(this, 'SpaRoot', {
       destinationBucket: webBucket,
       sources: [
         s3deploy.Source.asset(assetPath, { exclude: ['assets/**'] }),
-        s3deploy.Source.jsonData('config.json', { apiBaseUrl: apiEndpoint }),
+        s3deploy.Source.jsonData('config.json', { apiBaseUrl: '/api' }),
       ],
       cacheControl: [s3deploy.CacheControl.noCache(), s3deploy.CacheControl.mustRevalidate()],
       prune: false,

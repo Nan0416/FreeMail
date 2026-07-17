@@ -23,8 +23,10 @@ TypeScript · npm workspaces monorepo · Node.js (Lambda) · React (SPA) · AWS 
 ## Auth ✅
 - **Single-tenant password.** On first open the user sets a password → stored **hashed** (argon2/bcrypt, Lambda-safe) in DDB. No username.
 - **Login** issues **access + refresh** tokens (JWT; signing key in SSM/Secrets Manager). Refresh rotation. Login endpoint **rate-limited / lockout** (single-password brute-force protection).
-- **API keys** for agents → the MCP server. Registered via the React app; stored **hashed**, shown raw once. **One key = full access** (no per-key scopes for v1). Validated by a **Lambda authorizer**.
-- **API Gateway itself is unauthenticated; auth lives in the backend** (a Lambda authorizer covers both REST access-tokens and MCP API-keys).
+- **Web session = httpOnly cookies** (#31). Both tokens ride in `HttpOnly; Secure; SameSite=Strict; Path=/` cookies (`__Host-fm_access` / `__Host-fm_refresh`) the browser stores but page JS cannot read — no token in any web storage, so XSS cannot exfiltrate the session. The SPA holds no token and sends `credentials: 'include'` with no `Authorization` header; refresh/logout read the refresh token **only** from the cookie (never a body/query), and every refresh failure clears both cookies. Auth responses are `Cache-Control: no-store`.
+- **CSRF = `SameSite=Strict`.** To make Strict cookies work (they are dropped on cross-site requests), the SPA is served **same-origin** with the API: CloudFront proxies `/api/*` to the HTTP API, so the browser only ever talks to one origin and there is **no CORS**. A double-submit CSRF token is **deferred** behind Strict.
+- **API keys** for agents → the MCP server. Registered via the React app; stored **hashed**, shown raw once. **One key = full access** (no per-key scopes for v1). Validated by a **Lambda authorizer** (the agent `x-api-key` path is unchanged by the cookie work).
+- **API Gateway itself is unauthenticated; auth lives in the backend** (a Lambda authorizer covers both the web access-token cookie and MCP API-keys).
 
 ## APIs
 1. **REST API** (React app): set-password/login, send email, manage API keys; (with inbound) list/read emails + attachment download.

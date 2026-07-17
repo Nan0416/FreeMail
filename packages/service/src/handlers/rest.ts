@@ -16,8 +16,14 @@ import type {
 } from '@freemail/shared';
 import { DEFAULT_EMAIL_PAGE_SIZE, MAX_EMAIL_PAGE_SIZE } from '@freemail/shared';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
-import { AuthService } from '../auth/service.js';
+import { AuthService, OWNER_SUBJECT } from '../auth/service.js';
 import { AuthError, authErrors } from '../auth/errors.js';
+import {
+  REFRESH_COOKIE,
+  clearSessionCookies,
+  readCookie,
+  sessionCookies,
+} from '../auth/cookies.js';
 import { DdbAuthRepo } from '../data/ddb-auth-repo.js';
 import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
 import { ApiKeyService } from '../keys/service.js';
@@ -29,6 +35,9 @@ import { getSigningKey } from '../config/signing-key.js';
 import { requireAccessScheme, subjectFromContext } from './request-context.js';
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
+// Auth responses carry Set-Cookie, so they must never be cached by any layer
+// (a cached session cookie served to another viewer is the nightmare case).
+const NO_STORE_HEADERS = { 'cache-control': 'no-store' };
 
 // Reused across warm invocations; the signing key is cached inside getSigningKey.
 let repo: DdbAuthRepo | undefined;
@@ -60,14 +69,22 @@ export const handler = async (
     switch (event.routeKey) {
       case 'POST /auth/set-password':
         await service.setPassword(requireString(parseBody(event), 'password'));
-        return noContent();
-      case 'POST /auth/login':
-        return json(200, await service.login(requireString(parseBody(event), 'password')));
+        return authNoContent();
+      case 'POST /auth/login': {
+        const pair = await service.login(requireString(parseBody(event), 'password'));
+        // Tokens ride in httpOnly cookies; the body only echoes the session subject.
+        return authJson(
+          200,
+          { subject: OWNER_SUBJECT } satisfies SessionResponse,
+          sessionCookies(pair.accessToken, pair.refreshToken),
+        );
+      }
       case 'POST /auth/refresh':
-        return json(200, await service.refresh(requireString(parseBody(event), 'refreshToken')));
+        // Awaited so an unexpected (non-AuthError) rejection is normalized by the
+        // outer catch (clean 500, no cookie logged) rather than escaping the handler.
+        return await handleRefresh(event, service);
       case 'POST /auth/logout':
-        await service.logout(requireString(parseBody(event), 'refreshToken'));
-        return noContent();
+        return await handleLogout(event, service);
       case 'GET /me':
         return json(200, { subject: subjectFromContext(event) } satisfies SessionResponse);
       case 'POST /keys':
@@ -120,6 +137,78 @@ export const handler = async (
     return toErrorResponse(error);
   }
 };
+
+/**
+ * Rotate the session from the refresh cookie. The refresh credential is read ONLY
+ * from the `__Host-fm_refresh` cookie — never a body or query param — and every
+ * failure path (absent, duplicate/injected, malformed, expired, or replayed) clears
+ * BOTH cookies and returns the auth error, so a failed refresh can never leave a
+ * partial session or emit a refreshed credential.
+ */
+async function handleRefresh(
+  event: APIGatewayProxyEventV2,
+  service: AuthService,
+): Promise<APIGatewayProxyStructuredResultV2> {
+  const cookie = readCookie(event.cookies, REFRESH_COOKIE);
+  // A duplicate is treated exactly like an absent cookie — rejected, never guessed.
+  const refreshToken = typeof cookie === 'string' ? cookie : null;
+  if (refreshToken === null) {
+    return refreshFailure(authErrors.invalidToken());
+  }
+  try {
+    const pair = await service.refresh(refreshToken);
+    return authNoContent(sessionCookies(pair.accessToken, pair.refreshToken));
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return refreshFailure(error);
+    }
+    throw error;
+  }
+}
+
+/**
+ * Server-side revoke of the presented refresh token, then always clear both cookies.
+ * Since the tokens are httpOnly, ONLY this response's `Set-Cookie` can clear the
+ * browser copy — so both clears are emitted on EVERY path, including when revocation
+ * throws. A revocation failure returns a non-2xx (the client must not report a clean
+ * sign-out when the server session may still be live) but still attaches the clears
+ * to best-effort remove the browser copy. The refresh credential is read only from
+ * the cookie, never a body/query.
+ */
+async function handleLogout(
+  event: APIGatewayProxyEventV2,
+  service: AuthService,
+): Promise<APIGatewayProxyStructuredResultV2> {
+  const cookie = readCookie(event.cookies, REFRESH_COOKIE);
+  try {
+    if (typeof cookie === 'string') {
+      await service.logout(cookie);
+    }
+  } catch {
+    // Revocation failed (e.g. a transient store error): still clear the browser copy,
+    // but signal non-2xx so the client surfaces a retriable failure instead of a lie.
+    return {
+      statusCode: 500,
+      headers: { ...JSON_HEADERS, ...NO_STORE_HEADERS },
+      cookies: clearSessionCookies(),
+      body: JSON.stringify({
+        error: 'invalid_request',
+        message: 'Sign-out could not complete. Please retry.',
+      }),
+    };
+  }
+  return authNoContent(clearSessionCookies());
+}
+
+/** An auth error response that also clears both session cookies (no-store, never cached). */
+function refreshFailure(error: AuthError): APIGatewayProxyStructuredResultV2 {
+  return {
+    statusCode: error.status,
+    headers: { ...JSON_HEADERS, ...NO_STORE_HEADERS },
+    cookies: clearSessionCookies(),
+    body: JSON.stringify({ error: error.code, message: error.message }),
+  };
+}
 
 function parseBody(event: APIGatewayProxyEventV2): Record<string, unknown> {
   if (!event.body) {
@@ -309,4 +398,23 @@ function json(statusCode: number, body: unknown): APIGatewayProxyStructuredResul
 
 function noContent(): APIGatewayProxyStructuredResultV2 {
   return { statusCode: 204 };
+}
+
+/** A JSON auth response (`no-store`) that optionally sets session cookies. */
+function authJson(
+  statusCode: number,
+  body: unknown,
+  cookies?: string[],
+): APIGatewayProxyStructuredResultV2 {
+  return {
+    statusCode,
+    headers: { ...JSON_HEADERS, ...NO_STORE_HEADERS },
+    ...(cookies ? { cookies } : {}),
+    body: JSON.stringify(body),
+  };
+}
+
+/** A 204 auth response (`no-store`) that optionally sets/clears session cookies. */
+function authNoContent(cookies?: string[]): APIGatewayProxyStructuredResultV2 {
+  return { statusCode: 204, headers: { ...NO_STORE_HEADERS }, ...(cookies ? { cookies } : {}) };
 }

@@ -1,7 +1,36 @@
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emailErrors } from '../email/errors.js';
+import { authErrors } from '../auth/errors.js';
+import { ACCESS_COOKIE, REFRESH_COOKIE } from '../auth/cookies.js';
 import { handler } from './rest.js';
+
+// Stub AuthService so the auth-cookie routes exercise the handler's set/clear/no-store
+// plumbing without DDB. OWNER_SUBJECT is re-exported because the handler imports it.
+const { authMocks } = vi.hoisted(() => ({
+  authMocks: {
+    setPassword: vi.fn(),
+    login: vi.fn(),
+    refresh: vi.fn(),
+    logout: vi.fn(),
+  },
+}));
+vi.mock('../auth/service.js', () => ({
+  OWNER_SUBJECT: 'owner',
+  AuthService: class {
+    setPassword = authMocks.setPassword;
+    login = authMocks.login;
+    refresh = authMocks.refresh;
+    logout = authMocks.logout;
+  },
+}));
+
+const TOKEN_PAIR = {
+  tokenType: 'Bearer' as const,
+  accessToken: 'AT',
+  refreshToken: 'RT',
+  expiresIn: 900,
+};
 
 // The handler builds an AuthService (which reads the signing key) for every route;
 // stub it so these tests exercise routing/authorization without AWS. The key
@@ -56,6 +85,10 @@ beforeEach(() => {
     messageId: 'ses-1',
     sentAt: '2026-07-17T00:00:00.000Z',
   });
+  authMocks.setPassword.mockReset().mockResolvedValue(undefined);
+  authMocks.login.mockReset().mockResolvedValue(TOKEN_PAIR);
+  authMocks.refresh.mockReset();
+  authMocks.logout.mockReset().mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -187,5 +220,149 @@ describe('rest handler — reads are access-token-only', () => {
     const res = await handler(readEvent('GET /emails/{id}', 'access', { path: { id: 'nope' } }));
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body ?? '{}').error).toBe('not_found');
+  });
+});
+
+function authEvent(
+  routeKey: string,
+  opts: { body?: unknown; cookies?: string[] } = {},
+): APIGatewayProxyEventV2 {
+  return {
+    routeKey,
+    body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+    cookies: opts.cookies,
+    requestContext: {},
+  } as unknown as APIGatewayProxyEventV2;
+}
+
+function allCleared(cookies: string[] | undefined): boolean {
+  return (
+    cookies !== undefined &&
+    cookies.length === 2 &&
+    cookies[0] === `${ACCESS_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0` &&
+    cookies[1] === `${REFRESH_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`
+  );
+}
+
+describe('rest handler — session cookies (login)', () => {
+  it('sets both httpOnly session cookies + no-store and echoes the subject', async () => {
+    const res = await handler(authEvent('POST /auth/login', { body: { password: 'a-password' } }));
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body ?? '{}')).toEqual({ subject: 'owner' });
+    expect(res.headers?.['cache-control']).toBe('no-store');
+    expect(res.cookies?.[0]).toContain(`${ACCESS_COOKIE}=AT`);
+    expect(res.cookies?.[1]).toContain(`${REFRESH_COOKIE}=RT`);
+    expect(authMocks.login).toHaveBeenCalledWith('a-password');
+  });
+
+  it('set-password returns 204 no-store and sets NO cookies', async () => {
+    const res = await handler(authEvent('POST /auth/set-password', { body: { password: 'a-pw' } }));
+    expect(res.statusCode).toBe(204);
+    expect(res.headers?.['cache-control']).toBe('no-store');
+    expect(res.cookies).toBeUndefined();
+    expect(authMocks.setPassword).toHaveBeenCalledWith('a-pw');
+  });
+});
+
+describe('rest handler — refresh reads the cookie only, clears on every failure', () => {
+  it('rotates from the refresh cookie and sets fresh cookies (204, no-store)', async () => {
+    authMocks.refresh.mockResolvedValue({ ...TOKEN_PAIR, accessToken: 'AT2', refreshToken: 'RT2' });
+    const res = await handler(
+      authEvent('POST /auth/refresh', { cookies: [`${REFRESH_COOKIE}=RT`] }),
+    );
+    expect(res.statusCode).toBe(204);
+    expect(res.headers?.['cache-control']).toBe('no-store');
+    expect(authMocks.refresh).toHaveBeenCalledWith('RT');
+    expect(res.cookies?.[0]).toContain(`${ACCESS_COOKIE}=AT2`);
+    expect(res.cookies?.[1]).toContain(`${REFRESH_COOKIE}=RT2`);
+  });
+
+  it('rejects + clears both when the refresh cookie is absent (never touches the service)', async () => {
+    const res = await handler(authEvent('POST /auth/refresh', {}));
+    expect(res.statusCode).toBe(401);
+    expect(res.headers?.['cache-control']).toBe('no-store');
+    expect(authMocks.refresh).not.toHaveBeenCalled();
+    expect(allCleared(res.cookies)).toBe(true);
+  });
+
+  it('NEVER reads the refresh token from the request body', async () => {
+    const res = await handler(
+      authEvent('POST /auth/refresh', { body: { refreshToken: 'FROM_BODY' } }),
+    );
+    expect(res.statusCode).toBe(401);
+    expect(authMocks.refresh).not.toHaveBeenCalled();
+    expect(allCleared(res.cookies)).toBe(true);
+  });
+
+  it('rejects + clears both on a duplicate/injected refresh cookie (without guessing)', async () => {
+    const res = await handler(
+      authEvent('POST /auth/refresh', { cookies: [`${REFRESH_COOKIE}=a`, `${REFRESH_COOKIE}=b`] }),
+    );
+    expect(res.statusCode).toBe(401);
+    expect(authMocks.refresh).not.toHaveBeenCalled();
+    expect(allCleared(res.cookies)).toBe(true);
+  });
+
+  it('clears both and emits NO refreshed credential on a malformed/expired/replayed token', async () => {
+    authMocks.refresh.mockRejectedValue(authErrors.invalidToken());
+    const res = await handler(
+      authEvent('POST /auth/refresh', { cookies: [`${REFRESH_COOKIE}=stale`] }),
+    );
+    expect(res.statusCode).toBe(401);
+    expect(res.headers?.['cache-control']).toBe('no-store');
+    // Both cookies are cleared (empty value, Max-Age=0) — never a fresh token.
+    expect(allCleared(res.cookies)).toBe(true);
+  });
+});
+
+describe('rest handler — never logs the Cookie header', () => {
+  it('does not leak cookie values into logs on the unhandled-error path', async () => {
+    const SECRET = 'super-secret-refresh-token-value';
+    // Force the generic (non-AuthError) error path, which is the only place the
+    // handler logs — it must log the error, never the request/cookies.
+    authMocks.refresh.mockRejectedValue(new Error('boom'));
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const res = await handler(
+        authEvent('POST /auth/refresh', { cookies: [`${REFRESH_COOKIE}=${SECRET}`] }),
+      );
+      expect(res.statusCode).toBe(500);
+      const logged = errorSpy.mock.calls.map((args) => args.map(String).join(' ')).join('\n');
+      expect(logged).not.toContain(SECRET);
+      expect(logged).not.toContain(REFRESH_COOKIE);
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
+
+describe('rest handler — logout clears both cookies (POST, idempotent)', () => {
+  it('revokes the presented refresh token and clears both (204, no-store)', async () => {
+    const res = await handler(
+      authEvent('POST /auth/logout', { cookies: [`${REFRESH_COOKIE}=RT`] }),
+    );
+    expect(res.statusCode).toBe(204);
+    expect(res.headers?.['cache-control']).toBe('no-store');
+    expect(authMocks.logout).toHaveBeenCalledWith('RT');
+    expect(allCleared(res.cookies)).toBe(true);
+  });
+
+  it('still clears both with no cookie present (idempotent, no revoke)', async () => {
+    const res = await handler(authEvent('POST /auth/logout', {}));
+    expect(res.statusCode).toBe(204);
+    expect(authMocks.logout).not.toHaveBeenCalled();
+    expect(allCleared(res.cookies)).toBe(true);
+  });
+
+  it('still clears both AND returns non-2xx when server-side revocation throws', async () => {
+    authMocks.logout.mockRejectedValue(new Error('store unavailable'));
+    const res = await handler(
+      authEvent('POST /auth/logout', { cookies: [`${REFRESH_COOKIE}=RT`] }),
+    );
+    // Non-2xx so the client knows the revoke wasn't clean...
+    expect(res.statusCode).toBe(500);
+    expect(res.headers?.['cache-control']).toBe('no-store');
+    // ...but the "always clear" contract still holds (best-effort remove the browser copy).
+    expect(allCleared(res.cookies)).toBe(true);
   });
 });

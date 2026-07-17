@@ -4,8 +4,16 @@ import { App } from './App';
 
 describe('App', () => {
   it('mounts the sign-in screen once runtime config loads', async () => {
-    const loadConfig = vi.fn().mockResolvedValue({ apiBaseUrl: 'http://api.test' });
-    const fetchImpl = vi.fn<typeof fetch>();
+    const loadConfig = vi.fn().mockResolvedValue({ apiBaseUrl: '/api' });
+    // The boot session probe finds no session (denied `/me`, failed cookie refresh).
+    const fetchImpl = vi.fn<typeof fetch>(async (url) => {
+      const path = new URL(String(url), 'http://local').pathname;
+      const status = path === '/api/me' ? 403 : 401;
+      return new Response(JSON.stringify({ error: 'invalid_token', message: 'no session' }), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
     render(<App loadConfig={loadConfig} fetchImpl={fetchImpl} />);
     expect(await screen.findByRole('form', { name: 'Sign in' })).toBeInTheDocument();
   });
