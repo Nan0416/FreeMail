@@ -16,11 +16,21 @@ export interface AuthRepo {
   /** The stored password hash, or null when set-password has not run. */
   getPasswordHash(): Promise<string | null>;
 
-  /** Current lockout counters, or null when there have been no recent failures. */
+  /**
+   * Current lockout counters (or null when there have been no recent failures),
+   * for the pre-verify fast reject. A slightly stale read here is safe — it only
+   * gates whether to attempt the password check; the authoritative count is
+   * advanced atomically by {@link registerFailedAttempt}.
+   */
   getLockout(): Promise<LockoutState | null>;
 
-  /** Persist lockout counters, expiring at `ttlEpochSeconds` so stale windows self-clean. */
-  putLockout(state: LockoutState, ttlEpochSeconds: number): Promise<void>;
+  /**
+   * Atomically fold one failed attempt into the lockout state and return the
+   * committed result. Must be lost-update-free under concurrent failures (so the
+   * threshold can't be bypassed by parallelizing attempts) — the DynamoDB
+   * implementation does a versioned compare-and-swap retry.
+   */
+  registerFailedAttempt(nowSeconds: number): Promise<LockoutState>;
 
   /** Clear lockout counters after a successful login. */
   clearLockout(): Promise<void>;

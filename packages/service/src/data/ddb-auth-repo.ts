@@ -2,11 +2,12 @@
  * DynamoDB-backed {@link AuthRepo} over #2's single-table `authTable` (pk/sk,
  * `ttl` attribute). Layout:
  *   - password  → pk `auth`, sk `password`   { hash }
- *   - lockout   → pk `auth`, sk `lockout`     { failedCount, windowStartedAt, lockedUntil?, ttl }
+ *   - lockout   → pk `auth`, sk `lockout`     { failedCount, windowStartedAt, lockedUntil?, version, ttl }
  *   - refresh   → pk `refresh`, sk `<hash>`   { ttl }
  *
- * The AWS SDK v3 clients are provided by the Lambda Node runtime and marked
- * external in the bundle, so nothing here is shipped in the function zip.
+ * The lockout row carries a `version` so failed-attempt increments are a versioned
+ * compare-and-swap (see {@link registerFailedAttempt}) rather than a lost-update-
+ * prone read-modify-write.
  */
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import {
@@ -15,7 +16,14 @@ import {
   GetCommand,
   PutCommand,
 } from '@aws-sdk/lib-dynamodb';
+import {
+  FAILURE_WINDOW_SECONDS,
+  INITIAL_LOCKOUT_STATE,
+  LOCKOUT_SECONDS,
+  registerFailure,
+} from '../auth/lockout.js';
 import type { LockoutState } from '../auth/lockout.js';
+import { optimisticUpdate, type VersionedValue } from './optimistic.js';
 import type { AuthRepo } from './auth-repo.js';
 
 const PASSWORD_KEY = { pk: 'auth', sk: 'password' } as const;
@@ -65,31 +73,67 @@ export class DdbAuthRepo implements AuthRepo {
   }
 
   async getLockout(): Promise<LockoutState | null> {
+    return (await this.readLockout()).value;
+  }
+
+  async registerFailedAttempt(nowSeconds: number): Promise<LockoutState> {
+    // Keep the row until any window + lock it could still enforce has elapsed.
+    const ttl = nowSeconds + FAILURE_WINDOW_SECONDS + LOCKOUT_SECONDS;
+    return optimisticUpdate<LockoutState>(
+      () => this.readLockout(),
+      (current) => registerFailure(current ?? INITIAL_LOCKOUT_STATE, nowSeconds),
+      (next, expectedVersion) => this.writeLockoutIfVersion(next, ttl, expectedVersion),
+    );
+  }
+
+  async clearLockout(): Promise<void> {
+    // Unconditional: a successful login is an authoritative reset. Racing a
+    // concurrent failure can at worst re-establish a fresh window (safe direction);
+    // it can never undercount, since every failure goes through the CAS above.
+    await this.doc.send(new DeleteCommand({ TableName: this.tableName, Key: LOCKOUT_KEY }));
+  }
+
+  private async readLockout(): Promise<VersionedValue<LockoutState>> {
     const result = await this.doc.send(
       new GetCommand({ TableName: this.tableName, Key: LOCKOUT_KEY }),
     );
     const item = result.Item;
     if (!item || typeof item.failedCount !== 'number') {
-      return null;
+      return { value: null, version: 0 };
     }
     return {
-      failedCount: item.failedCount,
-      windowStartedAt: typeof item.windowStartedAt === 'number' ? item.windowStartedAt : 0,
-      ...(typeof item.lockedUntil === 'number' ? { lockedUntil: item.lockedUntil } : {}),
+      value: {
+        failedCount: item.failedCount,
+        windowStartedAt: typeof item.windowStartedAt === 'number' ? item.windowStartedAt : 0,
+        ...(typeof item.lockedUntil === 'number' ? { lockedUntil: item.lockedUntil } : {}),
+      },
+      version: typeof item.version === 'number' ? item.version : 0,
     };
   }
 
-  async putLockout(state: LockoutState, ttlEpochSeconds: number): Promise<void> {
-    await this.doc.send(
-      new PutCommand({
-        TableName: this.tableName,
-        Item: { ...LOCKOUT_KEY, ...state, ttl: ttlEpochSeconds },
-      }),
-    );
-  }
-
-  async clearLockout(): Promise<void> {
-    await this.doc.send(new DeleteCommand({ TableName: this.tableName, Key: LOCKOUT_KEY }));
+  private async writeLockoutIfVersion(
+    next: LockoutState,
+    ttlEpochSeconds: number,
+    expectedVersion: number,
+  ): Promise<boolean> {
+    try {
+      await this.doc.send(
+        new PutCommand({
+          TableName: this.tableName,
+          Item: { ...LOCKOUT_KEY, ...next, version: expectedVersion + 1, ttl: ttlEpochSeconds },
+          // Commit only if nobody else advanced the row since we read it.
+          ConditionExpression: 'attribute_not_exists(#v) OR #v = :expected',
+          ExpressionAttributeNames: { '#v': 'version' },
+          ExpressionAttributeValues: { ':expected': expectedVersion },
+        }),
+      );
+      return true;
+    } catch (error) {
+      if (isConditionalCheckFailed(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async putRefreshToken(tokenHash: string, ttlEpochSeconds: number): Promise<void> {

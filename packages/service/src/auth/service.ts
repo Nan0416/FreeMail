@@ -12,12 +12,7 @@ import {
 import type { AuthRepo } from '../data/auth-repo.js';
 import { authErrors } from './errors.js';
 import { signAccessToken } from './jwt.js';
-import {
-  INITIAL_LOCKOUT_STATE,
-  isLockedOut,
-  registerFailure,
-  retryAfterSeconds,
-} from './lockout.js';
+import { INITIAL_LOCKOUT_STATE, isLockedOut, retryAfterSeconds } from './lockout.js';
 import { hashPassword, verifyPassword } from './password.js';
 import { generateRefreshToken, hashRefreshToken } from './refresh-token.js';
 
@@ -69,10 +64,11 @@ export class AuthService {
     }
 
     if (!verifyPassword(password, storedHash)) {
-      const next = registerFailure(lockout, now);
-      await this.repo.putLockout(next, now + REFRESH_TOKEN_TTL_SECONDS);
-      if (isLockedOut(next, now)) {
-        throw authErrors.accountLocked(retryAfterSeconds(next, now));
+      // Advance the counter atomically so parallel failures can't undercount past
+      // the threshold; decide the lock on the committed value.
+      const committed = await this.repo.registerFailedAttempt(now);
+      if (isLockedOut(committed, now)) {
+        throw authErrors.accountLocked(retryAfterSeconds(committed, now));
       }
       throw authErrors.invalidCredentials();
     }

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import type { AuthRepo } from '../data/auth-repo.js';
 import { AuthError } from './errors.js';
 import { verifyAccessToken } from './jwt.js';
-import { MAX_FAILED_ATTEMPTS } from './lockout.js';
+import { INITIAL_LOCKOUT_STATE, MAX_FAILED_ATTEMPTS, registerFailure } from './lockout.js';
 import type { LockoutState } from './lockout.js';
 import { AuthService, OWNER_SUBJECT } from './service.js';
 
@@ -24,9 +24,10 @@ class FakeAuthRepo implements AuthRepo {
   getLockout(): Promise<LockoutState | null> {
     return Promise.resolve(this.lockout);
   }
-  putLockout(state: LockoutState): Promise<void> {
-    this.lockout = state;
-    return Promise.resolve();
+  registerFailedAttempt(nowSeconds: number): Promise<LockoutState> {
+    const next = registerFailure(this.lockout ?? INITIAL_LOCKOUT_STATE, nowSeconds);
+    this.lockout = next;
+    return Promise.resolve(next);
   }
   clearLockout(): Promise<void> {
     this.lockout = null;
