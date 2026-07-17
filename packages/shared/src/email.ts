@@ -218,10 +218,10 @@ export const ATTACHMENT_URL_TTL_SECONDS = 60;
 export const MAX_READ_BODY_BYTES = 1024 * 1024;
 
 /**
- * Hard ceiling on the JSON-escaped `{text, html}` payload for one message detail. JSON
- * escaping can inflate a hostile body (control chars → `\uXXXX`, i.e. 6×), so beyond the
- * per-part byte cap the assembled body is shrunk until it fits this — keeping the whole
- * response comfortably under the ~6 MB Lambda / API Gateway proxy response limit
- * (headroom left for the envelope + attachment metadata).
+ * Hard ceiling on the JSON-escaped bytes of a whole `GET /emails/{id}` response — the
+ * envelope + the `{text, html}` body combined. JSON escaping can inflate a hostile body
+ * (control chars → `\uXXXX`, i.e. 6×), so the body is fitted into `ceiling − envelope`
+ * bytes, keeping the whole response comfortably under the ~6 MB Lambda / API Gateway
+ * proxy response limit (≈1 MB of headroom).
  */
-export const MAX_EMAIL_BODY_RESPONSE_BYTES = 4 * 1024 * 1024;
+export const MAX_EMAIL_RESPONSE_BYTES = 5 * 1024 * 1024;

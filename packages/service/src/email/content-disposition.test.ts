@@ -50,4 +50,35 @@ describe('contentDispositionForDownload', () => {
     expect(contentDispositionForDownload(undefined)).toBe('attachment; filename="download"');
     expect(contentDispositionForDownload('\r\n\t\x00')).toBe('attachment; filename="download"');
   });
+
+  // encodeURIComponent throws URIError on a lone surrogate — a hostile filename must not 500.
+  it('strips a pre-existing lone surrogate without throwing', () => {
+    let value = '';
+    expect(() => {
+      value = contentDispositionForDownload('a\uD83Db.pdf'); // lone high surrogate
+    }).not.toThrow();
+    expect(value).toMatch(/^attachment; filename="/);
+    expect(value).not.toContain('\uD83D');
+    expect(value).toContain('filename="ab.pdf"');
+  });
+
+  it('does not throw on a lone low surrogate either', () => {
+    expect(() => contentDispositionForDownload('x\uDE00y.pdf')).not.toThrow();
+  });
+
+  // A UTF-16-code-unit slice at 255 would split an emoji into a lone surrogate → URIError.
+  it('does not split a surrogate pair (emoji) at the 255-char boundary', () => {
+    // The emoji's first code unit lands at index 254; code-point slicing keeps it whole.
+    const name = 'a'.repeat(254) + '😀' + 'tail.pdf';
+    let value = '';
+    expect(() => {
+      value = contentDispositionForDownload(name);
+    }).not.toThrow();
+    // The full emoji survives in filename* as its percent-encoded UTF-8, not split.
+    expect(value).toContain('%F0%9F%98%80');
+  });
+
+  it('encodes a normal emoji filename in filename*', () => {
+    expect(contentDispositionForDownload('😀.pdf')).toContain(`filename*=UTF-8''%F0%9F%98%80.pdf`);
+  });
 });

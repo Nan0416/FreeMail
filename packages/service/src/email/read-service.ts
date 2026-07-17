@@ -21,7 +21,7 @@ import {
   type EmailDetail,
   type EmailListItem,
   type ListEmailsResponse,
-  MAX_EMAIL_BODY_RESPONSE_BYTES,
+  MAX_EMAIL_RESPONSE_BYTES,
   MAX_READ_BODY_BYTES,
 } from '@freemail/shared';
 import {
@@ -151,7 +151,10 @@ export class EmailReadService {
   /** Read one message. Received + exposable → body materialized; otherwise envelope-only. */
   async getEmail(handle: string): Promise<EmailDetail> {
     const row = await this.loadRow(handle);
-    const body = await this.materializeBody(row);
+    // Size the envelope first so the body budget accounts for the WHOLE response, not just
+    // the body — the combined serialized bytes must stay under the Lambda response limit.
+    const envelopeBytes = Buffer.byteLength(JSON.stringify(this.toDetail(row, handle, {})), 'utf8');
+    const body = await this.materializeBody(row, envelopeBytes);
     return this.toDetail(row, handle, body);
   }
 
@@ -195,6 +198,7 @@ export class EmailReadService {
   /** Re-parse the raw MIME for a received, exposable message's body; `{}` otherwise. */
   private async materializeBody(
     row: StoredEmailRow,
+    envelopeBytes: number,
   ): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
     if (row.direction !== 'inbound') {
       return {};
@@ -215,10 +219,10 @@ export class EmailReadService {
     }
     // Bound the returned body in real UTF-8 bytes (the parser retains by char count) and
     // hard-cap the JSON-escaped payload so a hostile body can't exceed the Lambda response
-    // budget — see fitBodyToBudget.
+    // budget — combined with the already-measured envelope. See fitBodyToBudget.
     const fitted = fitBodyToBudget(parsed.textBody, parsed.htmlBody, {
       partCapBytes: MAX_READ_BODY_BYTES,
-      serializedBudgetBytes: MAX_EMAIL_BODY_RESPONSE_BYTES,
+      serializedBudgetBytes: Math.max(0, MAX_EMAIL_RESPONSE_BYTES - envelopeBytes),
     });
     return {
       ...(fitted.text !== undefined ? { text: fitted.text } : {}),

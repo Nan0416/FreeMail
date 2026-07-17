@@ -18,7 +18,14 @@
 // eslint-disable-next-line no-control-regex
 const CONTROL_AND_LINE = /[\u0000-\u001F\u007F\u0085\u2028\u2029]/g;
 
-/** Max chars we keep from a (display-only) filename in the header. */
+/**
+ * A lone (unpaired) UTF-16 surrogate — a high surrogate not followed by a low, or a low
+ * not preceded by a high. Removed before encoding: `encodeURIComponent` throws `URIError`
+ * on a lone surrogate, which would otherwise 500 the download for a hostile filename.
+ */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g;
+
+/** Max chars (CODE POINTS) we keep from a (display-only) filename in the header. */
 const MAX_HEADER_FILENAME_CHARS = 255;
 
 /** Percent-encode a UTF-8 string down to the RFC 5987 `attr-char` set. */
@@ -37,9 +44,10 @@ function encodeRfc5987(value: string): string {
  * name is sanitized for the ASCII fallback and RFC-5987-encoded for `filename*`.
  */
 export function contentDispositionForDownload(filename: string | undefined): string {
-  const stripped = (filename ?? '')
-    .replace(CONTROL_AND_LINE, '')
-    .slice(0, MAX_HEADER_FILENAME_CHARS);
+  const cleaned = (filename ?? '').replace(CONTROL_AND_LINE, '').replace(LONE_SURROGATE, '');
+  // Slice by CODE POINTS (not UTF-16 code units) so the 255-char cap never splits a
+  // surrogate pair (an emoji) into a lone surrogate that would throw on encode.
+  const stripped = Array.from(cleaned).slice(0, MAX_HEADER_FILENAME_CHARS).join('');
 
   // ASCII fallback: printable ASCII only, minus the quote/backslash that would close the
   // quoted-string early. Anything else becomes '_'. Empty → 'download'.

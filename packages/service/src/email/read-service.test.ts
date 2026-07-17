@@ -1,5 +1,5 @@
 import { Readable } from 'node:stream';
-import { MAX_EMAIL_BODY_RESPONSE_BYTES, MAX_READ_BODY_BYTES } from '@freemail/shared';
+import { MAX_EMAIL_RESPONSE_BYTES, MAX_READ_BODY_BYTES } from '@freemail/shared';
 import { describe, expect, it } from 'vitest';
 import {
   type EmailsReadRepo,
@@ -237,7 +237,7 @@ describe('EmailReadService.getEmail', () => {
     expect(Buffer.byteLength(detail.html ?? '', 'utf8')).toBeLessThanOrEqual(MAX_READ_BODY_BYTES);
   });
 
-  it('keeps the response under the Lambda budget for a pathological (JSON-inflating) body', async () => {
+  it('keeps the whole response under the Lambda budget for a pathological (JSON-inflating) body', async () => {
     const repo = new FakeRepo();
     const rawMime = new FakeRawMime();
     // Control chars each JSON-escape to \u00XX (6×); a naive char-count cap would blow 6 MB.
@@ -247,9 +247,31 @@ describe('EmailReadService.getEmail', () => {
 
     const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail(handle);
     const responseBytes = Buffer.byteLength(JSON.stringify(detail), 'utf8');
-    // Well under the ~6 MB proxy limit (body budget + small envelope/metadata slack).
-    expect(responseBytes).toBeLessThanOrEqual(MAX_EMAIL_BODY_RESPONSE_BYTES + 64 * 1024);
+    // Envelope + body combined stays under the whole-response ceiling.
+    expect(responseBytes).toBeLessThanOrEqual(MAX_EMAIL_RESPONSE_BYTES);
     expect(detail.bodyTruncated).toBe(true);
+  });
+
+  it('byte-truncates a combined multibyte text+html body (under the char count, over the byte budget)', async () => {
+    const repo = new FakeRepo();
+    const rawMime = new FakeRawMime();
+    // Each part is well under a naive 1M-CHARACTER cap but far over the 1 MB BYTE cap:
+    // '中' = 3 UTF-8 bytes (1.2 MB), '😀' = 4 UTF-8 bytes over 2 code units (1.2 MB).
+    const { fn } = fakeParse({
+      textBody: '中'.repeat(400_000),
+      htmlBody: '😀'.repeat(300_000),
+    });
+    const handle = repo.put(INBOUND_PARTITION, inboundRow());
+
+    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail(handle);
+    expect(detail.bodyTruncated).toBe(true);
+    expect(Buffer.byteLength(detail.text ?? '', 'utf8')).toBeLessThanOrEqual(MAX_READ_BODY_BYTES);
+    expect(Buffer.byteLength(detail.html ?? '', 'utf8')).toBeLessThanOrEqual(MAX_READ_BODY_BYTES);
+    // Truncation never splits a multi-byte char (no replacement char introduced).
+    expect(detail.html ?? '').not.toContain('�');
+    expect(Buffer.byteLength(JSON.stringify(detail), 'utf8')).toBeLessThanOrEqual(
+      MAX_EMAIL_RESPONSE_BYTES,
+    );
   });
 
   it('materializes a real body end-to-end through #10 parseInbound', async () => {
