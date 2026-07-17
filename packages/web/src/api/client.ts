@@ -179,14 +179,21 @@ export class FreeMailClient {
     if (!refreshToken) {
       return false;
     }
-    const response = await this.rawRequest('POST', '/auth/refresh', { refreshToken }, false);
-    if (!response.ok) {
+    // Any refresh failure — a non-2xx OR a thrown network error — resolves to
+    // `false` so the caller runs the same clear + onAuthLost cleanup. A throw here
+    // must not escape past that cleanup.
+    try {
+      const response = await this.rawRequest('POST', '/auth/refresh', { refreshToken }, false);
+      if (!response.ok) {
+        return false;
+      }
+      const pair = (await response.json()) as RefreshResponse;
+      // Rotation: replace the stored refresh token immediately.
+      this.tokens.setTokens(pair);
+      return true;
+    } catch {
       return false;
     }
-    const pair = (await response.json()) as RefreshResponse;
-    // Rotation: replace the stored refresh token immediately.
-    this.tokens.setTokens(pair);
-    return true;
   }
 
   private async parse<T>(response: Response): Promise<T> {

@@ -156,6 +156,25 @@ describe('FreeMailClient', () => {
     expect(client.hasSession()).toBe(false);
   });
 
+  it('clears auth and fires onAuthLost when the refresh request THROWS (network error)', async () => {
+    const onAuthLost = vi.fn();
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/auth/login') return json(200, PAIR);
+      if (path === '/me') return json(401, { error: 'invalid_token', message: 'expired' });
+      if (path === '/auth/refresh') throw new TypeError('Failed to fetch');
+      throw new Error(`unexpected ${path}`);
+    });
+    const { client, tokens } = makeClient(fetchMock, { onAuthLost });
+    await client.login('a-strong-password');
+
+    // A thrown refresh must not escape past cleanup — same outcome as a non-2xx refresh.
+    await expect(client.getSession()).rejects.toMatchObject({ status: 401 });
+    expect(onAuthLost).toHaveBeenCalledTimes(1);
+    expect(tokens.getAccessToken()).toBeNull();
+    expect(client.hasSession()).toBe(false);
+  });
+
   it('createKey returns the raw key once with Bearer auth', async () => {
     const created = {
       id: 'kid1',

@@ -77,4 +77,25 @@ describe('ComposeView', () => {
       text: 'hello there',
     });
   });
+
+  it('sends the body as html when the HTML format is selected', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      json(200, { id: 'm2', messageId: 'ses-456', sentAt: '2026-07-17T00:00:00.000Z' }),
+    );
+    renderCompose(fetchMock);
+
+    fireEvent.change(screen.getByLabelText('From'), { target: { value: 'me@x.com' } });
+    fireEvent.change(screen.getByLabelText('To'), { target: { value: 'a@y.com' } });
+    fireEvent.change(screen.getByLabelText('Body format'), { target: { value: 'html' } });
+    fireEvent.change(screen.getByLabelText('Message'), {
+      target: { value: '<p>hi</p>' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [, init] = fetchMock.mock.calls[0];
+    const parsed = JSON.parse(String(init?.body));
+    expect(parsed).toEqual({ from: 'me@x.com', to: ['a@y.com'], html: '<p>hi</p>' });
+    expect(parsed).not.toHaveProperty('text');
+  });
 });

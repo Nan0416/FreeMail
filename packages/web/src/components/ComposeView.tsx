@@ -44,7 +44,8 @@ export function ComposeView(): React.JSX.Element {
   const [cc, setCc] = useState('');
   const [bcc, setBcc] = useState('');
   const [subject, setSubject] = useState('');
-  const [text, setText] = useState('');
+  const [body, setBody] = useState('');
+  const [format, setFormat] = useState<'text' | 'html'>('text');
   const [files, setFiles] = useState<File[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState<SentState>(null);
@@ -64,7 +65,7 @@ export function ComposeView(): React.JSX.Element {
       setError('Add at least one recipient (To, Cc, or Bcc).');
       return;
     }
-    if (text.trim().length === 0) {
+    if (body.trim().length === 0) {
       setError('The message body is empty.');
       return;
     }
@@ -90,7 +91,12 @@ export function ComposeView(): React.JSX.Element {
       if (recipients.cc.length) request.cc = recipients.cc;
       if (recipients.bcc.length) request.bcc = recipients.bcc;
       if (subject.trim()) request.subject = subject;
-      request.text = text;
+      // Send as the selected body part; the API requires at least one of text/html.
+      if (format === 'html') {
+        request.html = body;
+      } else {
+        request.text = body;
+      }
       if (attachments.length) request.attachments = attachments;
 
       const result = await client.sendEmail(request);
@@ -99,7 +105,7 @@ export function ComposeView(): React.JSX.Element {
       setCc('');
       setBcc('');
       setSubject('');
-      setText('');
+      setBody('');
       setFiles([]);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to send the email.');
@@ -154,12 +160,23 @@ export function ComposeView(): React.JSX.Element {
           onChange={(e) => setSubject(e.target.value)}
         />
 
+        <label htmlFor="format">Body format</label>
+        <select
+          id="format"
+          value={format}
+          onChange={(e) => setFormat(e.target.value === 'html' ? 'html' : 'text')}
+        >
+          <option value="text">Plain text</option>
+          <option value="html">HTML</option>
+        </select>
+
         <label htmlFor="body">Message</label>
         <textarea
           id="body"
           rows={10}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          placeholder={format === 'html' ? '<p>Your HTML…</p>' : undefined}
           required
         />
 
