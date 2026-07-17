@@ -33,3 +33,8 @@ export {
   type ParsedApiKey,
 } from './keys/api-key.js';
 export type { ApiKeyRecord, ApiKeysRepo } from './data/keys-repo.js';
+export { EmailService, type EmailServiceDeps } from './email/service.js';
+export { EmailError, emailErrors } from './email/errors.js';
+export { buildRawMime, type RawMimeInput } from './email/mime.js';
+export { SesV2Sender, type SesSender, type SendRawParams } from './email/ses-sender.js';
+export type { EmailsRepo, SentEmailRecord } from './data/emails-repo.js';

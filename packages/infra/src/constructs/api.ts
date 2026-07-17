@@ -2,8 +2,10 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   Duration,
+  Stack,
   aws_apigatewayv2 as apigwv2,
   aws_dynamodb as dynamodb,
+  aws_iam as iam,
   aws_lambda as lambda,
   aws_lambda_nodejs as nodejs,
   aws_secretsmanager as secretsmanager,
@@ -30,6 +32,12 @@ export interface ApiConstructProps {
   authTable: dynamodb.Table;
   /** Hashed agent API keys — the REST handler manages them; the authorizer validates presented keys. */
   apiKeysTable: dynamodb.Table;
+  /** Sent/inbound email metadata — the send route records sent messages here. */
+  emailsTable: dynamodb.Table;
+  /** The SES send domain — `from` must be under it, and it scopes the send IAM grant. */
+  emailDomain: string;
+  /** SES configuration set the send route routes through (suppression + bounce/complaint tracking). */
+  sesConfigurationSetName: string;
 }
 
 /**
@@ -54,7 +62,7 @@ export class ApiConstruct extends Construct {
 
   constructor(scope: Construct, id: string, props: ApiConstructProps) {
     super(scope, id);
-    const { authTable, apiKeysTable } = props;
+    const { authTable, apiKeysTable, emailsTable, emailDomain, sesConfigurationSetName } = props;
 
     this.signingKey = new secretsmanager.Secret(this, 'JwtSigningKey', {
       description: 'HS256 signing key for FreeMail access tokens.',
@@ -68,13 +76,33 @@ export class ApiConstruct extends Construct {
       environment: {
         AUTH_TABLE: authTable.tableName,
         API_KEYS_TABLE: apiKeysTable.tableName,
+        EMAILS_TABLE: emailsTable.tableName,
+        EMAIL_DOMAIN: emailDomain,
+        SES_CONFIGURATION_SET: sesConfigurationSetName,
         SIGNING_KEY_SECRET_ID: this.signingKey.secretName,
       },
     });
     authTable.grantReadWriteData(this.restHandler);
     // The REST handler mints, lists, and revokes keys.
     apiKeysTable.grantReadWriteData(this.restHandler);
+    // The send route records sent-email metadata.
+    emailsTable.grantWriteData(this.restHandler);
     this.signingKey.grantRead(this.restHandler);
+
+    // Send from any address under the domain identity (SES domain identities cover
+    // subdomains too). SendEmail with raw content also authorizes under SendRawEmail.
+    this.restHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+        resources: [
+          Stack.of(this).formatArn({
+            service: 'ses',
+            resource: 'identity',
+            resourceName: emailDomain,
+          }),
+        ],
+      }),
+    );
 
     this.authorizerHandler = this.nodeFunction('AuthorizerHandler', 'authorizer.ts', {
       description: 'FreeMail Lambda authorizer (access tokens + API keys).',
@@ -126,6 +154,10 @@ export class ApiConstruct extends Construct {
     this.addRestRoute('/keys', apigwv2.HttpMethod.POST, { authorized: true });
     this.addRestRoute('/keys', apigwv2.HttpMethod.GET, { authorized: true });
     this.addRestRoute('/keys/{id}', apigwv2.HttpMethod.DELETE, { authorized: true });
+
+    // Send email — dual-scheme (Bearer human OR x-api-key agent), so it's behind
+    // the authorizer but the handler does NOT restrict it to the access scheme.
+    this.addRestRoute('/emails', apigwv2.HttpMethod.POST, { authorized: true });
   }
 
   /**
