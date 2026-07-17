@@ -42,7 +42,7 @@ function makeService(overrides: Partial<EmailServiceDeps> = {}): {
     emailDomain: 'example.com',
     buildMime: (input) => {
       mimeInputs.push(input);
-      return Buffer.from('RAW-MIME');
+      return Promise.resolve(Buffer.from('RAW-MIME'));
     },
     now: () => new Date('2026-07-17T12:00:00.000Z'),
     generateId: () => 'id-1',
@@ -102,11 +102,16 @@ describe('EmailService.send', () => {
     });
   });
 
-  it('passes the display name to the MIME builder but never a bcc field', async () => {
-    const { service, mimeInputs } = makeService();
-    await service.send(request({ fromName: 'Me', bcc: ['b@x.com'] }));
-    expect(mimeInputs[0]).toMatchObject({ from: 'me@example.com', fromName: 'Me' });
-    expect(mimeInputs[0]).not.toHaveProperty('bcc');
+  it('passes the display name + bcc to the MIME builder AND the SES envelope', async () => {
+    const { service, ses, mimeInputs } = makeService();
+    await service.send(request({ fromName: 'Me', to: ['a@x.com'], bcc: ['b@x.com'] }));
+    // bcc reaches both the builder (which strips it from headers via keepBcc) and the envelope.
+    expect(mimeInputs[0]).toMatchObject({
+      from: 'me@example.com',
+      fromName: 'Me',
+      bcc: ['b@x.com'],
+    });
+    expect(ses.calls[0]?.bcc).toEqual(['b@x.com']);
   });
 
   it('accepts a sender under a subdomain of the configured domain', async () => {
@@ -206,13 +211,17 @@ describe('EmailService.send', () => {
     expect(emails.records[0]?.attachmentCount).toBe(1);
   });
 
-  it('still succeeds when recording metadata fails (best-effort)', async () => {
+  it('still succeeds when recording metadata fails, logging correlating ids', async () => {
     const emails = new FakeEmails();
     emails.fail = true;
     const { service, ses } = makeService({ emails });
     const result = await service.send(request());
     expect(result.messageId).toBe('ses-msg-1');
     expect(ses.calls).toHaveLength(1);
-    expect(console.error).toHaveBeenCalled();
+    expect(console.error).toHaveBeenCalledWith(
+      'Failed to record sent-email metadata',
+      { emailId: 'id-1', sesMessageId: 'ses-msg-1' },
+      expect.any(Error),
+    );
   });
 });

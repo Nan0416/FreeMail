@@ -29,7 +29,7 @@ export interface EmailServiceDeps {
   /** The domain every `from` must be under (the configured send domain). */
   emailDomain: string;
   /** MIME builder; injectable so service tests don't depend on the MIME library. */
-  buildMime?: (input: RawMimeInput) => Buffer;
+  buildMime?: (input: RawMimeInput) => Promise<Buffer>;
   /** Clock, injectable for tests. */
   now?: () => Date;
   /** Id generator, injectable for tests. */
@@ -43,7 +43,7 @@ export class EmailService {
   private readonly ses: SesSender;
   private readonly emails: EmailsRepo;
   private readonly emailDomain: string;
-  private readonly buildMime: (input: RawMimeInput) => Buffer;
+  private readonly buildMime: (input: RawMimeInput) => Promise<Buffer>;
   private readonly now: () => Date;
   private readonly generateId: () => string;
 
@@ -84,11 +84,12 @@ export class EmailService {
 
     const attachments = this.validateAttachments(request.attachments);
 
-    const raw = this.buildMime({
+    const raw = await this.buildMime({
       from,
       ...(fromName !== undefined ? { fromName } : {}),
       to,
       cc,
+      bcc,
       subject: request.subject ?? '',
       ...(text !== undefined ? { text } : {}),
       ...(html !== undefined ? { html } : {}),
@@ -98,10 +99,12 @@ export class EmailService {
       throw emailErrors.invalidRequest('The assembled message exceeds the maximum size.');
     }
 
-    const { messageId } = await this.ses.send({ from, to, cc, bcc, raw });
-
-    const sentAt = this.now().toISOString();
+    // Allocate the id before sending so the sent mail and its (best-effort)
+    // metadata row correlate even if the record write later fails.
     const id = this.generateId();
+    const { messageId } = await this.ses.send({ from, to, cc, bcc, raw });
+    const sentAt = this.now().toISOString();
+
     // Best-effort: the mail is already out, so a metadata write failure must not
     // fail the response — history is a convenience, delivery is the contract.
     try {
@@ -118,7 +121,13 @@ export class EmailService {
         sizeBytes: raw.length,
       });
     } catch (error) {
-      console.error('Failed to record sent-email metadata', error);
+      // Error level so a systematic loss of history rows is alarmable; include the
+      // correlating ids so the sent mail can be reconciled from SES logs.
+      console.error(
+        'Failed to record sent-email metadata',
+        { emailId: id, sesMessageId: messageId },
+        error,
+      );
     }
 
     return { id, messageId, sentAt };

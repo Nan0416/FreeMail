@@ -17,9 +17,10 @@
     "@aws-sdk/lib-dynamodb": "^3.700.0",
     "@freemail/shared": "*",
     "jose": "^5.9.6",
-    "mimetext": "^3.0.24"
+    "nodemailer": "^9.0.3"
   },
   "devDependencies": {
-    "@types/aws-lambda": "^8.10.145"
+    "@types/aws-lambda": "^8.10.145",
+    "@types/nodemailer": "^6.4.17"
   }
 }
