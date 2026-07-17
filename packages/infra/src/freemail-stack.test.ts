@@ -78,14 +78,46 @@ describe('FreeMailStack', () => {
     template.hasOutput('HostedZoneId', {});
   });
 
-  it('warns at synth when inbound is enabled', () => {
+  it('does not wire inbound (no receipt rule set / MX) when inbound is disabled', () => {
+    const template = synth(makeConfig());
+    template.resourceCountIs('AWS::SES::ReceiptRuleSet', 0);
+    template.resourceCountIs('AWS::SES::ReceiptRule', 0);
+    // Only the SES sending records exist; no inbound MX on the email domain.
+    const mxRecords = Object.values(template.findResources('AWS::Route53::RecordSet')).filter(
+      (r) => r.Properties?.Type === 'MX',
+    );
+    expect(mxRecords.every((r) => r.Properties?.Name !== 'example.com')).toBe(true);
+  });
+
+  it('wires inbound (receipt rule set → S3 + inbound MX + activation CR) when enabled', () => {
+    const template = synth(
+      makeConfig({
+        emailDomain: 'mail.example.com',
+        inbound: { enabled: true, confirmInboundMx: true },
+      }),
+    );
+    template.resourceCountIs('AWS::SES::ReceiptRuleSet', 1);
+    template.hasResourceProperties('AWS::SES::ReceiptRule', {
+      Rule: { Recipients: ['mail.example.com'], ScanEnabled: true },
+    });
+    template.hasResourceProperties('AWS::Route53::RecordSet', {
+      Name: 'mail.example.com',
+      Type: 'MX',
+      ResourceRecords: ['10 inbound-smtp.us-east-1.amazonaws.com'],
+    });
+    template.resourceCountIs('AWS::CloudFormation::CustomResource', 1);
+  });
+
+  it('warns at synth when inbound is enabled — MX and active-rule-set takeover', () => {
     const stack = new FreeMailStack(new App(), 'TestStack', {
       config: makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }),
     });
-    Annotations.fromStack(stack).hasWarning(
-      '*',
-      Match.stringLikeRegexp('Inbound email is ENABLED'),
-    );
+    const annotations = Annotations.fromStack(stack);
+    annotations.hasWarning('*', Match.stringLikeRegexp('Inbound email is ENABLED'));
+    // The warning must surface the second footgun: FreeMail becoming the region's
+    // single active receipt rule set, with a fail-safe deploy on conflict.
+    annotations.hasWarning('*', Match.stringLikeRegexp('receipt rule set'));
+    annotations.hasWarning('*', Match.stringLikeRegexp('deploy FAILS'));
   });
 
   it('does not warn when inbound is disabled', () => {
