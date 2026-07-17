@@ -4,6 +4,7 @@ import { Construct } from 'constructs';
 import type { FreeMailConfig } from '@freemail/shared';
 import { DataConstruct } from './constructs/data.js';
 import { DnsConstruct } from './constructs/dns.js';
+import { SesConstruct } from './constructs/ses.js';
 
 export interface FreeMailStackProps extends StackProps {
   config: FreeMailConfig;
@@ -24,10 +25,15 @@ export class FreeMailStack extends Stack {
 
     const dns = new DnsConstruct(this, 'Dns', { hostedZone: config.hostedZone });
     const data = new DataConstruct(this, 'Data');
+    const ses = new SesConstruct(this, 'Ses', {
+      hostedZone: dns.hostedZone,
+      emailDomain: config.emailDomain,
+      region: config.region,
+    });
 
     // Insertion points for later slices:
-    //   SES  → dns.hostedZone (auth records + optional inbound receipt), data.mailBucket
-    //   API  → data.authTable / apiKeysTable / emailsTable / downloadTokensTable
+    //   SES  → optional inbound receipt (dns.hostedZone MX + data.mailBucket)
+    //   API  → data.authTable / apiKeysTable / emailsTable / downloadTokensTable, ses.configurationSet
     //   Web  → data.webBucket + CloudFront (dns.hostedZone for a custom app domain)
 
     new CfnOutput(this, 'HostedZoneId', { value: dns.hostedZone.hostedZoneId });
@@ -40,6 +46,21 @@ export class FreeMailStack extends Stack {
     }
     new CfnOutput(this, 'MailBucketName', { value: data.mailBucket.bucketName });
     new CfnOutput(this, 'WebBucketName', { value: data.webBucket.bucketName });
+
+    new CfnOutput(this, 'SesIdentityName', { value: ses.emailIdentity.emailIdentityName });
+    new CfnOutput(this, 'SesMailFromDomain', { value: ses.mailFromDomain });
+    new CfnOutput(this, 'SesBounceComplaintTopicArn', {
+      value: ses.bounceComplaintTopic.topicArn,
+    });
+    // SES starts every account in SANDBOX mode (verified recipients only, ~200/day).
+    // Requesting production access is a one-time manual per-account step.
+    new CfnOutput(this, 'SesProductionAccessNote', {
+      description:
+        'SES starts in SANDBOX mode (verified recipients only, ~200 msgs/day). Request production ' +
+        'access (SES console → Account dashboard → Request production access) before sending to ' +
+        'arbitrary recipients — a one-time manual per-account step.',
+      value: `https://console.aws.amazon.com/ses/home?region=${config.region}#/account`,
+    });
   }
 
   /**
