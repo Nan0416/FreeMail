@@ -6,6 +6,7 @@ import { ApiConstruct } from './constructs/api.js';
 import { DataConstruct } from './constructs/data.js';
 import { DnsConstruct } from './constructs/dns.js';
 import { SesConstruct } from './constructs/ses.js';
+import { WebConstruct, resolveWebAssetPath } from './constructs/web.js';
 
 export interface FreeMailStackProps extends StackProps {
   config: FreeMailConfig;
@@ -40,10 +41,16 @@ export class FreeMailStack extends Stack {
       sesConfigurationSetName: ses.configurationSet.configurationSetName,
     });
 
+    // The React SPA on CloudFront + S3, learning the API endpoint at runtime.
+    const web = new WebConstruct(this, 'Web', {
+      webBucket: data.webBucket,
+      apiEndpoint: api.httpApi.apiEndpoint,
+      assetPath: resolveWebAssetPath(),
+    });
+
     // Insertion points for later slices:
     //   SES  → optional inbound receipt (dns.hostedZone MX + data.mailBucket)
-    //   API  → api.addRestRoute(...) for #5 keys / #6 send; api.httpApi + api.authorizer for #7 MCP
-    //   Web  → data.webBucket + CloudFront (dns.hostedZone for a custom app domain)
+    //   Web  → a custom app domain (dns.hostedZone + ACM) is Phase 3 (#15)
 
     new CfnOutput(this, 'HostedZoneId', { value: dns.hostedZone.hostedZoneId });
     if (config.hostedZone.mode === 'create' && dns.nameServers) {
@@ -59,6 +66,11 @@ export class FreeMailStack extends Stack {
     new CfnOutput(this, 'ApiEndpoint', {
       description: 'Base URL of the FreeMail HTTP API.',
       value: api.httpApi.apiEndpoint,
+    });
+
+    new CfnOutput(this, 'WebAppUrl', {
+      description: 'CloudFront URL of the FreeMail web app.',
+      value: `https://${web.distribution.distributionDomainName}`,
     });
 
     new CfnOutput(this, 'SesIdentityName', { value: ses.emailIdentity.emailIdentityName });

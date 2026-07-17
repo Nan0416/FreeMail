@@ -1,0 +1,252 @@
+:root {
+  --bg: #0f172a;
+  --surface: #1e293b;
+  --border: #334155;
+  --text: #e2e8f0;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --danger: #f87171;
+  --success: #34d399;
+  --warn: #fbbf24;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 0.75rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0.25rem 0 0.5rem;
+}
+
+.error {
+  color: var(--danger);
+}
+
+.success {
+  color: var(--success);
+}
+
+.warn {
+  color: var(--warn);
+}
+
+label {
+  display: block;
+  margin: 0.75rem 0 0.25rem;
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+input,
+textarea {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+}
+
+textarea {
+  resize: vertical;
+}
+
+button {
+  margin-top: 0.75rem;
+  padding: 0.5rem 1rem;
+  background: var(--accent);
+  color: #04263a;
+  border: none;
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.danger {
+  background: var(--danger);
+  color: #300;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.5rem;
+}
+
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 24rem;
+}
+
+.shell {
+  min-height: 100vh;
+}
+
+.shell-header {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.brand {
+  font-weight: 700;
+}
+
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.tabs button,
+.shell-account button {
+  margin: 0;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.tabs button.active {
+  background: var(--accent);
+  color: #04263a;
+  border-color: var(--accent);
+}
+
+.shell-account {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.shell-main {
+  max-width: 44rem;
+  margin: 1.5rem auto;
+  padding: 0 1.5rem;
+}
+
+.inline-form {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.inline-form input {
+  width: auto;
+  flex: 1;
+  min-width: 12rem;
+}
+
+.inline-form button {
+  margin: 0;
+}
+
+.key-list {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+}
+
+.key-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.key-list li > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.key-name {
+  font-weight: 600;
+}
+
+.key-id {
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.confirm-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.confirm-row button {
+  margin: 0;
+}
+
+.reveal-panel {
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 1rem;
+  margin: 1rem 0;
+}
+
+.secret {
+  display: block;
+  padding: 0.65rem;
+  margin: 0.5rem 0;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  word-break: break-all;
+}
+
+.reveal-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.reveal-actions button {
+  margin: 0;
+}
