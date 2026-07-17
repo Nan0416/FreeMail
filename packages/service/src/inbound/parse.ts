@@ -1,28 +1,36 @@
 /**
- * Streaming MIME parse — the untrusted-content core. Uses mailparser's streaming
- * `MailParser` (NOT `simpleParser`, which buffers the whole message + every decoded
- * attachment at once) so only one attachment is held in memory at a time and a
- * hostile message can be aborted mid-stream on the first limit breach. Auto
- * HTML↔text generation is disabled; the snippet is derived separately and bounded.
+ * Streaming MIME parse — the untrusted-content core. The pipeline puts mailsplit in
+ * front of mailparser as a STRUCTURAL enforcer, and lets mailparser do the DECODING:
  *
- * Verdicts are read from the RAW captured header block (first occurrence), not the
- * body parser — see `headers.ts`/`verdicts.ts`. Attachments are extracted (and the
- * body kept for the snippet) ONLY when the virus verdict is an affirmative `PASS`;
- * otherwise each attachment is drained + released without being stored and no body
- * is retained. Every limit is enforced regardless, so a quarantined message can't
- * DoS the parser either.
+ *   source → RawByteLimiter → Splitter → BodyLimiter → Joiner → MailParser
  *
- * HANDLED failures (malformed MIME → `parse_failed`, a limit breach →
- * `limit_exceeded`) still RESOLVE, carrying whatever header metadata was captured, so
- * the caller can write a bounded quarantine row that identifies the message. Only a
- * real infra failure (the attachment sink / the S3 source stream) rejects, so the
- * async invocation retries.
+ * - mailsplit's `Splitter` parses the real MIME structure and enforces the node count
+ *   (`maxChildNodes`, incl. nesting) and per-node header size (`maxHeadSize`) — so
+ *   part counting keys off ACTUAL declared boundaries, never `--`-prefixed body lines
+ *   (a `-- ` signature can't false-quarantine a message).
+ * - `BodyLimiter` caps each text/HTML node's body bytes AS THEY STREAM, so a breach
+ *   tears mailparser down BEFORE it aggregates the full body — peak buffering is
+ *   bounded by the body cap, not the whole message.
+ * - `RawByteLimiter` bounds total raw bytes as HEAD/GET-race defence in depth.
+ * - `MailParser` decodes headers/subject/addresses/text/html/attachments (via the
+ *   lossless Splitter→Joiner round-trip), so no decoder is reimplemented. Attachments
+ *   stream to the sink under their own per-file / total caps.
+ *
+ * Verdicts are read from the RAW header lines of the root node (first occurrence) —
+ * see `headers.ts`/`verdicts.ts`. Attachments are extracted (and the body kept for the
+ * snippet) ONLY when the virus verdict is an affirmative `PASS`.
+ *
+ * HANDLED failures (malformed MIME → `parse_failed`, a limit breach → `limit_exceeded`)
+ * still RESOLVE, carrying whatever header metadata was captured, so the caller can
+ * write a bounded quarantine row. Only a real infra failure (the attachment sink / the
+ * S3 source stream) rejects, so the async invocation retries.
  */
-import type { Readable } from 'node:stream';
+import type { Readable, Transform } from 'node:stream';
+import { Joiner, Splitter, type ErrorWithCode } from '@zone-eu/mailsplit';
 import { MailParser, type AddressObject } from 'mailparser';
 import type { InboundAttachmentDescriptor, InboundParseStatus } from '../data/emails-repo.js';
 import { InboundLimitError } from './errors.js';
-import { InboundScanStream, parseHeaderLines, type HeaderLine } from './headers.js';
+import { parseHeaderLines, type HeaderLine } from './headers.js';
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_TOTAL_BYTES,
@@ -30,10 +38,12 @@ import {
   MAX_HEADER_BLOCK_BYTES,
   MAX_HTML_BODY_BYTES,
   MAX_MIME_PARTS,
+  MAX_RAW_MESSAGE_BYTES,
   MAX_SNIPPET_SOURCE_BYTES,
   MAX_TEXT_BODY_BYTES,
 } from './limits.js';
 import { normalizeAddressList, normalizeFrom, sanitizeSubject } from './sanitize.js';
+import { BodyLimiter, RawByteLimiter } from './stream-limits.js';
 import { extractVerdicts, type Verdicts } from './verdicts.js';
 
 /**
@@ -83,8 +93,12 @@ interface AttachmentNode {
 
 /** Resource limits for one parse — defaults to the module constants; overridable in tests. */
 export interface ParseLimits {
-  maxParts: number;
-  maxHeaderBlockBytes: number;
+  /** Total raw bytes (HEAD/GET-race defence). */
+  maxRawBytes: number;
+  /** Max MIME child nodes (real structure, incl. nesting) — enforced by the Splitter. */
+  maxChildNodes: number;
+  /** Max per-node header block size — enforced by the Splitter. */
+  maxHeadSize: number;
   maxAttachments: number;
   maxAttachmentBytes: number;
   maxAttachmentTotalBytes: number;
@@ -95,8 +109,9 @@ export interface ParseLimits {
 }
 
 const DEFAULT_LIMITS: ParseLimits = {
-  maxParts: MAX_MIME_PARTS,
-  maxHeaderBlockBytes: MAX_HEADER_BLOCK_BYTES,
+  maxRawBytes: MAX_RAW_MESSAGE_BYTES,
+  maxChildNodes: MAX_MIME_PARTS,
+  maxHeadSize: MAX_HEADER_BLOCK_BYTES,
   maxAttachments: MAX_ATTACHMENTS,
   maxAttachmentBytes: MAX_ATTACHMENT_BYTES,
   maxAttachmentTotalBytes: MAX_ATTACHMENT_TOTAL_BYTES,
@@ -116,16 +131,22 @@ export function parseInbound(
   limits: ParseLimits = DEFAULT_LIMITS,
 ): Promise<ParsedInbound> {
   return new Promise<ParsedInbound>((resolve, reject) => {
-    const scan = new InboundScanStream({
-      maxParts: limits.maxParts,
-      maxHeaderBlockBytes: limits.maxHeaderBlockBytes,
+    const rawLimiter = new RawByteLimiter(limits.maxRawBytes);
+    const splitter = new Splitter({
+      maxChildNodes: limits.maxChildNodes,
+      maxHeadSize: limits.maxHeadSize,
     });
+    const bodyLimiter = new BodyLimiter({
+      maxTextBodyBytes: limits.maxTextBodyBytes,
+      maxHtmlBodyBytes: limits.maxHtmlBodyBytes,
+    });
+    const joiner = new Joiner();
     const parser = new MailParser({
       skipHtmlToText: true,
       skipTextToHtml: true,
       skipImageLinks: true,
       skipTextLinks: true,
-      // Bound MailParser's own HTML processing, not just our retained snippet input.
+      // Defence in depth on MailParser's own HTML conversion (BodyLimiter bounds buffering).
       maxHtmlLengthToParse: limits.maxHtmlBodyBytes,
     });
 
@@ -145,22 +166,21 @@ export function parseInbound(
     let headerDate: string | undefined;
     let textBody: string | undefined;
     let htmlBody: string | undefined;
+    let attachmentCount = 0;
+    let totalBytes = 0;
     const attachments: InboundAttachmentDescriptor[] = [];
 
     const ensureVerdicts = (): void => {
       if (verdicts) return;
-      const lines: HeaderLine[] = parseHeaderLines(scan.block);
+      const lines: HeaderLine[] = parseHeaderLines(bodyLimiter.rootHeaderBlock);
       verdicts = extractVerdicts(lines);
       exposed = verdicts.virusVerdict === 'PASS';
     };
 
     const teardown = (): void => {
-      source.destroy();
-      scan.destroy();
-      parser.destroy();
+      for (const s of [source, rawLimiter, splitter, bodyLimiter, joiner, parser]) s.destroy();
     };
 
-    /** Resolve with the captured metadata (the current `parseStatus`). */
     const settleResolve = (): void => {
       if (outcome === 'settled') return;
       outcome = 'settled';
@@ -195,11 +215,22 @@ export function parseInbound(
       if (outcome === 'settled') return;
       outcome = 'settled';
       teardown();
-      reject(err);
+      reject(err instanceof Error ? err : new Error(String(err)));
     };
 
-    let attachmentCount = 0;
-    let totalBytes = 0;
+    // Structural / body breaches → bounded quarantine.
+    rawLimiter.on('breach', () => degrade('limit_exceeded'));
+    bodyLimiter.on('breach', () => degrade('limit_exceeded'));
+    // The Splitter errors EMAXLEN when maxChildNodes/maxHeadSize is exceeded; other
+    // Splitter/Joiner errors are malformed content. Both are handled (no retry).
+    // (mailsplit's `.on` types only declare the 'data' overload; cast for 'error'.)
+    (splitter as unknown as Transform).on('error', (err: ErrorWithCode) =>
+      degrade(err?.code === 'EMAXLEN' ? 'limit_exceeded' : 'parse_failed'),
+    );
+    (joiner as unknown as Transform).on('error', () => degrade('parse_failed'));
+    parser.on('error', () => degrade('parse_failed'));
+    // The S3 source erroring mid-download is infra → retry.
+    source.on('error', (err) => failInfra(err));
 
     parser.on('headers', (headers) => {
       ensureVerdicts();
@@ -213,10 +244,6 @@ export function parseInbound(
       headerDate =
         date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined;
     });
-
-    // The scan stream counts MIME parts structurally over the raw bytes and enforces
-    // the header-block size — neither is visible from MailParser's aggregated events.
-    scan.on('breach', () => degrade('limit_exceeded'));
 
     parser.on('data', (data) => {
       if (outcome === 'settled') {
@@ -233,14 +260,8 @@ export function parseInbound(
         pending++;
         void handleAttachment(data as AttachmentNode, attachmentCount - 1);
       } else {
-        // A body larger than the cap is a resource-exhaustion attempt → quarantine.
-        if (
-          (typeof data.text === 'string' && data.text.length > limits.maxTextBodyBytes) ||
-          (typeof data.html === 'string' && data.html.length > limits.maxHtmlBodyBytes)
-        ) {
-          return degrade('limit_exceeded');
-        }
-        // Retain only a snippet-sized slice — never hold the full body in memory.
+        // Retain only a snippet-sized slice — never hold the full body (the BodyLimiter
+        // already capped/quarantined an over-cap body upstream, before aggregation).
         if (typeof data.text === 'string')
           textBody = data.text.slice(0, limits.maxSnippetSourceBytes);
         if (typeof data.html === 'string')
@@ -248,15 +269,10 @@ export function parseInbound(
       }
     });
 
-    // A parse error is content (attacker-controlled), not infra.
-    parser.on('error', () => degrade('parse_failed'));
     parser.on('end', () => {
       ended = true;
       maybeFinish();
     });
-    // The S3 source / passthrough erroring mid-download is infra → retry.
-    source.on('error', (err) => failInfra(err instanceof Error ? err : new Error(String(err))));
-    scan.on('error', (err) => failInfra(err instanceof Error ? err : new Error(String(err))));
 
     function maybeFinish(): void {
       if (outcome === 'settled' || !ended || pending > 0) return;
@@ -270,8 +286,6 @@ export function parseInbound(
       } catch (err) {
         safeRelease(data);
         pending--;
-        // readCapped throws InboundLimitError past the cap; any other stream error is a
-        // malformed/decoded-part failure → parse_failed. Both are handled (no retry).
         if (err instanceof InboundLimitError) degrade('limit_exceeded');
         else degrade('parse_failed');
         return;
@@ -297,7 +311,7 @@ export function parseInbound(
       maybeFinish();
     }
 
-    source.pipe(scan).pipe(parser);
+    source.pipe(rawLimiter).pipe(splitter).pipe(bodyLimiter).pipe(joiner).pipe(parser);
   });
 }
 

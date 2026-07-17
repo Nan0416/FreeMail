@@ -27,8 +27,9 @@ class FakeSink implements AttachmentSink {
 const mime = (lines: string[]): Readable => Readable.from(Buffer.from(lines.join('\r\n')));
 
 const looseLimits = (over: Partial<ParseLimits> = {}): ParseLimits => ({
-  maxParts: 1000,
-  maxHeaderBlockBytes: 256 * 1024,
+  maxRawBytes: 40 * 1024 * 1024,
+  maxChildNodes: 1000,
+  maxHeadSize: 256 * 1024,
   maxAttachments: 25,
   maxAttachmentBytes: 15 * 1024 * 1024,
   maxAttachmentTotalBytes: 30 * 1024 * 1024,
@@ -238,9 +239,9 @@ describe('parseInbound — limits', () => {
     expect(p.parseStatus).toBe('limit_exceeded');
   });
 
-  it('limit_exceeded on a multipart body with more than maxParts NON-attachment parts', async () => {
-    // Six text/plain parts (which MailParser aggregates into ONE event) — event-counting
-    // would miss this; the structural delimiter scan catches it.
+  it('limit_exceeded on more than maxChildNodes REAL nodes (non-attachment text parts)', async () => {
+    // Six text/plain child nodes (which MailParser aggregates into ONE event) — the
+    // mailsplit Splitter counts REAL nodes, so this breaches where event-counting missed it.
     const many = [
       'X-SES-Virus-Verdict: PASS',
       'From: a@x.com',
@@ -249,19 +250,60 @@ describe('parseInbound — limits', () => {
     ];
     for (let i = 0; i < 6; i++) many.push('--B', 'Content-Type: text/plain', '', `part ${i}`);
     many.push('--B--', '');
-    const p = await parseInbound(mime(many), new FakeSink(), looseLimits({ maxParts: 3 }));
+    const p = await parseInbound(mime(many), new FakeSink(), looseLimits({ maxChildNodes: 3 }));
     expect(p.parseStatus).toBe('limit_exceeded');
     expect(p.exposed).toBe(false);
   });
 
-  it('limit_exceeded on an oversized header block (no boundary within the cap)', async () => {
-    const noBoundary = 'X-SES-Virus-Verdict: PASS\r\nX-Filler: ' + 'a'.repeat(64 * 1024);
+  it('does NOT count `-- ` signature / `--foo` body lines as boundaries (no false quarantine)', async () => {
+    // The old `--`-line heuristic would have quarantined this; real node counting does not.
     const p = await parseInbound(
-      mime([noBoundary]),
+      mime([
+        'X-SES-Virus-Verdict: PASS',
+        'From: a@x.com',
+        'Content-Type: text/plain',
+        '',
+        'Hello there',
+        '-- ',
+        'My Signature',
+        '--foo this is not a boundary',
+        'more --bar --baz text',
+        '',
+      ]),
       new FakeSink(),
-      looseLimits({ maxHeaderBlockBytes: 8 * 1024 }),
+      looseLimits({ maxChildNodes: 2 }), // low cap — a heuristic would trip; real counting won't
+    );
+    expect(p.parseStatus).toBe('ok');
+    expect(p.exposed).toBe(true);
+    expect(p.textBody).toContain('Hello there');
+  });
+
+  it('limit_exceeded on an oversized per-node header block (maxHeadSize)', async () => {
+    const bigHeader =
+      'X-SES-Virus-Verdict: PASS\r\nX-Filler: ' + 'a'.repeat(64 * 1024) + '\r\n\r\nbody';
+    const p = await parseInbound(
+      mime([bigHeader]),
+      new FakeSink(),
+      looseLimits({ maxHeadSize: 8 * 1024 }),
     );
     expect(p.parseStatus).toBe('limit_exceeded');
+  });
+
+  it('limit_exceeded on total raw bytes over the cap (HEAD/GET-race defence)', async () => {
+    const p = await parseInbound(
+      mime([
+        'X-SES-Virus-Verdict: PASS',
+        'From: a@x.com',
+        'Content-Type: text/plain',
+        '',
+        'z'.repeat(40 * 1024),
+        '',
+      ]),
+      new FakeSink(),
+      looseLimits({ maxRawBytes: 8 * 1024 }),
+    );
+    expect(p.parseStatus).toBe('limit_exceeded');
+    expect(p.exposed).toBe(false);
   });
 
   it('limit_exceeded on an oversized plain-text body', async () => {
