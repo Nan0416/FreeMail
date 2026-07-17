@@ -16,8 +16,10 @@
     "@aws-sdk/client-sesv2": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",
     "@freemail/shared": "*",
+    "@modelcontextprotocol/sdk": "1.29.0",
     "jose": "^5.9.6",
-    "nodemailer": "^9.0.3"
+    "nodemailer": "^9.0.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.145",

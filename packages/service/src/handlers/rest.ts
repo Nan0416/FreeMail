@@ -19,11 +19,9 @@ import { AuthService } from '../auth/service.js';
 import { AuthError, authErrors } from '../auth/errors.js';
 import { DdbAuthRepo } from '../data/ddb-auth-repo.js';
 import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
-import { DdbEmailsRepo } from '../data/ddb-emails-repo.js';
 import { ApiKeyService } from '../keys/service.js';
-import { EmailService } from '../email/service.js';
+import { createEmailServiceFromEnv } from '../email/create-email-service.js';
 import { EmailError, emailErrors } from '../email/errors.js';
-import { SesV2Sender } from '../email/ses-sender.js';
 import { getSigningKey } from '../config/signing-key.js';
 import { requireAccessScheme, subjectFromContext } from './request-context.js';
 
@@ -32,8 +30,6 @@ const JSON_HEADERS = { 'content-type': 'application/json' };
 // Reused across warm invocations; the signing key is cached inside getSigningKey.
 let repo: DdbAuthRepo | undefined;
 let keysRepo: DdbApiKeysRepo | undefined;
-let emailsRepo: DdbEmailsRepo | undefined;
-let sesSender: SesV2Sender | undefined;
 
 function getRepo(): DdbAuthRepo {
   const tableName = process.env.AUTH_TABLE;
@@ -51,20 +47,6 @@ function getKeyService(): ApiKeyService {
   }
   keysRepo ??= new DdbApiKeysRepo(tableName);
   return new ApiKeyService({ repo: keysRepo });
-}
-
-function getEmailService(): EmailService {
-  const emailDomain = process.env.EMAIL_DOMAIN;
-  if (!emailDomain) {
-    throw new Error('EMAIL_DOMAIN is not set.');
-  }
-  const tableName = process.env.EMAILS_TABLE;
-  if (!tableName) {
-    throw new Error('EMAILS_TABLE is not set.');
-  }
-  emailsRepo ??= new DdbEmailsRepo(tableName);
-  sesSender ??= new SesV2Sender({ configurationSetName: process.env.SES_CONFIGURATION_SET });
-  return new EmailService({ ses: sesSender, emails: emailsRepo, emailDomain });
 }
 
 export const handler = async (
@@ -101,7 +83,10 @@ export const handler = async (
       case 'POST /emails':
         // Dual-scheme by design: unlike /keys (access-only), a Bearer human AND an
         // x-api-key agent may send — so NO requireAccessScheme here.
-        return json(200, await getEmailService().send(parseSendEmailBody(parseBody(event))));
+        return json(
+          200,
+          await createEmailServiceFromEnv().send(parseSendEmailBody(parseBody(event))),
+        );
       default:
         return json(404, {
           error: 'invalid_request',
