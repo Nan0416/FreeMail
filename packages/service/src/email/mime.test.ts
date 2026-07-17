@@ -63,7 +63,7 @@ describe('buildRawMime', () => {
     expect(raw).toMatch(/^Subject: =\?UTF-8\?/im);
   });
 
-  it('safely encodes a hostile attachment filename (no header injection)', async () => {
+  it('safely encodes a hostile attachment filename (quote + CRLF + non-ASCII, no injection)', async () => {
     const raw = (
       await buildRawMime({
         from: 'sender@example.com',
@@ -74,7 +74,8 @@ describe('buildRawMime', () => {
         text: 'body',
         attachments: [
           {
-            filename: '"\r\nX-Injected: yes\r\nname.txt',
+            // Quote, CRLF+header, and non-ASCII bytes all in one filename.
+            filename: '"\r\nX-Injected: yes\r\nnamé你.txt',
             contentType: 'application/octet-stream',
             contentBase64: Buffer.from('data').toString('base64'),
           },
@@ -85,6 +86,9 @@ describe('buildRawMime', () => {
     // The CRLF+header in the filename must not break out into a real header.
     expect(raw).not.toMatch(/^X-Injected:/im);
     expect(raw).not.toContain('\r\nX-Injected: yes');
+    // Non-ASCII bytes must be encoded (RFC 2231 / encoded-word), never emitted raw in a header.
+    expect(raw).not.toContain('namé你');
+    expect(raw).toMatch(/filename\*0?\*?=/i);
   });
 
   it('round-trips attachment bytes (decode the output part == input bytes)', async () => {
