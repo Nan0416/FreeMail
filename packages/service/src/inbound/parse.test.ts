@@ -344,6 +344,37 @@ describe('parseInbound — limits', () => {
     expect(p.exposed).toBe(false);
   });
 
+  it('a large ALLOWED text attachment rides the attachment cap, NOT the body cap', async () => {
+    // A 10 KB text/plain ATTACHMENT — over the 4 KB body cap, but well under the attachment cap.
+    // It must NOT be charged to the body budget (that would wrongly quarantine a valid message).
+    const sink = new FakeSink();
+    const p = await parseInbound(
+      mime([
+        'X-SES-Virus-Verdict: PASS',
+        'From: a@x.com',
+        'Content-Type: multipart/mixed; boundary="B"',
+        '',
+        '--B',
+        'Content-Type: text/plain',
+        '',
+        'short inline body',
+        '--B',
+        'Content-Type: text/plain; name="big.txt"',
+        'Content-Disposition: attachment; filename="big.txt"',
+        '',
+        't'.repeat(10 * 1024),
+        '--B--',
+        '',
+      ]),
+      sink,
+      looseLimits({ maxTextBodyBytes: 4 * 1024, maxTotalBodyBytes: 4 * 1024 }),
+    );
+    expect(p.parseStatus).toBe('ok'); // not quarantined by the body cap
+    expect(p.exposed).toBe(true);
+    expect(sink.stored).toHaveLength(1);
+    expect(sink.stored[0]).toMatchObject({ filename: 'big.txt', size: 10 * 1024 });
+  });
+
   it('limit_exceeded on an oversized HTML body', async () => {
     const p = await parseInbound(
       mime([

@@ -5,13 +5,21 @@ import { BodyLimiter, RawByteLimiter } from './stream-limits.js';
 /** A mailsplit-shaped node chunk. */
 function node(
   contentType: string | false,
-  opts: { root?: boolean; multipart?: string | false; headers?: string } = {},
+  opts: {
+    root?: boolean;
+    multipart?: string | false;
+    headers?: string;
+    disposition?: string | false;
+    filename?: string | false;
+  } = {},
 ) {
   return {
     type: 'node' as const,
     root: opts.root ?? false,
     multipart: opts.multipart ?? false,
     contentType,
+    disposition: opts.disposition ?? false,
+    filename: opts.filename ?? false,
     getHeaders: () => Buffer.from(opts.headers ?? ''),
   };
 }
@@ -108,6 +116,19 @@ describe('BodyLimiter', () => {
     ]);
     expect(breach).toBeUndefined();
     expect(out).toHaveLength(2); // passed through
+  });
+
+  it('does NOT charge a text/* ATTACHMENT to the body cap (disposition attachment)', async () => {
+    const { breach } = await run([
+      node('text/plain', { disposition: 'attachment', filename: 'notes.txt' }),
+      body(10_000), // way over the 100-byte text cap, but it's an attachment
+    ]);
+    expect(breach).toBeUndefined();
+  });
+
+  it('does NOT charge a text/* attachment identified only by filename to the body cap', async () => {
+    const { breach } = await run([node('text/html', { filename: 'page.html' }), body(10_000)]);
+    expect(breach).toBeUndefined();
   });
 
   it('resets the counter per leaf node (two small text parts do not accumulate)', async () => {

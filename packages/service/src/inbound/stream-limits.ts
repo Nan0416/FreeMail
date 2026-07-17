@@ -49,6 +49,10 @@ interface NodeChunk {
   root: boolean;
   multipart: string | false;
   contentType: string | false;
+  /** Content-Disposition value (`attachment` / `inline`), or false when absent. */
+  disposition: string | false;
+  /** Decoded attachment filename, or false when absent. */
+  filename: string | false;
   getHeaders(): Buffer;
 }
 interface ContentChunk {
@@ -108,9 +112,15 @@ export class BodyLimiter extends Transform {
     this.emit('breach', reason);
   }
 
-  /** The body cap for a leaf node by content type, or 0 when the node isn't capped here. */
+  /**
+   * The body cap for a leaf node by content type, or 0 when the node isn't a body node.
+   * A text/* leaf that is an ATTACHMENT (Content-Disposition attachment, or carries a
+   * filename) is NOT body — it's charged to the independent attachment caps as MailParser
+   * streams it — so only INLINE text/plain and text/html count toward the body budget.
+   */
   private textCapFor(node: NodeChunk): number {
     if (node.multipart !== false) return 0; // structural node, not a leaf
+    if (node.disposition === 'attachment' || (node.filename && node.filename !== '')) return 0;
     const ct = (node.contentType || '').toLowerCase();
     if (ct === 'text/plain') return this.limits.maxTextBodyBytes;
     if (ct === 'text/html') return this.limits.maxHtmlBodyBytes;
