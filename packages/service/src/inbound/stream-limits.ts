@@ -39,6 +39,8 @@ export class RawByteLimiter extends Transform {
 export interface BodyLimits {
   maxTextBodyBytes: number;
   maxHtmlBodyBytes: number;
+  /** Cumulative text+HTML budget across ALL nodes — bounds MailParser's aggregate, not just one node. */
+  maxTotalBodyBytes: number;
 }
 
 /** The mailsplit chunk shapes this limiter reads (structural subset). */
@@ -57,15 +59,18 @@ type MimeChunk = NodeChunk | ContentChunk;
 
 /**
  * Object-mode passthrough over mailsplit's Splitter output. Caps each text/plain and
- * text/html leaf node's body bytes as its `body` chunks stream — so a breach fires
- * (and the downstream MailParser is torn down) BEFORE the full body is aggregated,
- * bounding peak buffering by the cap rather than the whole 40 MB message. Attachment
+ * text/html leaf node's body bytes as its `body` chunks stream, AND the cumulative
+ * text+HTML bytes across the whole message — so a breach fires (and the downstream
+ * MailParser is torn down) BEFORE the full body is aggregated, bounding peak buffering
+ * by the cap rather than the whole 40 MB message. The message-wide budget stops many
+ * individually-under-cap text nodes from still aggregating past the bound. Attachment
  * (non-text) node bodies flow through untouched — they're capped separately as
  * MailParser streams them to the attachment sink.
  */
 export class BodyLimiter extends Transform {
   private currentTextCap = 0; // 0 = current leaf is not a capped text node
   private currentBytes = 0;
+  private totalTextBytes = 0; // cumulative across ALL text/html nodes
   private breached = false;
   /** The root node's raw header block, for first-occurrence verdict reading. */
   rootHeaderBlock = '';
@@ -83,17 +88,24 @@ export class BodyLimiter extends Transform {
       if (chunk.root) {
         this.rootHeaderBlock = chunk.getHeaders().toString('utf8');
       }
-      // Track only leaf text nodes; a multipart node or a non-text leaf resets the cap.
+      // Track only leaf text nodes; a multipart node or a non-text leaf resets the per-node cap.
       this.currentBytes = 0;
       this.currentTextCap = this.textCapFor(chunk);
     } else if (chunk.type === 'body' && this.currentTextCap > 0 && chunk.value) {
       this.currentBytes += chunk.value.length;
+      this.totalTextBytes += chunk.value.length;
       if (this.currentBytes > this.currentTextCap) {
-        this.breached = true;
-        this.emit('breach', 'text/html body exceeds size cap');
+        this.breach('text/html body exceeds per-node size cap');
+      } else if (this.totalTextBytes > this.limits.maxTotalBodyBytes) {
+        this.breach('cumulative text/html body exceeds message budget');
       }
     }
     cb(null, chunk);
+  }
+
+  private breach(reason: string): void {
+    this.breached = true;
+    this.emit('breach', reason);
   }
 
   /** The body cap for a leaf node by content type, or 0 when the node isn't capped here. */

@@ -33,6 +33,14 @@ export const MAX_TEXT_BODY_BYTES = 10 * 1024 * 1024;
 /** Max retained/parsed HTML body bytes — a body over this quarantines; also caps MailParser's own HTML work. */
 export const MAX_HTML_BODY_BYTES = 10 * 1024 * 1024;
 
+/**
+ * Max CUMULATIVE text+HTML body bytes across ALL nodes in one message. MailParser
+ * aggregates every text/* node into its final text/html output, so several
+ * individually-under-cap nodes could still aggregate near the whole raw-message
+ * allowance — this message-wide budget bounds the sum, not just each node.
+ */
+export const MAX_TOTAL_BODY_BYTES = 10 * 1024 * 1024;
+
 /** Max attachments extracted to S3 from one message. */
 export const MAX_ATTACHMENTS = 25;
 

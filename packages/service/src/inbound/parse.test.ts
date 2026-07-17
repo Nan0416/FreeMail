@@ -35,6 +35,7 @@ const looseLimits = (over: Partial<ParseLimits> = {}): ParseLimits => ({
   maxAttachmentTotalBytes: 30 * 1024 * 1024,
   maxTextBodyBytes: 10 * 1024 * 1024,
   maxHtmlBodyBytes: 10 * 1024 * 1024,
+  maxTotalBodyBytes: 10 * 1024 * 1024,
   maxSnippetSourceBytes: 512 * 1024,
   ...over,
 });
@@ -320,6 +321,26 @@ describe('parseInbound — limits', () => {
       looseLimits({ maxTextBodyBytes: 4 * 1024 }),
     );
     expect(p.parseStatus).toBe('limit_exceeded');
+    expect(p.exposed).toBe(false);
+  });
+
+  it('limit_exceeded on CUMULATIVE text body across many under-per-node-cap parts', async () => {
+    // Four text/plain parts, each 4 KB (under the 6 KB per-node cap), total 16 KB > 10 KB budget.
+    const parts = [
+      'X-SES-Virus-Verdict: PASS',
+      'From: a@x.com',
+      'Content-Type: multipart/mixed; boundary="B"',
+      '',
+    ];
+    for (let i = 0; i < 4; i++)
+      parts.push('--B', 'Content-Type: text/plain', '', 'p'.repeat(4 * 1024));
+    parts.push('--B--', '');
+    const p = await parseInbound(
+      mime(parts),
+      new FakeSink(),
+      looseLimits({ maxTextBodyBytes: 6 * 1024, maxTotalBodyBytes: 10 * 1024, maxChildNodes: 50 }),
+    );
+    expect(p.parseStatus).toBe('limit_exceeded'); // cumulative budget, not any single node
     expect(p.exposed).toBe(false);
   });
 

@@ -41,6 +41,7 @@ import {
   MAX_RAW_MESSAGE_BYTES,
   MAX_SNIPPET_SOURCE_BYTES,
   MAX_TEXT_BODY_BYTES,
+  MAX_TOTAL_BODY_BYTES,
 } from './limits.js';
 import { normalizeAddressList, normalizeFrom, sanitizeSubject } from './sanitize.js';
 import { BodyLimiter, RawByteLimiter } from './stream-limits.js';
@@ -104,6 +105,8 @@ export interface ParseLimits {
   maxAttachmentTotalBytes: number;
   maxTextBodyBytes: number;
   maxHtmlBodyBytes: number;
+  /** Cumulative text+HTML budget across ALL nodes — bounds MailParser's aggregate. */
+  maxTotalBodyBytes: number;
   /** How much body we RETAIN for snippet derivation — a small slice; we never hold the full body. */
   maxSnippetSourceBytes: number;
 }
@@ -117,6 +120,7 @@ const DEFAULT_LIMITS: ParseLimits = {
   maxAttachmentTotalBytes: MAX_ATTACHMENT_TOTAL_BYTES,
   maxTextBodyBytes: MAX_TEXT_BODY_BYTES,
   maxHtmlBodyBytes: MAX_HTML_BODY_BYTES,
+  maxTotalBodyBytes: MAX_TOTAL_BODY_BYTES,
   maxSnippetSourceBytes: MAX_SNIPPET_SOURCE_BYTES,
 };
 
@@ -139,6 +143,7 @@ export function parseInbound(
     const bodyLimiter = new BodyLimiter({
       maxTextBodyBytes: limits.maxTextBodyBytes,
       maxHtmlBodyBytes: limits.maxHtmlBodyBytes,
+      maxTotalBodyBytes: limits.maxTotalBodyBytes,
     });
     const joiner = new Joiner();
     const parser = new MailParser({
@@ -221,6 +226,10 @@ export function parseInbound(
     // Structural / body breaches → bounded quarantine.
     rawLimiter.on('breach', () => degrade('limit_exceeded'));
     bodyLimiter.on('breach', () => degrade('limit_exceeded'));
+    // Defensive: our passthrough limiters emit `breach`, not `error`, but never leave a
+    // stream 'error' unhandled (it would crash the Lambda). Treat as handled content failure.
+    rawLimiter.on('error', () => degrade('parse_failed'));
+    bodyLimiter.on('error', () => degrade('parse_failed'));
     // The Splitter errors EMAXLEN when maxChildNodes/maxHeadSize is exceeded; other
     // Splitter/Joiner errors are malformed content. Both are handled (no retry).
     // (mailsplit's `.on` types only declare the 'data' overload; cast for 'error'.)

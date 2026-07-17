@@ -42,7 +42,10 @@ describe('RawByteLimiter', () => {
 });
 
 describe('BodyLimiter', () => {
-  async function run(chunks: unknown[], limits = { maxTextBodyBytes: 100, maxHtmlBodyBytes: 100 }) {
+  async function run(
+    chunks: unknown[],
+    limits = { maxTextBodyBytes: 100, maxHtmlBodyBytes: 100, maxTotalBodyBytes: 10_000 },
+  ) {
     const limiter = new BodyLimiter(limits);
     const out: unknown[] = [];
     let breach: string | undefined;
@@ -64,17 +67,38 @@ describe('BodyLimiter', () => {
     expect(limiter.rootHeaderBlock).toContain('X-SES-Virus-Verdict: PASS');
   });
 
-  it('caps a text/plain node body and breaches past the cap', async () => {
+  it('caps a text/plain node body and breaches past the per-node cap', async () => {
     const { breach } = await run([node('text/plain'), body(60), body(60)]);
-    expect(breach).toBe('text/html body exceeds size cap');
+    expect(breach).toBe('text/html body exceeds per-node size cap');
   });
 
   it('caps text/html independently', async () => {
     const { breach } = await run([node('text/html'), body(150)], {
       maxTextBodyBytes: 1000,
       maxHtmlBodyBytes: 100,
+      maxTotalBodyBytes: 10_000,
     });
-    expect(breach).toBe('text/html body exceeds size cap');
+    expect(breach).toBe('text/html body exceeds per-node size cap');
+  });
+
+  it('breaches on the CUMULATIVE budget across many under-per-node-cap text nodes', async () => {
+    // Each node is 60 bytes (under the 100 per-node cap), but 4×60=240 > 200 total budget.
+    const chunks = [
+      node('text/plain'),
+      body(60),
+      node('text/plain'),
+      body(60),
+      node('text/plain'),
+      body(60),
+      node('text/plain'),
+      body(60),
+    ];
+    const { breach } = await run(chunks, {
+      maxTextBodyBytes: 100,
+      maxHtmlBodyBytes: 100,
+      maxTotalBodyBytes: 200,
+    });
+    expect(breach).toBe('cumulative text/html body exceeds message budget');
   });
 
   it('does NOT cap attachment (non-text) node bodies — they have their own caps', async () => {
