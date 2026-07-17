@@ -21,3 +21,5 @@ export function healthOk(service: string): HealthReport {
 export function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
+
+export * from './config.js';

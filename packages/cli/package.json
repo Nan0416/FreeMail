@@ -13,6 +13,8 @@
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@freemail/shared": "*"
+    "@aws-sdk/client-route-53": "^3.700.0",
+    "@freemail/shared": "*",
+    "@inquirer/prompts": "^7.2.1"
   }
 }
