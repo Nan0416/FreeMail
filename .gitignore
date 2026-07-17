@@ -10,6 +10,9 @@ build/
 cdk.out/
 packages/infra/cdk.context.json
 
+# Generated deploy config (per-deployment, created by `freemail init`)
+freemail.config.json
+
 # Test / coverage
 coverage/
 

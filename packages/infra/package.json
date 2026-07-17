@@ -5,12 +5,22 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -b",
     "test": "vitest run",
+    "synth": "cdk synth",
+    "cdk": "cdk",
     "clean": "tsc -b --clean"
   },
   "dependencies": {
-    "@freemail/shared": "*"
+    "@freemail/shared": "*",
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "aws-cdk": "^2.170.0"
   }
 }

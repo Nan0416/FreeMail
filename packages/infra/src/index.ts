@@ -1,9 +1,11 @@
 /**
- * FreeMail infrastructure (AWS CDK).
- *
- * The CDK app, stacks, and constructs are built in issue #2 (CDK base + init CLI).
- * This placeholder keeps the package in the build graph.
+ * FreeMail infrastructure (AWS CDK) — public surface for the CDK app entry
+ * (`app.ts`) and for tests.
  */
-import { FREEMAIL_VERSION } from '@freemail/shared';
-
-export const INFRA_PLACEHOLDER = `freemail-infra@${FREEMAIL_VERSION}`;
+export { FreeMailStack } from './freemail-stack.js';
+export type { FreeMailStackProps } from './freemail-stack.js';
+export { DnsConstruct } from './constructs/dns.js';
+export type { DnsConstructProps } from './constructs/dns.js';
+export { DataConstruct } from './constructs/data.js';
+export { loadConfig, resolveConfigPath } from './config.js';
+export type { ConfigPathOptions } from './config.js';

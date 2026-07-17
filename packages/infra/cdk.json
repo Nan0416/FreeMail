@@ -1,0 +1,8 @@
+{
+  "app": "npx tsx src/app.ts",
+  "output": "cdk.out",
+  "watch": {
+    "include": ["src/**"],
+    "exclude": ["**/*.test.ts", "dist/**", "cdk.out/**", "node_modules/**"]
+  }
+}
