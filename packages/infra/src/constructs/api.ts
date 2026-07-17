@@ -8,6 +8,7 @@ import {
   aws_iam as iam,
   aws_lambda as lambda,
   aws_lambda_nodejs as nodejs,
+  aws_s3 as s3,
   aws_secretsmanager as secretsmanager,
 } from 'aws-cdk-lib';
 import {
@@ -32,8 +33,10 @@ export interface ApiConstructProps {
   authTable: dynamodb.Table;
   /** Hashed agent API keys — the REST handler manages them; the authorizer validates presented keys. */
   apiKeysTable: dynamodb.Table;
-  /** Sent/inbound email metadata — the send route records sent messages here. */
+  /** Sent/inbound email metadata — the send route records sent messages, the read routes list/get them. */
   emailsTable: dynamodb.Table;
+  /** Inbound raw MIME + extracted attachments — the read routes re-parse bodies and presign downloads. */
+  mailBucket: s3.IBucket;
   /** The SES send domain — `from` must be under it, and it scopes the send IAM grant. */
   emailDomain: string;
   /** SES configuration set the send route routes through (suppression + bounce/complaint tracking). */
@@ -64,7 +67,14 @@ export class ApiConstruct extends Construct {
 
   constructor(scope: Construct, id: string, props: ApiConstructProps) {
     super(scope, id);
-    const { authTable, apiKeysTable, emailsTable, emailDomain, sesConfigurationSetName } = props;
+    const {
+      authTable,
+      apiKeysTable,
+      emailsTable,
+      mailBucket,
+      emailDomain,
+      sesConfigurationSetName,
+    } = props;
 
     this.signingKey = new secretsmanager.Secret(this, 'JwtSigningKey', {
       description: 'HS256 signing key for FreeMail access tokens.',
@@ -79,6 +89,7 @@ export class ApiConstruct extends Construct {
         AUTH_TABLE: authTable.tableName,
         API_KEYS_TABLE: apiKeysTable.tableName,
         EMAILS_TABLE: emailsTable.tableName,
+        MAIL_BUCKET: mailBucket.bucketName,
         EMAIL_DOMAIN: emailDomain,
         SES_CONFIGURATION_SET: sesConfigurationSetName,
         SIGNING_KEY_SECRET_ID: this.signingKey.secretName,
@@ -87,8 +98,12 @@ export class ApiConstruct extends Construct {
     authTable.grantReadWriteData(this.restHandler);
     // The REST handler mints, lists, and revokes keys.
     apiKeysTable.grantReadWriteData(this.restHandler);
-    // The send route records sent-email metadata.
-    emailsTable.grantWriteData(this.restHandler);
+    // The send route records sent-email metadata; the read routes list/get it.
+    emailsTable.grantReadWriteData(this.restHandler);
+    // The read routes re-parse raw inbound MIME (for bodies) and presign attachment
+    // downloads — scoped to the inbound raw + extracted-attachment prefixes only.
+    mailBucket.grantRead(this.restHandler, 'inbound/*');
+    mailBucket.grantRead(this.restHandler, 'attachments/inbound/*');
     this.signingKey.grantRead(this.restHandler);
 
     // The REST `/emails` route sends.
@@ -163,6 +178,14 @@ export class ApiConstruct extends Construct {
     // Send email — dual-scheme (Bearer human OR x-api-key agent), so it's behind
     // the authorizer but the handler does NOT restrict it to the access scheme.
     this.addRestRoute('/emails', apigwv2.HttpMethod.POST, { authorized: true });
+
+    // Read the mailbox (access-token only — the handler enforces the scheme): list the
+    // merged timeline, read one message, and mint a presigned attachment download URL.
+    this.addRestRoute('/emails', apigwv2.HttpMethod.GET, { authorized: true });
+    this.addRestRoute('/emails/{id}', apigwv2.HttpMethod.GET, { authorized: true });
+    this.addRestRoute('/emails/{id}/attachments/{attachmentId}', apigwv2.HttpMethod.GET, {
+      authorized: true,
+    });
 
     // MCP server (agents) — its own handler behind the SAME dual-scheme authorizer.
     // Both schemes resolve to the owner and `send_email` is the same capability as

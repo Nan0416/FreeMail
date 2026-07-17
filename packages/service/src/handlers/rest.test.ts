@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { emailErrors } from '../email/errors.js';
 import { handler } from './rest.js';
 
 // The handler builds an AuthService (which reads the signing key) for every route;
@@ -16,6 +17,15 @@ vi.mock('../email/service.js', () => ({
   EmailService: class {
     send = sendMock;
   },
+}));
+
+// Stub the read service so the read routes exercise routing/authorization/validation
+// without DDB or S3.
+const { readMocks } = vi.hoisted(() => ({
+  readMocks: { listEmails: vi.fn(), getEmail: vi.fn(), getAttachmentUrl: vi.fn() },
+}));
+vi.mock('../email/create-read-service.js', () => ({
+  createEmailReadServiceFromEnv: () => readMocks,
 }));
 
 function keysEvent(routeKey: string, scheme: string | undefined): APIGatewayProxyEventV2 {
@@ -86,4 +96,96 @@ describe('rest handler — send email is dual-scheme', () => {
       });
     },
   );
+});
+
+function readEvent(
+  routeKey: string,
+  scheme: string | undefined,
+  opts: { query?: Record<string, string>; path?: Record<string, string> } = {},
+): APIGatewayProxyEventV2 {
+  const lambda = scheme === undefined ? { sub: 'owner' } : { sub: 'owner', scheme };
+  return {
+    routeKey,
+    queryStringParameters: opts.query,
+    pathParameters: opts.path,
+    requestContext: { authorizer: { lambda } },
+  } as unknown as APIGatewayProxyEventV2;
+}
+
+describe('rest handler — reads are access-token-only', () => {
+  beforeEach(() => {
+    readMocks.listEmails.mockReset().mockResolvedValue({ emails: [] });
+    readMocks.getEmail.mockReset().mockResolvedValue({ id: 'h', direction: 'inbound' });
+    readMocks.getAttachmentUrl.mockReset().mockResolvedValue({ url: 'u', expiresAt: 't' });
+  });
+
+  it.each(['GET /emails', 'GET /emails/{id}', 'GET /emails/{id}/attachments/{attachmentId}'])(
+    'rejects an x-api-key credential on %s with 403 forbidden',
+    async (routeKey) => {
+      const res = await handler(
+        readEvent(routeKey, 'apiKey', { path: { id: 'h', attachmentId: '0' } }),
+      );
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body ?? '{}').error).toBe('forbidden');
+    },
+  );
+
+  it('rejects a missing scheme on reads (fails closed)', async () => {
+    const res = await handler(readEvent('GET /emails', undefined));
+    expect(res.statusCode).toBe(403);
+    expect(readMocks.listEmails).not.toHaveBeenCalled();
+  });
+
+  it('lists with a parsed, clamped query', async () => {
+    const res = await handler(
+      readEvent('GET /emails', 'access', {
+        query: { direction: 'inbound', limit: '999', cursor: 'abc' },
+      }),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(readMocks.listEmails).toHaveBeenCalledWith({
+      direction: 'inbound',
+      limit: 100,
+      cursor: 'abc',
+    });
+  });
+
+  it('defaults the limit and omits absent filters', async () => {
+    await handler(readEvent('GET /emails', 'access', {}));
+    expect(readMocks.listEmails).toHaveBeenCalledWith({ limit: 25 });
+  });
+
+  it('rejects a bad direction / non-positive-integer limit with 400', async () => {
+    for (const query of [
+      { direction: 'bogus' },
+      { limit: 'abc' },
+      { limit: '0' },
+      { limit: '-3' },
+    ]) {
+      const res = await handler(readEvent('GET /emails', 'access', { query }));
+      expect(res.statusCode).toBe(400);
+    }
+    expect(readMocks.listEmails).not.toHaveBeenCalled();
+  });
+
+  it('reads one message by its path id', async () => {
+    await handler(readEvent('GET /emails/{id}', 'access', { path: { id: 'handle-123' } }));
+    expect(readMocks.getEmail).toHaveBeenCalledWith('handle-123');
+  });
+
+  it('mints an attachment url from both path params', async () => {
+    await handler(
+      readEvent('GET /emails/{id}/attachments/{attachmentId}', 'access', {
+        path: { id: 'handle-1', attachmentId: '0' },
+      }),
+    );
+    expect(readMocks.getAttachmentUrl).toHaveBeenCalledWith('handle-1', '0');
+  });
+
+  it('maps a service not_found to a 404 body', async () => {
+    readMocks.getEmail.mockRejectedValueOnce(emailErrors.notFound('No such message.'));
+    const res = await handler(readEvent('GET /emails/{id}', 'access', { path: { id: 'nope' } }));
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body ?? '{}').error).toBe('not_found');
+  });
 });

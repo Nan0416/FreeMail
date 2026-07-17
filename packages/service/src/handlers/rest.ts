@@ -14,6 +14,7 @@ import type {
   SendEmailRequest,
   SessionResponse,
 } from '@freemail/shared';
+import { DEFAULT_EMAIL_PAGE_SIZE, MAX_EMAIL_PAGE_SIZE } from '@freemail/shared';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { AuthService } from '../auth/service.js';
 import { AuthError, authErrors } from '../auth/errors.js';
@@ -21,6 +22,8 @@ import { DdbAuthRepo } from '../data/ddb-auth-repo.js';
 import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
 import { ApiKeyService } from '../keys/service.js';
 import { createEmailServiceFromEnv } from '../email/create-email-service.js';
+import { createEmailReadServiceFromEnv } from '../email/create-read-service.js';
+import type { ListEmailsQuery } from '../email/read-service.js';
 import { EmailError, emailErrors } from '../email/errors.js';
 import { getSigningKey } from '../config/signing-key.js';
 import { requireAccessScheme, subjectFromContext } from './request-context.js';
@@ -87,6 +90,26 @@ export const handler = async (
           200,
           await createEmailServiceFromEnv().send(parseSendEmailBody(parseBody(event))),
         );
+      case 'GET /emails':
+        // Reads are the human/web surface (access-token only); the agent read path is
+        // #13's MCP tools over the same read service.
+        requireAccessScheme(event);
+        return json(200, await createEmailReadServiceFromEnv().listEmails(parseListQuery(event)));
+      case 'GET /emails/{id}':
+        requireAccessScheme(event);
+        return json(
+          200,
+          await createEmailReadServiceFromEnv().getEmail(requirePathParam(event, 'id')),
+        );
+      case 'GET /emails/{id}/attachments/{attachmentId}':
+        requireAccessScheme(event);
+        return json(
+          200,
+          await createEmailReadServiceFromEnv().getAttachmentUrl(
+            requirePathParam(event, 'id'),
+            requirePathParam(event, 'attachmentId'),
+          ),
+        );
       default:
         return json(404, {
           error: 'invalid_request',
@@ -148,6 +171,36 @@ function requirePathParam(event: APIGatewayProxyEventV2, name: string): string {
     throw authErrors.invalidRequest(`Path parameter "${name}" is required.`);
   }
   return value;
+}
+
+/** Parse `GET /emails` query params: `direction` (filter), `limit` (clamped), opaque `cursor`. */
+function parseListQuery(event: APIGatewayProxyEventV2): ListEmailsQuery {
+  const qs = event.queryStringParameters ?? {};
+  const direction = qs.direction;
+  if (direction !== undefined && direction !== 'sent' && direction !== 'inbound') {
+    throw emailErrors.invalidRequest('"direction" must be "sent" or "inbound".');
+  }
+  const query: ListEmailsQuery = { limit: parseLimit(qs.limit) };
+  if (direction) {
+    query.direction = direction;
+  }
+  if (qs.cursor) {
+    // Opaque — validated when the read service decodes it.
+    query.cursor = qs.cursor;
+  }
+  return query;
+}
+
+/** A positive-integer page size, defaulted and clamped to the allowed range. */
+function parseLimit(raw: string | undefined): number {
+  if (raw === undefined || raw === '') {
+    return DEFAULT_EMAIL_PAGE_SIZE;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    throw emailErrors.invalidRequest('"limit" must be a positive integer.');
+  }
+  return Math.min(value, MAX_EMAIL_PAGE_SIZE);
 }
 
 /**

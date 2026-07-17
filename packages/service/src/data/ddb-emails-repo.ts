@@ -9,23 +9,48 @@
  * existing row — and for inbound, so an at-least-once S3 redelivery is a no-op.
  */
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
-import type { EmailsRepo, InboundEmailRecord, SentEmailRecord } from './emails-repo.js';
-
-/** Partition holding sent messages. */
-const SENT_PARTITION = 'SENT';
-/** Partition holding received messages. */
-const INBOUND_PARTITION = 'INBOUND';
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  type GetCommandOutput,
+  PutCommand,
+  QueryCommand,
+  type QueryCommandOutput,
+} from '@aws-sdk/lib-dynamodb';
+import {
+  type EmailsReadRepo,
+  type EmailsRepo,
+  type InboundEmailRecord,
+  INBOUND_PARTITION,
+  type SentEmailRecord,
+  SENT_PARTITION,
+  type StoredEmailRow,
+} from './emails-repo.js';
 
 /** DynamoDB's error name for a failed `ConditionExpression` — here, the row already existed. */
 const CONDITIONAL_CHECK_FAILED = 'ConditionalCheckFailedException';
 
 /** The slice of the document client this repo uses — injectable so the logic is testable against a fake. */
 export interface EmailsDocClient {
-  send(command: PutCommand): Promise<unknown>;
+  send(command: PutCommand | QueryCommand | GetCommand): Promise<unknown>;
 }
 
-export class DdbEmailsRepo implements EmailsRepo {
+/** Direction → partition. */
+const PARTITION: Record<'sent' | 'inbound', string> = {
+  sent: SENT_PARTITION,
+  inbound: INBOUND_PARTITION,
+};
+
+/** Reconstruct the typed union row from a stored item (we wrote the shape, so trust `direction`). */
+function toRow(item: Record<string, unknown>): StoredEmailRow {
+  const sk = String(item.sk);
+  if (item.direction === 'inbound') {
+    return { ...(item as unknown as InboundEmailRecord), direction: 'inbound', sk };
+  }
+  return { ...(item as unknown as SentEmailRecord), direction: 'sent', sk };
+}
+
+export class DdbEmailsRepo implements EmailsRepo, EmailsReadRepo {
   private readonly doc: EmailsDocClient;
 
   constructor(
@@ -103,5 +128,33 @@ export class DdbEmailsRepo implements EmailsRepo {
       }
       throw err;
     }
+  }
+
+  async queryDirection(
+    direction: 'sent' | 'inbound',
+    opts: { limit: number; afterSk?: string },
+  ): Promise<StoredEmailRow[]> {
+    const pk = PARTITION[direction];
+    const out = (await this.doc.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        KeyConditionExpression: 'pk = :pk',
+        ExpressionAttributeValues: { ':pk': pk },
+        // Newest-first: sk = '<iso>#<id>' sorts lexicographically by receipt/send time.
+        ScanIndexForward: false,
+        Limit: opts.limit,
+        // Resume strictly after the last row we emitted for this partition. pk is
+        // server-derived (never client-supplied), so a crafted cursor can't retarget it.
+        ...(opts.afterSk ? { ExclusiveStartKey: { pk, sk: opts.afterSk } } : {}),
+      }),
+    )) as QueryCommandOutput;
+    return (out.Items ?? []).map(toRow);
+  }
+
+  async getByKey(key: { pk: string; sk: string }): Promise<StoredEmailRow | null> {
+    const out = (await this.doc.send(
+      new GetCommand({ TableName: this.tableName, Key: { pk: key.pk, sk: key.sk } }),
+    )) as GetCommandOutput;
+    return out.Item ? toRow(out.Item) : null;
   }
 }

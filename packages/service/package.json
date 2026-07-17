@@ -16,6 +16,7 @@
     "@aws-sdk/client-secrets-manager": "^3.700.0",
     "@aws-sdk/client-sesv2": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",
+    "@aws-sdk/s3-request-presigner": "^3.700.0",
     "@freemail/shared": "*",
     "@modelcontextprotocol/sdk": "1.29.0",
     "@zone-eu/mailsplit": "5.4.14",

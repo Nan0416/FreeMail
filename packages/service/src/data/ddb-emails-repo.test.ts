@@ -1,4 +1,4 @@
-import { PutCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { DdbEmailsRepo, type EmailsDocClient } from './ddb-emails-repo.js';
 import type { InboundEmailRecord, SentEmailRecord } from './emails-repo.js';
@@ -137,5 +137,72 @@ describe('DdbEmailsRepo', () => {
     const repo = new DdbEmailsRepo('emails-test', doc);
 
     await expect(repo.putInbound(inboundRecord())).rejects.toThrow();
+  });
+});
+
+/** A doc client that captures the command and returns a canned result, for the read paths. */
+class ReadFakeDoc implements EmailsDocClient {
+  lastCommand?: PutCommand | QueryCommand | GetCommand;
+  result: unknown = {};
+  send(command: PutCommand | QueryCommand | GetCommand): Promise<unknown> {
+    this.lastCommand = command;
+    return Promise.resolve(this.result);
+  }
+}
+
+describe('DdbEmailsRepo — reads', () => {
+  it('queries a partition newest-first with a limit and no start key', async () => {
+    const doc = new ReadFakeDoc();
+    doc.result = {
+      Items: [{ ...inboundRecord(), pk: 'INBOUND', sk: 'sk-1', direction: 'inbound' }],
+    };
+    const repo = new DdbEmailsRepo('emails-test', doc);
+
+    const rows = await repo.queryDirection('inbound', { limit: 10 });
+
+    const input = (doc.lastCommand as QueryCommand).input;
+    expect(input.KeyConditionExpression).toBe('pk = :pk');
+    expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'INBOUND' });
+    expect(input.ScanIndexForward).toBe(false);
+    expect(input.Limit).toBe(10);
+    expect(input.ExclusiveStartKey).toBeUndefined();
+    expect(rows[0]).toMatchObject({ direction: 'inbound', sk: 'sk-1' });
+  });
+
+  it('resumes strictly after a sort key via a server-derived ExclusiveStartKey', async () => {
+    const doc = new ReadFakeDoc();
+    doc.result = { Items: [] };
+    const repo = new DdbEmailsRepo('emails-test', doc);
+
+    await repo.queryDirection('sent', { limit: 5, afterSk: '2026-07-17T00:00:00.000Z#s1' });
+
+    const input = (doc.lastCommand as QueryCommand).input;
+    expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'SENT' });
+    // pk comes from the direction, never the caller — sk is the only carried value.
+    expect(input.ExclusiveStartKey).toEqual({ pk: 'SENT', sk: '2026-07-17T00:00:00.000Z#s1' });
+  });
+
+  it('maps a returned item to a typed row by its direction attribute', async () => {
+    const doc = new ReadFakeDoc();
+    doc.result = { Items: [{ ...record(), pk: 'SENT', sk: 'sk-9', direction: 'sent' }] };
+    const repo = new DdbEmailsRepo('emails-test', doc);
+
+    const rows = await repo.queryDirection('sent', { limit: 1 });
+    expect(rows[0].direction).toBe('sent');
+    expect(rows[0].sk).toBe('sk-9');
+  });
+
+  it('getByKey fetches by the full primary key and returns null when absent', async () => {
+    const doc = new ReadFakeDoc();
+    doc.result = { Item: { ...inboundRecord(), pk: 'INBOUND', sk: 'sk-7', direction: 'inbound' } };
+    const repo = new DdbEmailsRepo('emails-test', doc);
+
+    const row = await repo.getByKey({ pk: 'INBOUND', sk: 'sk-7' });
+    const input = (doc.lastCommand as GetCommand).input;
+    expect(input.Key).toEqual({ pk: 'INBOUND', sk: 'sk-7' });
+    expect(row).toMatchObject({ direction: 'inbound', sk: 'sk-7' });
+
+    doc.result = {};
+    expect(await repo.getByKey({ pk: 'INBOUND', sk: 'missing' })).toBeNull();
   });
 });
