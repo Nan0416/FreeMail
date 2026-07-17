@@ -2,6 +2,7 @@ import { Annotations, CfnOutput, Fn, Stack } from 'aws-cdk-lib';
 import type { StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import type { FreeMailConfig } from '@freemail/shared';
+import { ApiConstruct } from './constructs/api.js';
 import { DataConstruct } from './constructs/data.js';
 import { DnsConstruct } from './constructs/dns.js';
 import { SesConstruct } from './constructs/ses.js';
@@ -31,9 +32,14 @@ export class FreeMailStack extends Stack {
       region: config.region,
     });
 
+    const api = new ApiConstruct(this, 'Api', {
+      authTable: data.authTable,
+      apiKeysTable: data.apiKeysTable,
+    });
+
     // Insertion points for later slices:
     //   SES  → optional inbound receipt (dns.hostedZone MX + data.mailBucket)
-    //   API  → data.authTable / apiKeysTable / emailsTable / downloadTokensTable, ses.configurationSet
+    //   API  → api.addRestRoute(...) for #5 keys / #6 send; api.httpApi + api.authorizer for #7 MCP
     //   Web  → data.webBucket + CloudFront (dns.hostedZone for a custom app domain)
 
     new CfnOutput(this, 'HostedZoneId', { value: dns.hostedZone.hostedZoneId });
@@ -46,6 +52,11 @@ export class FreeMailStack extends Stack {
     }
     new CfnOutput(this, 'MailBucketName', { value: data.mailBucket.bucketName });
     new CfnOutput(this, 'WebBucketName', { value: data.webBucket.bucketName });
+
+    new CfnOutput(this, 'ApiEndpoint', {
+      description: 'Base URL of the FreeMail HTTP API.',
+      value: api.httpApi.apiEndpoint,
+    });
 
     new CfnOutput(this, 'SesIdentityName', { value: ses.emailIdentity.emailIdentityName });
     new CfnOutput(this, 'SesMailFromDomain', { value: ses.mailFromDomain });
