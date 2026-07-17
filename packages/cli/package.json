@@ -1,0 +1,18 @@
+{
+  "name": "@freemail/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "freemail": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "@freemail/shared": "*"
+  }
+}

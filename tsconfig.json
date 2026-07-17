@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/service" },
+    { "path": "packages/cli" },
+    { "path": "packages/infra" },
+    { "path": "packages/web" }
+  ]
+}
