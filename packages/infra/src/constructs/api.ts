@@ -56,6 +56,8 @@ export class ApiConstruct extends Construct {
   readonly authorizer: HttpLambdaAuthorizer;
   readonly restHandler: nodejs.NodejsFunction;
   readonly authorizerHandler: nodejs.NodejsFunction;
+  /** MCP server (agent-facing `send_email` tool) — its own handler behind the shared authorizer. */
+  readonly mcpHandler: nodejs.NodejsFunction;
   /** Auto-generated HS256 signing key (no manual bootstrap step). */
   readonly signingKey: secretsmanager.Secret;
   private readonly restIntegration: HttpLambdaIntegration;
@@ -89,20 +91,23 @@ export class ApiConstruct extends Construct {
     emailsTable.grantWriteData(this.restHandler);
     this.signingKey.grantRead(this.restHandler);
 
-    // Send from any address under the domain identity (SES domain identities cover
-    // subdomains too). SendEmail with raw content also authorizes under SendRawEmail.
-    this.restHandler.addToRolePolicy(
-      new iam.PolicyStatement({
-        actions: ['ses:SendEmail', 'ses:SendRawEmail'],
-        resources: [
-          Stack.of(this).formatArn({
-            service: 'ses',
-            resource: 'identity',
-            resourceName: emailDomain,
-          }),
-        ],
-      }),
-    );
+    // The REST `/emails` route sends.
+    this.grantSesSend(this.restHandler, emailDomain);
+
+    // MCP server: its own handler, but reuses the same EmailService, so it needs the
+    // same emails-table write + SES send grants. It does NOT touch auth/keys tables
+    // or the signing key — authentication is entirely the shared authorizer's job.
+    this.mcpHandler = this.nodeFunction('McpHandler', 'mcp.ts', {
+      description: 'FreeMail MCP server (send_email tool).',
+      memorySize: 512,
+      environment: {
+        EMAILS_TABLE: emailsTable.tableName,
+        EMAIL_DOMAIN: emailDomain,
+        SES_CONFIGURATION_SET: sesConfigurationSetName,
+      },
+    });
+    emailsTable.grantWriteData(this.mcpHandler);
+    this.grantSesSend(this.mcpHandler, emailDomain);
 
     this.authorizerHandler = this.nodeFunction('AuthorizerHandler', 'authorizer.ts', {
       description: 'FreeMail Lambda authorizer (access tokens + API keys).',
@@ -158,6 +163,17 @@ export class ApiConstruct extends Construct {
     // Send email — dual-scheme (Bearer human OR x-api-key agent), so it's behind
     // the authorizer but the handler does NOT restrict it to the access scheme.
     this.addRestRoute('/emails', apigwv2.HttpMethod.POST, { authorized: true });
+
+    // MCP server (agents) — its own handler behind the SAME dual-scheme authorizer.
+    // Both schemes resolve to the owner and `send_email` is the same capability as
+    // POST /emails, so no scheme guard is needed. Stateless JSON tool-calling is
+    // request/response, so only POST is registered (no GET/SSE stream).
+    this.httpApi.addRoutes({
+      path: '/mcp',
+      methods: [apigwv2.HttpMethod.POST],
+      integration: new HttpLambdaIntegration('McpIntegration', this.mcpHandler),
+      authorizer: this.authorizer,
+    });
   }
 
   /**
@@ -176,6 +192,27 @@ export class ApiConstruct extends Construct {
       integration: this.restIntegration,
       ...(opts.authorized ? { authorizer: this.authorizer } : {}),
     });
+  }
+
+  /**
+   * Grant a handler SES send under the domain identity (SES domain identities cover
+   * subdomains too). `SendEmail` with raw content also authorizes `SendRawEmail`.
+   * Shared by the REST send route and the MCP server, which send through the same
+   * EmailService.
+   */
+  private grantSesSend(fn: nodejs.NodejsFunction, emailDomain: string): void {
+    fn.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+        resources: [
+          Stack.of(this).formatArn({
+            service: 'ses',
+            resource: 'identity',
+            resourceName: emailDomain,
+          }),
+        ],
+      }),
+    );
   }
 
   private nodeFunction(

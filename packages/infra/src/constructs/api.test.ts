@@ -36,12 +36,12 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('exposes 9 routes: 4 public auth routes + 5 protected (me + 3 key routes + send)', () => {
+  it('exposes 10 routes: 4 public auth routes + 6 protected (me + 3 key routes + send + mcp)', () => {
     const template = synth();
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 9);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 10);
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const authorizationTypes = routes.map((r) => r.Properties.AuthorizationType);
-    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(5);
+    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(6);
     expect(authorizationTypes.filter((t) => t !== 'CUSTOM')).toHaveLength(4);
   });
 
@@ -70,6 +70,23 @@ describe('ApiConstruct', () => {
           AUTH_TABLE: Match.anyValue(),
           API_KEYS_TABLE: Match.anyValue(),
           SIGNING_KEY_SECRET_ID: Match.anyValue(),
+        }),
+      },
+    });
+  });
+
+  it('runs the MCP handler with only email env — no auth/keys tables or signing key', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Description: Match.stringLikeRegexp('MCP'),
+      Environment: {
+        Variables: Match.objectLike({
+          EMAILS_TABLE: Match.anyValue(),
+          EMAIL_DOMAIN: 'example.com',
+          // Authentication is the shared authorizer's job — the MCP handler needs none of these.
+          AUTH_TABLE: Match.absent(),
+          API_KEYS_TABLE: Match.absent(),
+          SIGNING_KEY_SECRET_ID: Match.absent(),
         }),
       },
     });
