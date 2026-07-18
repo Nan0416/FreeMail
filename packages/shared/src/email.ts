@@ -68,6 +68,25 @@ export const MAX_RECIPIENTS = 50;
 /** Hard upper bound on the assembled raw MIME message — SES rejects anything larger. */
 export const MAX_RAW_MESSAGE_BYTES = 40 * 1024 * 1024;
 
+/**
+ * Embed-vs-link boundary for outbound attachments (#14). An attachment whose decoded
+ * size is at most this many bytes is embedded in the MIME (SES serves it); anything
+ * LARGER is uploaded to S3 and delivered as a `GET /d/{token}` download link, so the
+ * recipient's provider isn't asked to accept a bloated message. Kept under
+ * {@link MAX_ATTACHMENT_TOTAL_BYTES} — the whole request (link + embedded bytes) still
+ * arrives base64 in one JSON body, so API Gateway's 10 MB limit remains the hard ceiling.
+ */
+export const MAX_EMBED_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+
+/**
+ * How long an outbound large-attachment download link stays valid. Server-authoritative:
+ * enforced on every claim of the token (DynamoDB TTL only garbage-collects the row later).
+ */
+export const DOWNLOAD_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+/** Lifetime of the presigned S3 GET the `/d/{token}` redirect points at — short, per click. */
+export const DOWNLOAD_PRESIGN_TTL_SECONDS = 60;
+
 export type EmailErrorCode = 'invalid_request' | 'invalid_sender' | 'not_found';
 
 export interface EmailErrorBody {

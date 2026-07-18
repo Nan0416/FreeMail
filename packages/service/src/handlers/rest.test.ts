@@ -57,6 +57,13 @@ vi.mock('../email/create-read-service.js', () => ({
   createEmailReadServiceFromEnv: () => readMocks,
 }));
 
+// Stub the download service so the public GET /d/{token} route exercises the
+// redirect/uniform-404 plumbing without DDB or S3.
+const { downloadMock } = vi.hoisted(() => ({ downloadMock: { resolve: vi.fn() } }));
+vi.mock('../email/create-download-service.js', () => ({
+  createDownloadServiceFromEnv: () => downloadMock,
+}));
+
 function keysEvent(routeKey: string, scheme: string | undefined): APIGatewayProxyEventV2 {
   const lambda = scheme === undefined ? { sub: 'owner' } : { sub: 'owner', scheme };
   return {
@@ -79,6 +86,9 @@ beforeEach(() => {
   process.env.API_KEYS_TABLE = 'keys-test';
   process.env.EMAIL_DOMAIN = 'example.com';
   process.env.EMAILS_TABLE = 'emails-test';
+  process.env.MAIL_BUCKET = 'mail-test';
+  process.env.DOWNLOAD_TOKENS_TABLE = 'tokens-test';
+  process.env.DOWNLOAD_BASE_URL = 'https://api.test';
   sendMock.mockReset();
   sendMock.mockResolvedValue({
     id: 'id-1',
@@ -89,6 +99,7 @@ beforeEach(() => {
   authMocks.login.mockReset().mockResolvedValue(TOKEN_PAIR);
   authMocks.refresh.mockReset();
   authMocks.logout.mockReset().mockResolvedValue(undefined);
+  downloadMock.resolve.mockReset();
 });
 
 afterEach(() => {
@@ -96,6 +107,9 @@ afterEach(() => {
   delete process.env.API_KEYS_TABLE;
   delete process.env.EMAIL_DOMAIN;
   delete process.env.EMAILS_TABLE;
+  delete process.env.MAIL_BUCKET;
+  delete process.env.DOWNLOAD_TOKENS_TABLE;
+  delete process.env.DOWNLOAD_BASE_URL;
 });
 
 describe('rest handler — key-management is access-token-only', () => {
@@ -364,5 +378,43 @@ describe('rest handler — logout clears both cookies (POST, idempotent)', () =>
     expect(res.headers?.['cache-control']).toBe('no-store');
     // ...but the "always clear" contract still holds (best-effort remove the browser copy).
     expect(allCleared(res.cookies)).toBe(true);
+  });
+});
+
+function downloadEvent(token: string | undefined): APIGatewayProxyEventV2 {
+  return {
+    routeKey: 'GET /d/{token}',
+    ...(token !== undefined ? { pathParameters: { token } } : {}),
+  } as unknown as APIGatewayProxyEventV2;
+}
+
+describe('rest handler — public token download (GET /d/{token})', () => {
+  it('302-redirects a valid token to the presigned URL, no-store, no auth context needed', async () => {
+    downloadMock.resolve.mockResolvedValue({ url: 'https://s3.example.com/signed-get' });
+    const res = await handler(downloadEvent('tok-abc'));
+    expect(res.statusCode).toBe(302);
+    expect(res.headers?.location).toBe('https://s3.example.com/signed-get');
+    expect(res.headers?.['cache-control']).toBe('no-store');
+    // No JSON body, no S3 key/bucket disclosed — just the opaque presigned URL.
+    expect(res.body).toBeUndefined();
+    expect(downloadMock.resolve).toHaveBeenCalledWith('tok-abc');
+  });
+
+  it('serves a uniform 404 HTML page for any invalid/expired/revoked/exhausted token', async () => {
+    downloadMock.resolve.mockResolvedValue(null);
+    const res = await handler(downloadEvent('tok-bad'));
+    expect(res.statusCode).toBe(404);
+    expect(res.headers?.['content-type']).toContain('text/html');
+    expect(res.headers?.['cache-control']).toBe('no-store');
+    expect(res.body).toContain('no longer available');
+    // The failing token is never reflected into the page (no oracle, no reflected XSS).
+    expect(res.body).not.toContain('tok-bad');
+  });
+
+  it('returns the same 404 without resolving when the token path param is absent', async () => {
+    const res = await handler(downloadEvent(undefined));
+    expect(res.statusCode).toBe(404);
+    expect(res.headers?.['content-type']).toContain('text/html');
+    expect(downloadMock.resolve).not.toHaveBeenCalled();
   });
 });

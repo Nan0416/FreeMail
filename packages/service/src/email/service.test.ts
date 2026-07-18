@@ -1,6 +1,8 @@
-import type { SendEmailRequest } from '@freemail/shared';
+import { DOWNLOAD_TOKEN_TTL_SECONDS, type SendEmailRequest } from '@freemail/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { DownloadTokenRecord, DownloadTokensRepo } from '../data/download-tokens-repo.js';
 import type { EmailsRepo, SentEmailRecord } from '../data/emails-repo.js';
+import type { OutboundAttachmentStore } from '../data/outbound-attachment-store.js';
 import { EmailError } from './errors.js';
 import type { RawMimeInput } from './mime.js';
 import { EmailService, type EmailServiceDeps } from './service.js';
@@ -27,28 +29,68 @@ class FakeEmails implements EmailsRepo {
   }
 }
 
+class FakeObjectStore implements OutboundAttachmentStore {
+  readonly puts: { key: string; bytes: Buffer }[] = [];
+  put(key: string, body: Buffer): Promise<void> {
+    this.puts.push({ key, bytes: body });
+    return Promise.resolve();
+  }
+}
+
+class FakeDownloadTokens implements DownloadTokensRepo {
+  readonly created: DownloadTokenRecord[] = [];
+  create(record: DownloadTokenRecord): Promise<void> {
+    this.created.push(record);
+    return Promise.resolve();
+  }
+  claim(): Promise<DownloadTokenRecord | null> {
+    return Promise.resolve(null);
+  }
+}
+
+const NOW_ISO = '2026-07-17T12:00:00.000Z';
+const DOWNLOAD_BASE_URL = 'https://api.example.test';
+
+/** Canonical base64 for `3 * blocks` zero bytes ('AAAA' → three 0x00 bytes, no padding). */
+function base64OfBlocks(blocks: number): string {
+  return 'AAAA'.repeat(blocks);
+}
+
 function makeService(overrides: Partial<EmailServiceDeps> = {}): {
   service: EmailService;
   ses: FakeSes;
   emails: FakeEmails;
+  objectStore: FakeObjectStore;
+  tokens: FakeDownloadTokens;
   mimeInputs: RawMimeInput[];
 } {
   const ses = overrides.ses instanceof FakeSes ? overrides.ses : new FakeSes();
   const emails = overrides.emails instanceof FakeEmails ? overrides.emails : new FakeEmails();
+  const objectStore =
+    overrides.objectStore instanceof FakeObjectStore
+      ? overrides.objectStore
+      : new FakeObjectStore();
+  const tokens =
+    overrides.tokens instanceof FakeDownloadTokens ? overrides.tokens : new FakeDownloadTokens();
   const mimeInputs: RawMimeInput[] = [];
+  let tokenSeq = 0;
   const service = new EmailService({
     ses,
     emails,
+    objectStore,
+    tokens,
+    downloadBaseUrl: DOWNLOAD_BASE_URL,
     emailDomain: 'example.com',
     buildMime: (input) => {
       mimeInputs.push(input);
       return Promise.resolve(Buffer.from('RAW-MIME'));
     },
-    now: () => new Date('2026-07-17T12:00:00.000Z'),
+    now: () => new Date(NOW_ISO),
     generateId: () => 'id-1',
+    generateToken: () => `tok-${tokenSeq++}`,
     ...overrides,
   });
-  return { service, ses, emails, mimeInputs };
+  return { service, ses, emails, objectStore, tokens, mimeInputs };
 }
 
 function request(overrides: Partial<SendEmailRequest> = {}): SendEmailRequest {
@@ -242,5 +284,163 @@ describe('EmailService.send', () => {
       { emailId: 'id-1', sesMessageId: 'ses-msg-1' },
       expect.any(Error),
     );
+  });
+});
+
+describe('EmailService.send — large attachments (#14)', () => {
+  // 'AAAA' decodes to 3 bytes; MAX_EMBED_ATTACHMENT_BYTES = 3 MB = 3 * 1024 * 1024.
+  const EMBED_LIMIT_BLOCKS = 1024 * 1024; // exactly 3 MB decoded
+  const LARGE_BLOCKS = 1_200_000; // 3.6 MB decoded — above the embed limit, under the 7 MB total cap
+
+  it('uploads a large attachment to S3, mints a token, and links it in the body instead of embedding', async () => {
+    const { service, objectStore, tokens, mimeInputs, emails } = makeService();
+
+    await service.send(
+      request({
+        attachments: [
+          {
+            filename: 'report.pdf',
+            contentType: 'application/pdf',
+            contentBase64: base64OfBlocks(LARGE_BLOCKS),
+          },
+        ],
+      }),
+    );
+
+    // Not embedded in the MIME.
+    expect(mimeInputs[0]?.attachments).toEqual([]);
+    // Uploaded to the opaque outbound key.
+    expect(objectStore.puts).toHaveLength(1);
+    expect(objectStore.puts[0].key).toBe('attachments/outbound/id-1/0');
+    expect(objectStore.puts[0].bytes.length).toBe(LARGE_BLOCKS * 3);
+    // Token minted with server-authoritative expiry + TTL and a zero counter.
+    expect(tokens.created).toHaveLength(1);
+    const expiresAt = new Date(
+      Date.parse(NOW_ISO) + DOWNLOAD_TOKEN_TTL_SECONDS * 1000,
+    ).toISOString();
+    expect(tokens.created[0]).toEqual({
+      token: 'tok-0',
+      s3Key: 'attachments/outbound/id-1/0',
+      filename: 'report.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: LARGE_BLOCKS * 3,
+      emailId: 'id-1',
+      createdAt: NOW_ISO,
+      expiresAt,
+      ttl: Math.floor(Date.parse(expiresAt) / 1000),
+      revoked: false,
+      downloadCount: 0,
+    });
+    // Linked in the body, not embedded — and still counted as an attachment on the record.
+    expect(mimeInputs[0]?.text).toContain('https://api.example.test/d/tok-0');
+    expect(emails.records[0]?.attachmentCount).toBe(1);
+  });
+
+  it('embeds an attachment at exactly the embed limit (boundary — no upload, no token)', async () => {
+    const { service, objectStore, tokens, mimeInputs } = makeService();
+    await service.send(
+      request({
+        attachments: [
+          {
+            filename: 'ok.bin',
+            contentType: 'application/octet-stream',
+            contentBase64: base64OfBlocks(EMBED_LIMIT_BLOCKS),
+          },
+        ],
+      }),
+    );
+    expect(mimeInputs[0]?.attachments).toHaveLength(1);
+    expect(objectStore.puts).toHaveLength(0);
+    expect(tokens.created).toHaveLength(0);
+  });
+
+  it('links an attachment one byte over the embed limit (boundary)', async () => {
+    const { service, objectStore, tokens, mimeInputs } = makeService();
+    // One 3-byte block over the exact 3 MB limit → routed to a link.
+    await service.send(
+      request({
+        attachments: [
+          {
+            filename: 'over.bin',
+            contentType: 'application/octet-stream',
+            contentBase64: base64OfBlocks(EMBED_LIMIT_BLOCKS + 1),
+          },
+        ],
+      }),
+    );
+    expect(mimeInputs[0]?.attachments).toEqual([]);
+    expect(objectStore.puts).toHaveLength(1);
+    expect(tokens.created).toHaveLength(1);
+  });
+
+  it('mixes embedded small + linked large attachments in one message', async () => {
+    const { service, objectStore, tokens, mimeInputs } = makeService();
+    const small = Buffer.from('a small file').toString('base64');
+    await service.send(
+      request({
+        attachments: [
+          { filename: 'small.txt', contentType: 'text/plain', contentBase64: small },
+          {
+            filename: 'big.bin',
+            contentType: 'application/octet-stream',
+            contentBase64: base64OfBlocks(LARGE_BLOCKS),
+          },
+        ],
+      }),
+    );
+    // Only the small one is embedded; the large one is a link.
+    expect(mimeInputs[0]?.attachments).toHaveLength(1);
+    expect(mimeInputs[0]?.attachments[0]?.filename).toBe('small.txt');
+    expect(objectStore.puts).toHaveLength(1);
+    expect(tokens.created).toHaveLength(1);
+    expect(tokens.created[0]?.filename).toBe('big.bin');
+  });
+
+  it('links large attachments into an HTML-only body with an escaped anchor', async () => {
+    const { service, mimeInputs } = makeService();
+    await service.send(
+      request({
+        text: undefined,
+        html: '<p>see attached</p>',
+        attachments: [
+          {
+            filename: 'q1"report.pdf',
+            contentType: 'application/pdf',
+            contentBase64: base64OfBlocks(LARGE_BLOCKS),
+          },
+        ],
+      }),
+    );
+    expect(mimeInputs[0]?.text).toBeUndefined();
+    expect(mimeInputs[0]?.html).toContain('<p>see attached</p>');
+    expect(mimeInputs[0]?.html).toContain('<a href="https://api.example.test/d/tok-0">');
+    // The quote in the filename is escaped, not rendered raw.
+    expect(mimeInputs[0]?.html).toContain('q1&quot;report.pdf');
+  });
+
+  it('mints one token per large attachment with per-file keys and sequential tokens', async () => {
+    const { service, objectStore, tokens } = makeService();
+    const blocks = 1_050_000; // 3.15 MB each; two = 6.3 MB, under the 7 MB total cap
+    await service.send(
+      request({
+        attachments: [
+          {
+            filename: 'a.bin',
+            contentType: 'application/octet-stream',
+            contentBase64: base64OfBlocks(blocks),
+          },
+          {
+            filename: 'b.bin',
+            contentType: 'application/octet-stream',
+            contentBase64: base64OfBlocks(blocks),
+          },
+        ],
+      }),
+    );
+    expect(objectStore.puts.map((p) => p.key)).toEqual([
+      'attachments/outbound/id-1/0',
+      'attachments/outbound/id-1/1',
+    ]);
+    expect(tokens.created.map((t) => t.token)).toEqual(['tok-0', 'tok-1']);
   });
 });

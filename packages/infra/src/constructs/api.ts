@@ -35,7 +35,9 @@ export interface ApiConstructProps {
   apiKeysTable: dynamodb.Table;
   /** Sent/inbound email metadata — the send route records sent messages, the read routes list/get them. */
   emailsTable: dynamodb.Table;
-  /** Inbound raw MIME + extracted attachments — the read routes re-parse bodies and presign downloads. */
+  /** Outbound large-attachment download tokens (#14) — send mints them, `GET /d/{token}` claims them. */
+  downloadTokensTable: dynamodb.Table;
+  /** Inbound raw MIME + extracted attachments + outbound large attachments (send writes, reads presign). */
   mailBucket: s3.IBucket;
   /** The SES send domain — `from` must be under it, and it scopes the send IAM grant. */
   emailDomain: string;
@@ -45,10 +47,9 @@ export interface ApiConstructProps {
 
 /**
  * The HTTP API skeleton: one HTTP API fronted by a dual-scheme Lambda authorizer,
- * with the auth routes (public), a protected `GET /me`, and the `/keys`
- * management routes wired to a single REST handler. Later slices plug in through
- * the exposed `httpApi`/`authorizer` and the `addRestRoute` helper — REST slices
- * (#6 send) reuse the same handler; the MCP server (#7) adds its own route +
+ * with the auth routes (public), a protected `GET /me`, the `/keys` management routes,
+ * send/read routes, and the public `GET /d/{token}` large-attachment download (#14),
+ * all wired to a single REST handler. The MCP server (#7) adds its own route +
  * integration behind the same authorizer.
  *
  * API Gateway itself stays unauthenticated (managed CORS answers preflight, auth
@@ -71,6 +72,7 @@ export class ApiConstruct extends Construct {
       authTable,
       apiKeysTable,
       emailsTable,
+      downloadTokensTable,
       mailBucket,
       emailDomain,
       sesConfigurationSetName,
@@ -82,6 +84,21 @@ export class ApiConstruct extends Construct {
       generateSecretString: { passwordLength: 64, excludePunctuation: true },
     });
 
+    // Created before the handlers so its endpoint can be baked into their env as the
+    // public base for `/d/{token}` download links (DOWNLOAD_BASE_URL). The Api resource
+    // itself has no dependency on the handlers (only the Routes do), so this is acyclic.
+    this.httpApi = new apigwv2.HttpApi(this, 'HttpApi', {
+      apiName: 'FreeMail',
+      description: 'FreeMail REST + MCP API.',
+      // NO CORS (#31): the web app calls the API SAME-ORIGIN through the CloudFront
+      // `/api/*` proxy, so the browser never makes a cross-origin request and never
+      // needs cross-origin permission. The wildcard was removed rather than replaced
+      // — a same-origin API grants no browser cross-origin access at all. The direct
+      // API Gateway URL stays reachable by non-browser `x-api-key` (MCP) callers,
+      // which are not subject to CORS; ambient SameSite=Strict cookies are never sent
+      // to this host, so there is no CSRF surface here.
+    });
+
     this.restHandler = this.nodeFunction('RestHandler', 'rest.ts', {
       description: 'FreeMail REST API (auth + app routes).',
       memorySize: 1024, // more vCPU so the scrypt hash on login stays sub-second
@@ -89,10 +106,13 @@ export class ApiConstruct extends Construct {
         AUTH_TABLE: authTable.tableName,
         API_KEYS_TABLE: apiKeysTable.tableName,
         EMAILS_TABLE: emailsTable.tableName,
+        DOWNLOAD_TOKENS_TABLE: downloadTokensTable.tableName,
         MAIL_BUCKET: mailBucket.bucketName,
         EMAIL_DOMAIN: emailDomain,
         SES_CONFIGURATION_SET: sesConfigurationSetName,
         SIGNING_KEY_SECRET_ID: this.signingKey.secretName,
+        // Public base for `/d/{token}` links — the API's own endpoint (no bucket exposure).
+        DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
       },
     });
     authTable.grantReadWriteData(this.restHandler);
@@ -100,28 +120,39 @@ export class ApiConstruct extends Construct {
     apiKeysTable.grantReadWriteData(this.restHandler);
     // The send route records sent-email metadata; the read routes list/get it.
     emailsTable.grantReadWriteData(this.restHandler);
+    // Large-attachment tokens: send mints them, GET /d/{token} claims (conditional update).
+    downloadTokensTable.grantReadWriteData(this.restHandler);
     // The read routes re-parse raw inbound MIME (for bodies) and presign attachment
     // downloads — scoped to the inbound raw + extracted-attachment prefixes only.
     mailBucket.grantRead(this.restHandler, 'inbound/*');
     mailBucket.grantRead(this.restHandler, 'attachments/inbound/*');
+    // Outbound large attachments: the send route writes them, GET /d/{token} presigns them.
+    mailBucket.grantReadWrite(this.restHandler, 'attachments/outbound/*');
     this.signingKey.grantRead(this.restHandler);
 
     // The REST `/emails` route sends.
     this.grantSesSend(this.restHandler, emailDomain);
 
     // MCP server: its own handler, but reuses the same EmailService, so it needs the
-    // same emails-table write + SES send grants. It does NOT touch auth/keys tables
-    // or the signing key — authentication is entirely the shared authorizer's job.
+    // same emails-table write + SES send grants, plus (for large attachments) the
+    // download-tokens table + the outbound attachment prefix. It does NOT touch
+    // auth/keys tables or the signing key — authentication is the shared authorizer's job.
     this.mcpHandler = this.nodeFunction('McpHandler', 'mcp.ts', {
       description: 'FreeMail MCP server (send_email tool).',
       memorySize: 512,
       environment: {
         EMAILS_TABLE: emailsTable.tableName,
+        DOWNLOAD_TOKENS_TABLE: downloadTokensTable.tableName,
+        MAIL_BUCKET: mailBucket.bucketName,
         EMAIL_DOMAIN: emailDomain,
         SES_CONFIGURATION_SET: sesConfigurationSetName,
+        DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
       },
     });
     emailsTable.grantWriteData(this.mcpHandler);
+    // Send-only: mint tokens + upload the bytes; the MCP handler never serves downloads.
+    downloadTokensTable.grantWriteData(this.mcpHandler);
+    mailBucket.grantWrite(this.mcpHandler, 'attachments/outbound/*');
     this.grantSesSend(this.mcpHandler, emailDomain);
 
     this.authorizerHandler = this.nodeFunction('AuthorizerHandler', 'authorizer.ts', {
@@ -145,18 +176,6 @@ export class ApiConstruct extends Construct {
     });
 
     this.restIntegration = new HttpLambdaIntegration('RestIntegration', this.restHandler);
-
-    this.httpApi = new apigwv2.HttpApi(this, 'HttpApi', {
-      apiName: 'FreeMail',
-      description: 'FreeMail REST + MCP API.',
-      // NO CORS (#31): the web app calls the API SAME-ORIGIN through the CloudFront
-      // `/api/*` proxy, so the browser never makes a cross-origin request and never
-      // needs cross-origin permission. The wildcard was removed rather than replaced
-      // — a same-origin API grants no browser cross-origin access at all. The direct
-      // API Gateway URL stays reachable by non-browser `x-api-key` (MCP) callers,
-      // which are not subject to CORS; ambient SameSite=Strict cookies are never sent
-      // to this host, so there is no CSRF surface here.
-    });
 
     // Public (no token yet): set-password, login, refresh, logout.
     this.addRestRoute('/auth/set-password', apigwv2.HttpMethod.POST);
@@ -183,6 +202,11 @@ export class ApiConstruct extends Construct {
       authorized: true,
     });
 
+    // Outbound large-attachment download (#14) — PUBLIC (no authorizer): the token IS the
+    // capability. The handler validates it and 302s to a short-lived presigned GET, or
+    // returns a uniform 404 for any unknown/expired/revoked/exhausted token.
+    this.addRestRoute('/d/{token}', apigwv2.HttpMethod.GET);
+
     // MCP server (agents) — its own handler behind the SAME dual-scheme authorizer.
     // Both schemes resolve to the owner and `send_email` is the same capability as
     // POST /emails, so no scheme guard is needed. Stateless JSON tool-calling is
@@ -197,8 +221,7 @@ export class ApiConstruct extends Construct {
 
   /**
    * Add a route served by the shared REST handler. `authorized` puts it behind the
-   * dual-scheme authorizer. Later REST slices (#6) call this; the MCP slice (#7)
-   * adds its own integration via `httpApi`/`authorizer` directly.
+   * dual-scheme authorizer; omit it for a public route.
    */
   addRestRoute(
     path: string,
