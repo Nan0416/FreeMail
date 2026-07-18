@@ -54,13 +54,23 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('exposes 13 routes: 4 public auth + 9 protected (me + 3 keys + send + 3 reads + mcp)', () => {
+  it('exposes 14 routes: 5 public (4 auth + download) + 9 protected (me + 3 keys + send + 3 reads + mcp)', () => {
     const template = synth();
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 13);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 14);
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const authorizationTypes = routes.map((r) => r.Properties.AuthorizationType);
+    // The public GET /d/{token} download is unauthenticated (the token is the capability).
     expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(9);
-    expect(authorizationTypes.filter((t) => t !== 'CUSTOM')).toHaveLength(4);
+    expect(authorizationTypes.filter((t) => t !== 'CUSTOM')).toHaveLength(5);
+  });
+
+  it('registers GET /d/{token} as a PUBLIC route (no authorizer)', () => {
+    const template = synth();
+    const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
+    const download = routes.find((r) => r.Properties.RouteKey === 'GET /d/{token}');
+    expect(download).toBeDefined();
+    expect(download?.Properties.AuthorizationType).not.toBe('CUSTOM');
+    expect(download?.Properties.AuthorizerId).toBeUndefined();
   });
 
   it('grants the REST handler SES send permission scoped to an identity (not *)', () => {
@@ -90,6 +100,9 @@ describe('ApiConstruct', () => {
           // The read routes need the mail bucket (raw MIME re-parse + attachment presign).
           MAIL_BUCKET: Match.anyValue(),
           SIGNING_KEY_SECRET_ID: Match.anyValue(),
+          // Large-attachment (#14): token store + the public base for /d/{token} links.
+          DOWNLOAD_TOKENS_TABLE: Match.anyValue(),
+          DOWNLOAD_BASE_URL: Match.anyValue(),
         }),
       },
     });
@@ -108,7 +121,7 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('runs the MCP handler with only email env — no auth/keys tables or signing key', () => {
+  it('runs the MCP handler with send env (incl. large-attachment) but no auth/keys tables or signing key', () => {
     const template = synth();
     template.hasResourceProperties('AWS::Lambda::Function', {
       Description: Match.stringLikeRegexp('MCP'),
@@ -116,11 +129,13 @@ describe('ApiConstruct', () => {
         Variables: Match.objectLike({
           EMAILS_TABLE: Match.anyValue(),
           EMAIL_DOMAIN: 'example.com',
+          // Large-attachment (#14) send needs the mail bucket (upload) + token store + link base.
+          MAIL_BUCKET: Match.anyValue(),
+          DOWNLOAD_TOKENS_TABLE: Match.anyValue(),
+          DOWNLOAD_BASE_URL: Match.anyValue(),
           // Authentication is the shared authorizer's job — the MCP handler needs none of these.
           AUTH_TABLE: Match.absent(),
           API_KEYS_TABLE: Match.absent(),
-          // Reads are the REST surface — the MCP (send-only) handler gets no mail-bucket access.
-          MAIL_BUCKET: Match.absent(),
           SIGNING_KEY_SECRET_ID: Match.absent(),
         }),
       },

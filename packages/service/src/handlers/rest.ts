@@ -29,6 +29,7 @@ import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
 import { ApiKeyService } from '../keys/service.js';
 import { createEmailServiceFromEnv } from '../email/create-email-service.js';
 import { createEmailReadServiceFromEnv } from '../email/create-read-service.js';
+import { createDownloadServiceFromEnv } from '../email/create-download-service.js';
 import type { ListEmailsQuery } from '../email/read-service.js';
 import { EmailError, emailErrors } from '../email/errors.js';
 import { getSigningKey } from '../config/signing-key.js';
@@ -127,6 +128,10 @@ export const handler = async (
             requirePathParam(event, 'attachmentId'),
           ),
         );
+      case 'GET /d/{token}':
+        // PUBLIC (no authorizer): the token is the sole capability. Resolves to a 302 to a
+        // short-lived presigned GET, or a uniform 404 for any invalid/expired/revoked token.
+        return await handleDownload(event);
       default:
         return json(404, {
           error: 'invalid_request',
@@ -207,6 +212,47 @@ function refreshFailure(error: AuthError): APIGatewayProxyStructuredResultV2 {
     headers: { ...JSON_HEADERS, ...NO_STORE_HEADERS },
     cookies: clearSessionCookies(),
     body: JSON.stringify({ error: error.code, message: error.message }),
+  };
+}
+
+/**
+ * A public, human-facing HTML page for any failed download. Uniform for every cause
+ * (unknown / malformed / expired / revoked / exhausted) — no oracle, no reflected input.
+ */
+const DOWNLOAD_NOT_FOUND_HTML =
+  '<!doctype html><html lang="en"><head><meta charset="utf-8">' +
+  '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+  '<title>Link unavailable</title></head>' +
+  '<body style="font-family:system-ui,sans-serif;max-width:32rem;margin:4rem auto;padding:0 1rem;color:#222">' +
+  '<h1>This link is no longer available</h1>' +
+  '<p>The download link has expired or is no longer valid.</p></body></html>';
+
+/**
+ * Resolve a `GET /d/{token}` request. The whole path stays in HTML space — a valid token
+ * yields a `302` to a freshly minted, short-lived presigned GET (the S3 bucket/key are
+ * never disclosed), and every failure yields the same `404` page. Both responses are
+ * `no-store` so no cache serves a stale redirect or a since-revoked link.
+ */
+async function handleDownload(
+  event: APIGatewayProxyEventV2,
+): Promise<APIGatewayProxyStructuredResultV2> {
+  const token = event.pathParameters?.token;
+  if (typeof token !== 'string' || token.length === 0) {
+    return downloadNotFound();
+  }
+  const result = await createDownloadServiceFromEnv().resolve(token);
+  return result ? downloadRedirect(result.url) : downloadNotFound();
+}
+
+function downloadRedirect(url: string): APIGatewayProxyStructuredResultV2 {
+  return { statusCode: 302, headers: { location: url, 'cache-control': 'no-store' } };
+}
+
+function downloadNotFound(): APIGatewayProxyStructuredResultV2 {
+  return {
+    statusCode: 404,
+    headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' },
+    body: DOWNLOAD_NOT_FOUND_HTML,
   };
 }
 
