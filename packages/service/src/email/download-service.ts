@@ -13,6 +13,7 @@ import { DOWNLOAD_PRESIGN_TTL_SECONDS } from '@freemail/shared';
 import type { AttachmentPresigner } from '../data/s3-attachment-presigner.js';
 import type { DownloadTokensRepo } from '../data/download-tokens-repo.js';
 import { contentDispositionForDownload } from './content-disposition.js';
+import { isValidDownloadToken } from './download-token.js';
 
 export interface DownloadServiceDeps {
   tokens: DownloadTokensRepo;
@@ -41,7 +42,10 @@ export class DownloadService {
    * concurrent requests cannot exceed a configured download cap.
    */
   async resolve(token: string): Promise<{ url: string } | null> {
-    if (!token) {
+    // Reject anything not shaped like a minted token BEFORE any DB call — an overlong
+    // token would otherwise throw a DynamoDB ValidationException (500), breaking the
+    // uniform-404 contract. Empty / invalid-char tokens fail closed here too.
+    if (!isValidDownloadToken(token)) {
       return null;
     }
     const record = await this.tokens.claim(token, this.now().toISOString());

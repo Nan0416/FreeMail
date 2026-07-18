@@ -44,6 +44,8 @@ function record(overrides: Partial<DownloadTokenRecord> = {}): DownloadTokenReco
 }
 
 const FIXED_NOW = new Date('2026-07-18T12:00:00.000Z');
+/** A well-formed token: exactly 43 base64url chars, matching the minted shape. */
+const VALID_TOKEN = 'A'.repeat(43);
 
 function makeService(tokens: FakeTokens, presigner: FakePresigner): DownloadService {
   return new DownloadService({ tokens, presigner, now: () => FIXED_NOW });
@@ -56,10 +58,10 @@ describe('DownloadService.resolve', () => {
     const presigner = new FakePresigner();
     const service = makeService(tokens, presigner);
 
-    const result = await service.resolve('tok-1');
+    const result = await service.resolve(VALID_TOKEN);
 
     expect(result).toEqual({ url: 'https://s3.example.com/signed-get' });
-    expect(tokens.claimCalls).toEqual([{ token: 'tok-1', nowIso: FIXED_NOW.toISOString() }]);
+    expect(tokens.claimCalls).toEqual([{ token: VALID_TOKEN, nowIso: FIXED_NOW.toISOString() }]);
     expect(presigner.calls).toHaveLength(1);
     expect(presigner.calls[0]).toEqual({
       key: 'attachments/outbound/email-1/0',
@@ -75,16 +77,24 @@ describe('DownloadService.resolve', () => {
     const presigner = new FakePresigner();
     const service = makeService(tokens, presigner);
 
-    expect(await service.resolve('tok-1')).toBeNull();
+    expect(await service.resolve(VALID_TOKEN)).toBeNull();
     expect(presigner.calls).toHaveLength(0);
   });
 
-  it('returns null for an empty token without touching the store', async () => {
+  // Shape is validated BEFORE any DB call, so a malformed token can never reach the store
+  // (an overlong one would otherwise throw a DynamoDB ValidationException → 500).
+  it.each([
+    ['empty', ''],
+    ['too short', 'A'.repeat(42)],
+    ['too long', 'A'.repeat(44)],
+    ['overlong past the DynamoDB key limit', 'A'.repeat(5000)],
+    ['non-base64url character', `${'A'.repeat(42)}+`],
+  ])('returns null for a %s token without touching the store', async (_label, token) => {
     const tokens = new FakeTokens();
     const presigner = new FakePresigner();
     const service = makeService(tokens, presigner);
 
-    expect(await service.resolve('')).toBeNull();
+    expect(await service.resolve(token)).toBeNull();
     expect(tokens.claimCalls).toHaveLength(0);
     expect(presigner.calls).toHaveLength(0);
   });

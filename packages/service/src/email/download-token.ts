@@ -10,12 +10,28 @@
  */
 import { randomBytes } from 'node:crypto';
 
-/** 256-bit token → ~43 base64url chars. Unguessable; the whole security of the endpoint. */
+/** 256-bit token → 43 base64url chars. Unguessable; the whole security of the endpoint. */
 const TOKEN_BYTES = 32;
+
+/** Exact minted length: base64url of 32 bytes is ⌈256/6⌉ = 43 chars (no padding). */
+const TOKEN_LENGTH = Math.ceil((TOKEN_BYTES * 8) / 6);
+
+/** Matches EXACTLY a minted token — used to reject malformed input before any DB lookup. */
+const TOKEN_RE = new RegExp(`^[A-Za-z0-9_-]{${TOKEN_LENGTH}}$`);
 
 /** Mint a fresh, high-entropy download token. */
 export function generateDownloadToken(): string {
   return randomBytes(TOKEN_BYTES).toString('base64url');
+}
+
+/**
+ * True only for a value shaped like a minted token (43 base64url chars). Validating
+ * BEFORE the DynamoDB lookup keeps the endpoint fail-closed: an empty, overlong (past
+ * DynamoDB's 2 KB key limit, which would otherwise 500 on a ValidationException), or
+ * non-base64url token is rejected as a uniform 404 without ever touching the store.
+ */
+export function isValidDownloadToken(token: string): boolean {
+  return TOKEN_RE.test(token);
 }
 
 /**
