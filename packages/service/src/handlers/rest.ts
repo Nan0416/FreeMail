@@ -14,7 +14,6 @@ import type {
   SendEmailRequest,
   SessionResponse,
 } from '@freemail/shared';
-import { DEFAULT_EMAIL_PAGE_SIZE, MAX_EMAIL_PAGE_SIZE } from '@freemail/shared';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { AuthService, OWNER_SUBJECT } from '../auth/service.js';
 import { AuthError, authErrors } from '../auth/errors.js';
@@ -30,6 +29,7 @@ import { ApiKeyService } from '../keys/service.js';
 import { createEmailServiceFromEnv } from '../email/create-email-service.js';
 import { createEmailReadServiceFromEnv } from '../email/create-read-service.js';
 import { createDownloadServiceFromEnv } from '../email/create-download-service.js';
+import { parseListEmailsQuery } from '../email/list-query.js';
 import type { ListEmailsQuery } from '../email/read-service.js';
 import { EmailError, emailErrors } from '../email/errors.js';
 import { getSigningKey } from '../config/signing-key.js';
@@ -308,34 +308,14 @@ function requirePathParam(event: APIGatewayProxyEventV2, name: string): string {
   return value;
 }
 
-/** Parse `GET /emails` query params: `direction` (filter), `limit` (clamped), opaque `cursor`. */
+/**
+ * Parse `GET /emails` query params via the shared {@link parseListEmailsQuery} — the
+ * same validation/defaulting/clamping the MCP `list_emails` tool uses, so REST and MCP
+ * can never drift.
+ */
 function parseListQuery(event: APIGatewayProxyEventV2): ListEmailsQuery {
   const qs = event.queryStringParameters ?? {};
-  const direction = qs.direction;
-  if (direction !== undefined && direction !== 'sent' && direction !== 'inbound') {
-    throw emailErrors.invalidRequest('"direction" must be "sent" or "inbound".');
-  }
-  const query: ListEmailsQuery = { limit: parseLimit(qs.limit) };
-  if (direction) {
-    query.direction = direction;
-  }
-  if (qs.cursor) {
-    // Opaque — validated when the read service decodes it.
-    query.cursor = qs.cursor;
-  }
-  return query;
-}
-
-/** A positive-integer page size, defaulted and clamped to the allowed range. */
-function parseLimit(raw: string | undefined): number {
-  if (raw === undefined || raw === '') {
-    return DEFAULT_EMAIL_PAGE_SIZE;
-  }
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < 1) {
-    throw emailErrors.invalidRequest('"limit" must be a positive integer.');
-  }
-  return Math.min(value, MAX_EMAIL_PAGE_SIZE);
+  return parseListEmailsQuery({ direction: qs.direction, limit: qs.limit, cursor: qs.cursor });
 }
 
 /**

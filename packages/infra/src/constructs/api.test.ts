@@ -15,6 +15,38 @@ function synth(): Template {
   return Template.fromStack(new FreeMailStack(new App(), 'TestStack', { config }));
 }
 
+/** Synth with inbound enabled (and its MX acknowledgement) so the #13 read grants are added. */
+function synthWithInbound(): Template {
+  return Template.fromStack(
+    new FreeMailStack(new App(), 'TestStack', {
+      config: { ...config, inbound: { enabled: true, confirmInboundMx: true } },
+    }),
+  );
+}
+
+const MCP_DESCRIPTION = 'FreeMail MCP server (send_email + read tools).';
+
+/** All IAM policy statements attached to a Lambda function's execution role, by description. */
+function roleActions(template: Template, description: string): string[] {
+  const fn = Object.values(template.findResources('AWS::Lambda::Function')).find(
+    (f) => f.Properties?.Description === description,
+  );
+  const roleRef = (fn?.Properties?.Role as { 'Fn::GetAtt'?: [string, string] } | undefined)?.[
+    'Fn::GetAtt'
+  ]?.[0];
+  expect(roleRef).toBeDefined();
+  const statements = Object.values(template.findResources('AWS::IAM::Policy'))
+    .filter((p) =>
+      ((p.Properties?.Roles as { Ref?: string }[] | undefined) ?? []).some(
+        (r) => r.Ref === roleRef,
+      ),
+    )
+    .flatMap((p) => (p.Properties?.PolicyDocument?.Statement ?? []) as { Action: unknown }[]);
+  return statements
+    .flatMap((s) => (Array.isArray(s.Action) ? s.Action : [s.Action]))
+    .filter((a): a is string => typeof a === 'string');
+}
+
 describe('ApiConstruct', () => {
   it('stands up one HTTP API with an auto-generated signing key', () => {
     const template = synth();
@@ -133,6 +165,8 @@ describe('ApiConstruct', () => {
           MAIL_BUCKET: Match.anyValue(),
           DOWNLOAD_TOKENS_TABLE: Match.anyValue(),
           DOWNLOAD_BASE_URL: Match.anyValue(),
+          // #13 read-tool gate — off in this config (inbound disabled).
+          INBOUND_ENABLED: 'false',
           // Authentication is the shared authorizer's job — the MCP handler needs none of these.
           AUTH_TABLE: Match.absent(),
           API_KEYS_TABLE: Match.absent(),
@@ -140,6 +174,31 @@ describe('ApiConstruct', () => {
         }),
       },
     });
+  });
+
+  it('with inbound OFF, the MCP role is send-only — no email-table read, no mail-bucket read', () => {
+    // Inbound disabled → the read tools are never registered, so the MCP handler must not
+    // hold read grants: no s3:GetObject and no DynamoDB read actions. Its send-path write
+    // grants (outbound attachment PutObject, emails-table write) remain.
+    const actions = roleActions(synth(), MCP_DESCRIPTION);
+    expect(actions).toContain('s3:PutObject');
+    expect(actions.some((a) => a.startsWith('s3:GetObject'))).toBe(false);
+    expect(actions).not.toContain('dynamodb:GetItem');
+    expect(actions).not.toContain('dynamodb:Query');
+  });
+
+  it('with inbound ON, grants the MCP role read-only email + inbound-prefix access and sets INBOUND_ENABLED=true', () => {
+    const template = synthWithInbound();
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Description: MCP_DESCRIPTION,
+      Environment: { Variables: Match.objectLike({ INBOUND_ENABLED: 'true' }) },
+    });
+    // Read tools now reach the emails table (Query/GetItem) and the mail bucket (GetObject
+    // for body re-parse + attachment presign), while keeping the send-path write grants.
+    const actions = roleActions(template, MCP_DESCRIPTION);
+    expect(actions.some((a) => a.startsWith('s3:GetObject'))).toBe(true);
+    expect(actions.some((a) => a === 'dynamodb:Query' || a === 'dynamodb:GetItem')).toBe(true);
+    expect(actions).toContain('s3:PutObject');
   });
 
   it('gives the authorizer the API-keys table so it can validate presented keys', () => {

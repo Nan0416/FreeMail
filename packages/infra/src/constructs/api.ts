@@ -48,6 +48,13 @@ export interface ApiConstructProps {
   /** SES configuration set the send route routes through (suppression + bounce/complaint tracking). */
   sesConfigurationSetName: string;
   /**
+   * Whether inbound email is enabled. Gates the MCP read tools (#13): when true, the MCP
+   * handler gets `INBOUND_ENABLED='true'` plus read-only grants scoped to exactly what the
+   * read service touches (emails table + the inbound raw/attachment prefixes). When false,
+   * the read tools are never registered and no read grants are added.
+   */
+  inboundEnabled: boolean;
+  /**
    * Optional custom domain for the API (from `FreeMailConfig.apiDomain`), for DIRECT
    * agent/MCP (`x-api-key`) access at a stable branded host. When set, a DNS-validated
    * ACM cert + a regional API Gateway v2 custom domain + alias records are created;
@@ -92,6 +99,7 @@ export class ApiConstruct extends Construct {
       mailBucket,
       emailDomain,
       sesConfigurationSetName,
+      inboundEnabled,
       customDomain,
     } = props;
 
@@ -150,12 +158,13 @@ export class ApiConstruct extends Construct {
     // The REST `/emails` route sends.
     this.grantSesSend(this.restHandler, emailDomain);
 
-    // MCP server: its own handler, but reuses the same EmailService, so it needs the
-    // same emails-table write + SES send grants, plus (for large attachments) the
-    // download-tokens table + the outbound attachment prefix. It does NOT touch
-    // auth/keys tables or the signing key — authentication is the shared authorizer's job.
+    // MCP server: its own handler, but reuses the same EmailService (send) and, when
+    // inbound is enabled, the same EmailReadService (#13 read tools). It gets the
+    // emails-table write + SES send grants + (for large attachments) the download-tokens
+    // table + outbound prefix; the read grants are added ONLY when inbound is enabled.
+    // It does NOT touch auth/keys tables or the signing key — auth is the authorizer's job.
     this.mcpHandler = this.nodeFunction('McpHandler', 'mcp.ts', {
-      description: 'FreeMail MCP server (send_email tool).',
+      description: 'FreeMail MCP server (send_email + read tools).',
       memorySize: 512,
       environment: {
         EMAILS_TABLE: emailsTable.tableName,
@@ -164,6 +173,8 @@ export class ApiConstruct extends Construct {
         EMAIL_DOMAIN: emailDomain,
         SES_CONFIGURATION_SET: sesConfigurationSetName,
         DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
+        // Gates the read tools (#13); the handler treats only exactly 'true' as enabled.
+        INBOUND_ENABLED: String(inboundEnabled),
       },
     });
     emailsTable.grantWriteData(this.mcpHandler);
@@ -171,6 +182,14 @@ export class ApiConstruct extends Construct {
     downloadTokensTable.grantWriteData(this.mcpHandler);
     mailBucket.grantWrite(this.mcpHandler, 'attachments/outbound/*');
     this.grantSesSend(this.mcpHandler, emailDomain);
+    // #13 read tools: read-only access scoped to exactly what EmailReadService touches —
+    // the emails table (list/get) and the inbound raw MIME + extracted-attachment prefixes
+    // (body re-parse + attachment presign). Added only when inbound is enabled.
+    if (inboundEnabled) {
+      emailsTable.grantReadData(this.mcpHandler);
+      mailBucket.grantRead(this.mcpHandler, 'inbound/*');
+      mailBucket.grantRead(this.mcpHandler, 'attachments/inbound/*');
+    }
 
     this.authorizerHandler = this.nodeFunction('AuthorizerHandler', 'authorizer.ts', {
       description: 'FreeMail Lambda authorizer (access tokens + API keys).',

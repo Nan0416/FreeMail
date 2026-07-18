@@ -43,6 +43,7 @@ export class FreeMailStack extends Stack {
       mailBucket: data.mailBucket,
       emailDomain: config.emailDomain,
       sesConfigurationSetName: ses.configurationSet.configurationSetName,
+      inboundEnabled: config.inbound.enabled,
       // Optional custom API domain for direct agent/MCP access; omitted → generated URL.
       ...(config.apiDomain
         ? { customDomain: { domainName: config.apiDomain, hostedZone: dns.hostedZone } }

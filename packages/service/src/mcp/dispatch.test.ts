@@ -1,6 +1,7 @@
 import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { describe, expect, it, vi } from 'vitest';
+import type { EmailReadService } from '../email/read-service.js';
 import type { EmailService } from '../email/service.js';
 import { dispatchMcpRequest } from './dispatch.js';
 
@@ -38,7 +39,10 @@ describe('dispatchMcpRequest', () => {
     const send = vi.fn();
     const emailService = { send } as unknown as EmailService;
 
-    const result = await dispatchMcpRequest(makeEvent(initializeBody(), undefined), emailService);
+    const result = await dispatchMcpRequest(makeEvent(initializeBody(), undefined), {
+      emailService,
+      inboundEnabled: false,
+    });
 
     expect(result.statusCode).toBe(401);
     expect(JSON.parse(result.body ?? '{}')).toMatchObject({ error: 'invalid_token' });
@@ -49,10 +53,10 @@ describe('dispatchMcpRequest', () => {
     const send = vi.fn();
     const emailService = { send } as unknown as EmailService;
 
-    const result = await dispatchMcpRequest(
-      makeEvent(initializeBody(), AUTHORIZED_CONTEXT),
+    const result = await dispatchMcpRequest(makeEvent(initializeBody(), AUTHORIZED_CONTEXT), {
       emailService,
-    );
+      inboundEnabled: false,
+    });
 
     expect(result.statusCode).toBe(200);
     expect(String(result.headers?.['content-type'])).toContain('application/json');
@@ -81,7 +85,10 @@ describe('dispatchMcpRequest', () => {
       },
     });
 
-    const result = await dispatchMcpRequest(makeEvent(body, AUTHORIZED_CONTEXT), emailService);
+    const result = await dispatchMcpRequest(makeEvent(body, AUTHORIZED_CONTEXT), {
+      emailService,
+      inboundEnabled: false,
+    });
 
     expect(result.statusCode).toBe(200);
     expect(send).toHaveBeenCalledWith({
@@ -95,6 +102,30 @@ describe('dispatchMcpRequest', () => {
       messageId: 'ses-1',
       sentAt: '2026-07-17T00:00:00.000Z',
     });
+    expect(payload.result.isError).toBeFalsy();
+  });
+
+  it('runs a list_emails tools/call end-to-end when inbound is enabled', async () => {
+    const listEmails = vi.fn().mockResolvedValue({ emails: [] });
+    const readService = { listEmails } as unknown as EmailReadService;
+
+    const body = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'list_emails', arguments: { limit: 10 } },
+    });
+
+    const result = await dispatchMcpRequest(makeEvent(body, AUTHORIZED_CONTEXT), {
+      emailService: { send: vi.fn() } as unknown as EmailService,
+      readService,
+      inboundEnabled: true,
+    });
+
+    expect(result.statusCode).toBe(200);
+    expect(listEmails).toHaveBeenCalledWith({ limit: 10 });
+    const payload = JSON.parse(result.body ?? '{}');
+    expect(payload.result.structuredContent.trust).toBe('self_authored_content');
     expect(payload.result.isError).toBeFalsy();
   });
 });

@@ -198,7 +198,7 @@ SES receipt rule → writes raw MIME to the mail S3 bucket → a parser Lambda e
 
 Agents send email through the MCP server — no browser, no cookies:
 
-1. In the web app, open **API keys** and **create a key**. It's shown **once** (copy it then); it's stored hashed and can't be retrieved again. An API key authorizes **sending only** (via the REST/MCP send routes) — reading the mailbox and managing keys require signing in to the web app with your password (the cookie session), not an API key.
+1. In the web app, open **API keys** and **create a key**. It's shown **once** (copy it then); it's stored hashed and can't be retrieved again. An API key authorizes an agent to **send and (when inbound is enabled) read the mailbox via the MCP server** — it does **not** grant key management or the REST mailbox-read routes, which require signing in to the web app with your password (the cookie session).
 2. Point your MCP client at **`POST {ApiEndpoint}/mcp`** (or `https://{apiDomain}/mcp` if you set a custom API domain) with header **`x-api-key: fm_<your-key>`**.
 3. Call the **`send_email`** tool. A valid call needs **`from`** (an address under your domain), **at least one recipient** across `to`/`cc`/`bcc`, and **at least one body** — `text` and/or `html`:
 
@@ -215,7 +215,7 @@ Agents send email through the MCP server — no browser, no cookies:
 }
 ```
 
-The MCP server is stateless (Streamable HTTP), so no session setup is required. **`send_email` is the only tool today** — agent read tools are roadmap ([#13](https://github.com/Nan0416/FreeMail/issues/13)).
+The MCP server is stateless (Streamable HTTP), so no session setup is required. **`send_email`** is always available; when **inbound is enabled**, the read tools **`list_emails`**, **`get_email`**, and **`get_email_attachment_url`** are also registered, so agents can read received mail and mint short-lived presigned attachment download URLs. Received email is untrusted external content — the read tools return it marked as data (with a `trust` field and a delimited text frame), not as instructions to the agent. With inbound disabled, only `send_email` is offered.
 
 ## 10. Troubleshooting
 
