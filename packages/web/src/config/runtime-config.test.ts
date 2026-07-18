@@ -12,13 +12,26 @@ describe('loadRuntimeConfig', () => {
   it('loads and normalizes /config.json', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
-      .mockResolvedValue(json(200, { apiBaseUrl: 'https://api.example.com/' }));
+      .mockResolvedValue(
+        json(200, { apiBaseUrl: 'https://api.example.com/', inboundEnabled: true }),
+      );
     await expect(loadRuntimeConfig(fetchMock)).resolves.toEqual({
       apiBaseUrl: 'https://api.example.com',
+      inboundEnabled: true,
     });
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('/config.json');
     expect(init?.cache).toBe('no-store');
+  });
+
+  it('defaults inboundEnabled to false when the deployed config omits it', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(json(200, { apiBaseUrl: 'https://api.example.com' }));
+    await expect(loadRuntimeConfig(fetchMock)).resolves.toEqual({
+      apiBaseUrl: 'https://api.example.com',
+      inboundEnabled: false,
+    });
   });
 
   it('fails loud on a malformed deployed config.json', async () => {

@@ -10,10 +10,29 @@ describe('normalizeBaseUrl', () => {
 });
 
 describe('parseWebRuntimeConfig', () => {
-  it('accepts and normalizes a valid config', () => {
+  it('accepts and normalizes a valid config, defaulting inboundEnabled to false', () => {
     expect(parseWebRuntimeConfig({ apiBaseUrl: 'https://api.example.com/' })).toEqual({
       apiBaseUrl: 'https://api.example.com',
+      inboundEnabled: false,
     });
+  });
+
+  it('carries inboundEnabled through when present', () => {
+    expect(
+      parseWebRuntimeConfig({ apiBaseUrl: 'https://api.example.com', inboundEnabled: true }),
+    ).toEqual({ apiBaseUrl: 'https://api.example.com', inboundEnabled: true });
+    expect(
+      parseWebRuntimeConfig({ apiBaseUrl: 'https://api.example.com', inboundEnabled: false }),
+    ).toEqual({ apiBaseUrl: 'https://api.example.com', inboundEnabled: false });
+  });
+
+  it('fails loud on a non-boolean inboundEnabled (no silent coercion)', () => {
+    expect(() =>
+      parseWebRuntimeConfig({ apiBaseUrl: 'https://api.example.com', inboundEnabled: 'yes' }),
+    ).toThrow(/"inboundEnabled" must be a boolean/);
+    expect(() =>
+      parseWebRuntimeConfig({ apiBaseUrl: 'https://api.example.com', inboundEnabled: 1 }),
+    ).toThrow(/"inboundEnabled" must be a boolean/);
   });
 
   it('throws on a non-object', () => {

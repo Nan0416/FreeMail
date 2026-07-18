@@ -1,10 +1,24 @@
 import type {
+  AttachmentDownloadResponse,
   CreateApiKeyResponse,
+  EmailDetail,
+  EmailDirection,
   ListApiKeysResponse,
+  ListEmailsResponse,
   SendEmailRequest,
   SendEmailResponse,
   SessionResponse,
 } from '@freemail/shared';
+
+/** Query params for {@link FreeMailClient.listEmails}. */
+export interface ListEmailsParams {
+  /** Restrict the merged timeline to one partition; omit for both. */
+  direction?: EmailDirection;
+  /** Page size (server clamps to its max); omit for the server default. */
+  limit?: number;
+  /** Opaque continuation token from a prior `nextCursor`. */
+  cursor?: string;
+}
 
 /** A typed error carrying the server's `{ error, message }` body plus the HTTP status. */
 export class ApiError extends Error {
@@ -107,6 +121,35 @@ export class FreeMailClient {
 
   async revokeKey(id: string): Promise<void> {
     await this.request('DELETE', `/keys/${encodeURIComponent(id)}`, { auth: true });
+  }
+
+  // --- read (inbound + sent) ---
+
+  /** The merged newest-first SENT + INBOUND timeline. */
+  async listEmails(params: ListEmailsParams = {}): Promise<ListEmailsResponse> {
+    const query = new URLSearchParams();
+    if (params.direction) query.set('direction', params.direction);
+    if (params.limit !== undefined) query.set('limit', String(params.limit));
+    if (params.cursor) query.set('cursor', params.cursor);
+    const qs = query.toString();
+    return this.request<ListEmailsResponse>('GET', `/emails${qs ? `?${qs}` : ''}`, { auth: true });
+  }
+
+  /** One message by its opaque handle. `html` (if any) is RAW — sandbox + sanitize before render. */
+  async getEmail(id: string): Promise<EmailDetail> {
+    return this.request<EmailDetail>('GET', `/emails/${encodeURIComponent(id)}`, { auth: true });
+  }
+
+  /** Mint a short-lived presigned URL that downloads (never renders) one attachment. */
+  async getAttachmentUrl(
+    emailId: string,
+    attachmentId: string,
+  ): Promise<AttachmentDownloadResponse> {
+    return this.request<AttachmentDownloadResponse>(
+      'GET',
+      `/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`,
+      { auth: true },
+    );
   }
 
   // --- core ---

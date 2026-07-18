@@ -3,7 +3,12 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import type { FreeMailConfig } from '@freemail/shared';
 import { FreeMailStack } from '../freemail-stack.js';
-import { rewriteApiPath, rewriteSpaPath } from './web.js';
+import {
+  APP_CONTENT_SECURITY_POLICY,
+  rewriteApiPath,
+  rewriteSpaPath,
+  webRuntimeConfigJson,
+} from './web.js';
 
 const config: FreeMailConfig = {
   region: 'us-east-1',
@@ -12,8 +17,10 @@ const config: FreeMailConfig = {
   inbound: { enabled: false, confirmInboundMx: false },
 };
 
-function synth(): Template {
-  return Template.fromStack(new FreeMailStack(new App(), 'TestStack', { config }));
+function synth(overrides: Partial<FreeMailConfig> = {}): Template {
+  return Template.fromStack(
+    new FreeMailStack(new App(), 'TestStack', { config: { ...config, ...overrides } }),
+  );
 }
 
 describe('WebConstruct', () => {
@@ -110,8 +117,51 @@ describe('WebConstruct', () => {
     );
   });
 
+  it('applies a strict app CSP + security headers via a ResponseHeadersPolicy on the SPA behavior', () => {
+    const template = synth();
+    // The policy carries the strict CSP incl. frame-ancestors 'none' (a <meta> cannot).
+    template.hasResourceProperties('AWS::CloudFront::ResponseHeadersPolicy', {
+      ResponseHeadersPolicyConfig: {
+        SecurityHeadersConfig: {
+          ContentSecurityPolicy: {
+            ContentSecurityPolicy: Match.stringLikeRegexp("frame-ancestors 'none'"),
+            Override: true,
+          },
+          ContentTypeOptions: { Override: true },
+          FrameOptions: { FrameOption: 'DENY', Override: true },
+          ReferrerPolicy: { ReferrerPolicy: 'no-referrer', Override: true },
+        },
+      },
+    });
+    // It is attached to the SPA (default) behavior — NOT the /api proxy behavior.
+    template.hasResourceProperties('AWS::CloudFront::Distribution', {
+      DistributionConfig: { DefaultCacheBehavior: { ResponseHeadersPolicyId: Match.anyValue() } },
+    });
+  });
+
   it('outputs the web app URL', () => {
     synth().hasOutput('WebAppUrl', {});
+  });
+});
+
+describe('webRuntimeConfigJson (deployed config.json content)', () => {
+  it('points the SPA at the same-origin /api proxy and carries the inbound flag', () => {
+    expect(webRuntimeConfigJson(false)).toEqual({ apiBaseUrl: '/api', inboundEnabled: false });
+    expect(webRuntimeConfigJson(true)).toEqual({ apiBaseUrl: '/api', inboundEnabled: true });
+  });
+});
+
+describe('APP_CONTENT_SECURITY_POLICY', () => {
+  it('is a strict deny-by-default policy that still permits the reader srcdoc frame', () => {
+    expect(APP_CONTENT_SECURITY_POLICY).toContain("default-src 'self'");
+    expect(APP_CONTENT_SECURITY_POLICY).toContain("object-src 'none'");
+    expect(APP_CONTENT_SECURITY_POLICY).toContain("base-uri 'none'");
+    expect(APP_CONTENT_SECURITY_POLICY).toContain("frame-ancestors 'none'");
+    // The reader iframe is a same-URL srcdoc → 'self'; the email doc is independently
+    // locked by its own injected <meta> CSP.
+    expect(APP_CONTENT_SECURITY_POLICY).toContain("frame-src 'self'");
+    // No wildcard sources anywhere.
+    expect(APP_CONTENT_SECURITY_POLICY).not.toContain('*');
   });
 });
 

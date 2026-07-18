@@ -211,6 +211,48 @@ describe('FreeMailClient (cookie auth)', () => {
     await expect(networkDown.logout()).rejects.toBeInstanceOf(TypeError);
   });
 
+  it('listEmails builds the query string and stays credentialed with no auth header', async () => {
+    const page = { emails: [{ id: 'h1', direction: 'inbound' }], nextCursor: 'c2' };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(json(200, page));
+    const client = makeClient(fetchMock);
+
+    const result = await client.listEmails({ direction: 'inbound', limit: 10, cursor: 'c1' });
+    expect(result).toEqual(page);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(`${BASE}/emails?direction=inbound&limit=10&cursor=c1`);
+    expect(init?.method).toBe('GET');
+    expect(authHeader(init)).toBeUndefined();
+    expect(init?.credentials).toBe('include');
+  });
+
+  it('listEmails omits the query string entirely when no params are given', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(json(200, { emails: [] }));
+    const client = makeClient(fetchMock);
+    await client.listEmails();
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/emails`);
+  });
+
+  it('getEmail fetches one message by its opaque, url-encoded handle', async () => {
+    const detail = { id: 'h/1', direction: 'inbound', from: 'a@x.com' };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(json(200, detail));
+    const client = makeClient(fetchMock);
+
+    const result = await client.getEmail('h/1');
+    expect(result).toEqual(detail);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/emails/h%2F1`);
+  });
+
+  it('getAttachmentUrl requests the presigned URL for one attachment', async () => {
+    const dl = { url: 'https://s3/signed', expiresAt: '2026-07-17T00:01:00.000Z' };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(json(200, dl));
+    const client = makeClient(fetchMock);
+
+    const result = await client.getAttachmentUrl('h1', 'a2');
+    expect(result).toEqual(dl);
+    expect(String(fetchMock.mock.calls[0][0])).toBe(`${BASE}/emails/h1/attachments/a2`);
+    expect(fetchMock.mock.calls[0][1]?.credentials).toBe('include');
+  });
+
   it('surfaces the server error body as a typed ApiError', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

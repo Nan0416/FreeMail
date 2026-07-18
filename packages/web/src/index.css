@@ -250,3 +250,175 @@ button.danger {
 .reveal-actions button {
   margin: 0;
 }
+
+/* --- Mail list --- */
+.mail-list {
+  list-style: none;
+  padding: 0;
+  margin: 1rem 0 0;
+}
+
+.mail-list li {
+  border-top: 1px solid var(--border);
+}
+
+.mail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.75rem 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.mail-row:hover {
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.mail-row-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.mail-party {
+  font-weight: 600;
+}
+
+.mail-subject {
+  color: var(--text);
+}
+
+.mail-snippet {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mail-badges {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.badge {
+  font-size: 0.75rem;
+}
+
+.badge-warn {
+  color: var(--warn);
+  border: 1px solid var(--warn);
+  border-radius: 999px;
+  padding: 0 0.5rem;
+}
+
+/* --- Reader --- */
+.link-back {
+  margin: 0 0 0.75rem;
+  padding: 0.25rem 0;
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.email-headers {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.15rem 0.75rem;
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+}
+
+.email-headers dt {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.email-headers dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.quarantine-banner {
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+}
+
+.quarantine-banner p {
+  margin: 0 0 0.5rem;
+  color: var(--warn);
+}
+
+.quarantine-banner button {
+  margin: 0;
+}
+
+.image-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0 0 0.5rem;
+}
+
+.image-toggle button {
+  margin: 0;
+}
+
+.email-frame {
+  width: 100%;
+  height: 60vh;
+  min-height: 20rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+}
+
+.email-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  font: inherit;
+}
+
+.email-attachments {
+  margin-top: 1.5rem;
+}
+
+.attachment-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+}
+
+.attachment-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0;
+  border-top: 1px solid var(--border);
+}
+
+.attachment-list li > div:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.attachment-name {
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.attachment-list button {
+  margin: 0;
+}
