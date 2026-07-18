@@ -136,4 +136,56 @@ describe('FreeMailStack', () => {
         }),
     ).toThrow(/MX override has not been acknowledged/);
   });
+
+  it('warns (does not block) when a custom domain is set on a CREATED zone', () => {
+    const stack = new FreeMailStack(new App(), 'TestStack', {
+      config: makeConfig({ appDomain: 'mail.example.com' }),
+    });
+    const annotations = Annotations.fromStack(stack);
+    // Actionable: names the hang and the fix (delegate the zone's name servers).
+    annotations.hasWarning('*', Match.stringLikeRegexp('custom domain is configured on a CREATED'));
+    annotations.hasWarning('*', Match.stringLikeRegexp('HANG on certificate validation'));
+    annotations.hasWarning('*', Match.stringLikeRegexp('name servers'));
+  });
+
+  it('does NOT warn about custom domains on an IMPORTED (already-delegated) zone', () => {
+    const stack = new FreeMailStack(new App(), 'TestStack', {
+      config: makeConfig({
+        hostedZone: { mode: 'import', zoneName: 'example.com', hostedZoneId: 'Z123' },
+        appDomain: 'mail.example.com',
+      }),
+    });
+    Annotations.fromStack(stack).hasNoWarning(
+      '*',
+      Match.stringLikeRegexp('custom domain is configured'),
+    );
+  });
+
+  it('does NOT warn about custom domains when none are configured', () => {
+    const stack = new FreeMailStack(new App(), 'TestStack', { config: makeConfig() });
+    Annotations.fromStack(stack).hasNoWarning(
+      '*',
+      Match.stringLikeRegexp('custom domain is configured'),
+    );
+  });
+
+  it('outputs custom URLs + the raw CloudFront domain when app/api domains are set', () => {
+    const template = synth(
+      makeConfig({ appDomain: 'mail.example.com', apiDomain: 'api.example.com' }),
+    );
+    template.hasOutput('WebAppUrl', { Value: 'https://mail.example.com' });
+    template.hasOutput('WebDistributionDomainName', {});
+    template.hasOutput('ApiCustomDomainUrl', { Value: 'https://api.example.com' });
+    template.hasOutput('CustomDomainValidationNote', {});
+  });
+
+  it('falls back to generated URLs with no custom-domain outputs when unset', () => {
+    const template = synth(makeConfig());
+    // WebAppUrl is present but carries the generated CloudFront domain (a token), not a custom host.
+    template.hasOutput('WebAppUrl', {});
+    expect(() => template.hasOutput('ApiCustomDomainUrl', {})).toThrow();
+    expect(() => template.hasOutput('CustomDomainValidationNote', {})).toThrow();
+    template.resourceCountIs('AWS::CertificateManager::Certificate', 0);
+    template.resourceCountIs('AWS::ApiGatewayV2::DomainName', 0);
+  });
 });

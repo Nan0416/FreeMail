@@ -4,10 +4,13 @@ import {
   Duration,
   Stack,
   aws_apigatewayv2 as apigwv2,
+  aws_certificatemanager as acm,
   aws_dynamodb as dynamodb,
   aws_iam as iam,
   aws_lambda as lambda,
   aws_lambda_nodejs as nodejs,
+  aws_route53 as route53,
+  aws_route53_targets as targets,
   aws_s3 as s3,
   aws_secretsmanager as secretsmanager,
 } from 'aws-cdk-lib';
@@ -17,6 +20,7 @@ import {
 } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { Construct } from 'constructs';
+import type { CustomDomainProps } from './web.js';
 
 const HANDLERS_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -41,6 +45,16 @@ export interface ApiConstructProps {
   emailDomain: string;
   /** SES configuration set the send route routes through (suppression + bounce/complaint tracking). */
   sesConfigurationSetName: string;
+  /**
+   * Optional custom domain for the API (from `FreeMailConfig.apiDomain`), for DIRECT
+   * agent/MCP (`x-api-key`) access at a stable branded host. When set, a DNS-validated
+   * ACM cert + a regional API Gateway v2 custom domain + alias records are created;
+   * omitted → the generated `execute-api` URL (no cert/DNS resources). This is
+   * independent of the web app: the SPA reaches the API SAME-ORIGIN through the
+   * CloudFront `/api/*` proxy (which targets the generated endpoint), so this custom
+   * domain is never used by the browser and does not affect the #31 cookie auth.
+   */
+  customDomain?: CustomDomainProps;
 }
 
 /**
@@ -63,6 +77,8 @@ export class ApiConstruct extends Construct {
   readonly mcpHandler: nodejs.NodejsFunction;
   /** Auto-generated HS256 signing key (no manual bootstrap step). */
   readonly signingKey: secretsmanager.Secret;
+  /** The configured custom API domain, if any (from `FreeMailConfig.apiDomain`). */
+  readonly customDomainName?: string;
   private readonly restIntegration: HttpLambdaIntegration;
 
   constructor(scope: Construct, id: string, props: ApiConstructProps) {
@@ -74,6 +90,7 @@ export class ApiConstruct extends Construct {
       mailBucket,
       emailDomain,
       sesConfigurationSetName,
+      customDomain,
     } = props;
 
     this.signingKey = new secretsmanager.Secret(this, 'JwtSigningKey', {
@@ -193,6 +210,45 @@ export class ApiConstruct extends Construct {
       integration: new HttpLambdaIntegration('McpIntegration', this.mcpHandler),
       authorizer: this.authorizer,
     });
+
+    // Optional custom API domain for direct agent/MCP callers. A DNS-validated ACM
+    // cert (in the stack region — a REGIONAL HTTP-API custom domain requires the cert
+    // in the API's own region, which the us-east-1 pin satisfies) + a regional custom
+    // domain mapped to the default stage + alias records. The generated `execute-api`
+    // URL keeps working (the CloudFront `/api/*` proxy still targets it), so the SPA is
+    // unaffected — this domain is a same-target alias for external callers only.
+    if (customDomain) {
+      const certificate = new acm.Certificate(this, 'Certificate', {
+        domainName: customDomain.domainName,
+        validation: acm.CertificateValidation.fromDns(customDomain.hostedZone),
+      });
+      const domainName = new apigwv2.DomainName(this, 'DomainName', {
+        domainName: customDomain.domainName,
+        certificate,
+      });
+      new apigwv2.ApiMapping(this, 'ApiMapping', {
+        api: this.httpApi,
+        domainName,
+        stage: this.httpApi.defaultStage,
+      });
+      const aliasTarget = route53.RecordTarget.fromAlias(
+        new targets.ApiGatewayv2DomainProperties(
+          domainName.regionalDomainName,
+          domainName.regionalHostedZoneId,
+        ),
+      );
+      new route53.ARecord(this, 'AliasRecord', {
+        zone: customDomain.hostedZone,
+        recordName: customDomain.domainName,
+        target: aliasTarget,
+      });
+      new route53.AaaaRecord(this, 'AliasRecordAaaa', {
+        zone: customDomain.hostedZone,
+        recordName: customDomain.domainName,
+        target: aliasTarget,
+      });
+      this.customDomainName = customDomain.domainName;
+    }
   }
 
   /**

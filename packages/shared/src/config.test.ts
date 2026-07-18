@@ -66,6 +66,38 @@ describe('parseFreeMailConfig', () => {
     );
   });
 
+  it('accepts app/api custom domains inside the hosted zone', () => {
+    const config = parseFreeMailConfig({
+      ...base,
+      appDomain: 'mail.example.com',
+      apiDomain: 'api.example.com',
+    });
+    expect(config.appDomain).toBe('mail.example.com');
+    expect(config.apiDomain).toBe('api.example.com');
+  });
+
+  it('rejects an appDomain outside the hosted zone', () => {
+    expect(() => parseFreeMailConfig({ ...base, appDomain: 'app.other.com' })).toThrow(
+      /"appDomain".*subdomain/,
+    );
+  });
+
+  it('rejects an apiDomain outside the hosted zone', () => {
+    expect(() => parseFreeMailConfig({ ...base, apiDomain: 'api.other.com' })).toThrow(
+      /"apiDomain".*subdomain/,
+    );
+  });
+
+  it('rejects appDomain and apiDomain being the same host', () => {
+    expect(() =>
+      parseFreeMailConfig({
+        ...base,
+        appDomain: 'mail.example.com',
+        apiDomain: 'Mail.example.com',
+      }),
+    ).toThrow(/must be different domains/);
+  });
+
   it('rejects an invalid hosted-zone mode', () => {
     expect(() =>
       parseFreeMailConfig({ ...base, hostedZone: { mode: 'nope', zoneName: 'example.com' } }),
