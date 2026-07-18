@@ -6,7 +6,7 @@ Status: **Design note / shaping.** Decisions marked ✅ are agreed.
 
 ## Principles
 - **Single-tenant, self-hosted.** One deployment = one user, in the user's own AWS account. No multi-tenant SaaS.
-- **Agent-first.** A first-class MCP server for agents to send (and later read) email, authed by API key.
+- **Agent-first.** A first-class MCP server for agents to send and (when inbound is enabled) read email, authed by API key.
 - **Own your domain + data.** SES + Route53 + S3 in the user's account.
 
 ## Tech stack
@@ -25,12 +25,12 @@ TypeScript · npm workspaces monorepo · Node.js (Lambda) · React (SPA) · AWS 
 - **Login** issues **access + refresh** tokens (JWT; signing key in SSM/Secrets Manager). Refresh rotation. Login endpoint **rate-limited / lockout** (single-password brute-force protection).
 - **Web session = httpOnly cookies** (#31). Both tokens ride in `HttpOnly; Secure; SameSite=Strict; Path=/` cookies (`__Host-fm_access` / `__Host-fm_refresh`) the browser stores but page JS cannot read — no token in any web storage, so XSS cannot exfiltrate the session. The SPA holds no token and sends `credentials: 'include'` with no `Authorization` header; refresh/logout read the refresh token **only** from the cookie (never a body/query), and every refresh failure clears both cookies. Auth responses are `Cache-Control: no-store`.
 - **CSRF = `SameSite=Strict`.** To make Strict cookies work (they are dropped on cross-site requests), the SPA is served **same-origin** with the API: CloudFront proxies `/api/*` to the HTTP API, so the browser only ever talks to one origin and there is **no CORS**. A double-submit CSRF token is **deferred** behind Strict.
-- **API keys** for agents → the MCP server. Registered via the React app; stored **hashed**, shown raw once. **One key = full access** (no per-key scopes for v1). Validated by a **Lambda authorizer** (the agent `x-api-key` path is unchanged by the cookie work).
+- **API keys** for agents → the MCP server. Registered via the React app; stored **hashed**, shown raw once. **One key = full agent access over MCP: send AND (when inbound is enabled) read the mailbox** — but **not** key management and **not** the REST mailbox-read routes, which stay cookie-session only (no per-key scopes for v1). Validated by a **Lambda authorizer** (the agent `x-api-key` path is unchanged by the cookie work).
 - **API Gateway itself is unauthenticated; auth lives in the backend** (a Lambda authorizer covers both the web access-token cookie and MCP API-keys).
 
 ## APIs
 1. **REST API** (React app): set-password/login, send email, manage API keys; (with inbound) list/read emails + attachment download.
-2. **MCP server** (agents): `send_email` (+ later `list_emails`/`get_email`). Built with the official **`@modelcontextprotocol/sdk`** Streamable HTTP transport in **stateless mode** behind API GW + Lambda (request/response tool-calling; no server-push needed). API-key auth via the Lambda authorizer.
+2. **MCP server** (agents): `send_email`, plus `list_emails` / `get_email` / `get_email_attachment_url` (read tools, registered only when inbound is enabled). Built with the official **`@modelcontextprotocol/sdk`** Streamable HTTP transport in **stateless mode** behind API GW + Lambda (request/response tool-calling; no server-push needed). API-key auth via the Lambda authorizer.
 
 ## Sending ✅
 `SES SendRawEmail` — send from **any address under the domain**. Requires **SES production access** (sandbox exit) per AWS account — a documented required manual step. Bounces/complaints via SNS → suppression + logging (reputation).

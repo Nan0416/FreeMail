@@ -8,22 +8,20 @@
  * A fresh server + transport per invocation is required (the SDK expects one
  * transport per connection); both are closed in `finally`.
  *
- * The `EmailService` is injected so this whole path is testable with a fake service
- * and no AWS.
+ * The service deps are injected so this whole path is testable with fakes and no AWS.
  */
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { AuthError } from '../auth/errors.js';
-import type { EmailService } from '../email/service.js';
 import { subjectFromContext } from '../handlers/request-context.js';
 import { eventToRequest, responseToResult } from './http-adapter.js';
-import { buildMcpServer } from './server.js';
+import { buildMcpServer, type McpServerDeps } from './server.js';
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
 export async function dispatchMcpRequest(
   event: APIGatewayProxyEventV2,
-  emailService: EmailService,
+  deps: McpServerDeps,
 ): Promise<APIGatewayProxyStructuredResultV2> {
   // The route sits behind the dual-scheme authorizer, which resolves an x-api-key
   // (or Bearer) to the owner subject. Reading it here is defense-in-depth — fail
@@ -42,7 +40,7 @@ export async function dispatchMcpRequest(
     throw error;
   }
 
-  const server = buildMcpServer(emailService);
+  const server = buildMcpServer(deps);
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
