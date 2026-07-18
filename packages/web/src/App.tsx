@@ -66,7 +66,7 @@ export function App(
 
   return (
     <AuthProvider apiBaseUrl={boot.config.apiBaseUrl} fetchImpl={fetchImpl}>
-      <AuthGate />
+      <AuthGate inboundEnabled={boot.config.inboundEnabled} />
     </AuthProvider>
   );
 }

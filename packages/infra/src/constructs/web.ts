@@ -68,6 +68,45 @@ function handler(event) {
 }`;
 }
 
+/**
+ * The runtime config object CDK writes to `config.json` at deploy. Pure + exported so
+ * the deployed content (deployed === tested) is unit-tested rather than an opaque asset.
+ * The SPA reaches the API at the same-origin `/api` proxy path (not a cross-origin URL);
+ * `inboundEnabled` gates the whole inbox UI (see {@link WebRuntimeConfig}).
+ */
+export function webRuntimeConfigJson(inboundEnabled: boolean): {
+  apiBaseUrl: string;
+  inboundEnabled: boolean;
+} {
+  return { apiBaseUrl: '/api', inboundEnabled };
+}
+
+/**
+ * Strict Content-Security-Policy for the SPA document/assets. Locks the app down so a
+ * sanitizer miss in the untrusted-email render path is still contained: no cross-origin
+ * scripts/connections, `object-src 'none'`, `base-uri 'none'`, and `frame-ancestors 'none'`
+ * (clickjacking). `frame-src 'self'` permits the reader's same-URL `srcdoc` iframe, which
+ * is ALSO independently locked by its own injected per-email `<meta>` CSP. This is the
+ * app layer; the sandbox attributes + DOMPurify + the per-email CSP are the other three
+ * independent controls. It cannot be set via a `<meta>` (that can't express
+ * `frame-ancestors`), so it rides a CloudFront ResponseHeadersPolicy.
+ */
+export const APP_CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "script-src 'self'",
+  // Inline `style=` attributes / a bundled stylesheet — never inline scripts.
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self'",
+  // The reader's srcdoc iframe is same-URL as the app document → 'self'.
+  "frame-src 'self'",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 export interface WebConstructProps {
   /** The private S3 bucket that holds the built SPA (from {@link DataConstruct}). */
   webBucket: s3.Bucket;
@@ -80,6 +119,11 @@ export interface WebConstructProps {
   apiEndpoint: string;
   /** The SPA asset directory (built dist or placeholder). See {@link resolveWebAssetPath}. */
   assetPath: string;
+  /**
+   * Whether inbound email is enabled (from `FreeMailConfig.inbound.enabled`). Written
+   * into `config.json` so the SPA can gate the inbox UI; sent history always shows.
+   */
+  inboundEnabled: boolean;
 }
 
 /**
@@ -104,7 +148,7 @@ export class WebConstruct extends Construct {
 
   constructor(scope: Construct, id: string, props: WebConstructProps) {
     super(scope, id);
-    const { webBucket, apiEndpoint, assetPath } = props;
+    const { webBucket, apiEndpoint, assetPath, inboundEnabled } = props;
 
     const spaRewrite = new cloudfront.Function(this, 'SpaRouting', {
       runtime: cloudfront.FunctionRuntime.JS_2_0,
@@ -120,6 +164,31 @@ export class WebConstruct extends Construct {
     // The API endpoint is `https://<host>` (no trailing slash / stage) — take the host.
     const apiHost = Fn.select(2, Fn.split('/', apiEndpoint));
 
+    // Strict security headers for the SPA document + assets (the default S3 behavior
+    // only — NEVER the /api proxy, whose JSON responses need no CSP). This is the app
+    // CSP layer of the four independent HTML-render controls; it also sets
+    // frame-ancestors 'none' + nosniff + no-referrer + HSTS.
+    const securityHeaders = new cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
+      comment: 'FreeMail SPA: strict CSP + security headers.',
+      securityHeadersBehavior: {
+        contentSecurityPolicy: {
+          contentSecurityPolicy: APP_CONTENT_SECURITY_POLICY,
+          override: true,
+        },
+        contentTypeOptions: { override: true },
+        frameOptions: { frameOption: cloudfront.HeadersFrameOption.DENY, override: true },
+        referrerPolicy: {
+          referrerPolicy: cloudfront.HeadersReferrerPolicy.NO_REFERRER,
+          override: true,
+        },
+        strictTransportSecurity: {
+          accessControlMaxAge: Duration.days(365),
+          includeSubdomains: true,
+          override: true,
+        },
+      },
+    });
+
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: 'FreeMail web app',
       defaultRootObject: 'index.html',
@@ -130,6 +199,7 @@ export class WebConstruct extends Construct {
         viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        responseHeadersPolicy: securityHeaders,
         functionAssociations: [
           { function: spaRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
         ],
@@ -175,7 +245,7 @@ export class WebConstruct extends Construct {
       destinationBucket: webBucket,
       sources: [
         s3deploy.Source.asset(assetPath, { exclude: ['assets/**'] }),
-        s3deploy.Source.jsonData('config.json', { apiBaseUrl: '/api' }),
+        s3deploy.Source.jsonData('config.json', webRuntimeConfigJson(inboundEnabled)),
       ],
       cacheControl: [s3deploy.CacheControl.noCache(), s3deploy.CacheControl.mustRevalidate()],
       prune: false,

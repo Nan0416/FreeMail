@@ -48,6 +48,7 @@ export class FreeMailStack extends Stack {
       webBucket: data.webBucket,
       apiEndpoint: api.httpApi.apiEndpoint,
       assetPath: resolveWebAssetPath(),
+      inboundEnabled: config.inbound.enabled,
     });
 
     // Optional inbound: SES receipt rule set → S3 + the inbound MX record. Gated on

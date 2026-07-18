@@ -13,6 +13,13 @@ export interface WebRuntimeConfig {
    * `https://abc123.execute-api.us-east-1.amazonaws.com`.
    */
   apiBaseUrl: string;
+  /**
+   * Whether inbound email is enabled for this deploy. CDK writes it from
+   * `FreeMailConfig.inbound.enabled` at deploy time. The SPA gates the whole inbox
+   * UI on it: an empty inbound timeline is indistinguishable from "inbound disabled",
+   * so this deploy-time flag is the authoritative signal (sent history always shows).
+   */
+  inboundEnabled: boolean;
 }
 
 /** Trim a base URL and drop a single trailing slash so callers can always append `/path`. */
@@ -33,9 +40,13 @@ export function parseWebRuntimeConfig(input: unknown): WebRuntimeConfig {
   if (!isRecord(input)) {
     throw new Error('WebRuntimeConfig: expected a JSON object.');
   }
-  const { apiBaseUrl } = input;
+  const { apiBaseUrl, inboundEnabled } = input;
   if (typeof apiBaseUrl !== 'string' || apiBaseUrl.trim().length === 0) {
     throw new Error('WebRuntimeConfig: "apiBaseUrl" must be a non-empty string.');
   }
-  return { apiBaseUrl: normalizeBaseUrl(apiBaseUrl) };
+  // Absent → false (a pre-#12 config.json is tolerated); present-but-wrong-type fails loud.
+  if (inboundEnabled !== undefined && typeof inboundEnabled !== 'boolean') {
+    throw new Error('WebRuntimeConfig: "inboundEnabled" must be a boolean.');
+  }
+  return { apiBaseUrl: normalizeBaseUrl(apiBaseUrl), inboundEnabled: inboundEnabled === true };
 }
