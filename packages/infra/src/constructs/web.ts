@@ -4,12 +4,26 @@ import { fileURLToPath } from 'node:url';
 import {
   Duration,
   Fn,
+  aws_certificatemanager as acm,
   aws_cloudfront as cloudfront,
   aws_cloudfront_origins as origins,
+  aws_route53 as route53,
+  aws_route53_targets as targets,
   aws_s3 as s3,
   aws_s3_deployment as s3deploy,
 } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+
+/**
+ * An optional custom domain for a fronted service (the web app here, the API in
+ * {@link ApiConstruct}). When present, a DNS-validated ACM certificate + alias
+ * records are created in `hostedZone`; when absent, the service keeps its generated
+ * AWS domain. `domainName` is guaranteed ⊆ the zone by `parseFreeMailConfig`.
+ */
+export interface CustomDomainProps {
+  domainName: string;
+  hostedZone: route53.IHostedZone;
+}
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The built SPA (`packages/web/dist`) — present after `npm run build`. */
@@ -124,6 +138,14 @@ export interface WebConstructProps {
    * into `config.json` so the SPA can gate the inbox UI; sent history always shows.
    */
   inboundEnabled: boolean;
+  /**
+   * Optional custom domain (from `FreeMailConfig.appDomain`). When set, the SPA is
+   * served at this domain via a DNS-validated ACM cert + a CloudFront alias; the SPA
+   * stays SAME-ORIGIN because `/api/*` is fronted by this same distribution/domain.
+   * Omitted → the generated CloudFront domain (no cert/DNS resources). The ACM cert
+   * lives in the stack region (pinned us-east-1), which is what CloudFront requires.
+   */
+  customDomain?: CustomDomainProps;
 }
 
 /**
@@ -145,10 +167,24 @@ export interface WebConstructProps {
  */
 export class WebConstruct extends Construct {
   readonly distribution: cloudfront.Distribution;
+  /** The configured custom app domain, if any (from `FreeMailConfig.appDomain`). */
+  readonly customDomainName?: string;
 
   constructor(scope: Construct, id: string, props: WebConstructProps) {
     super(scope, id);
-    const { webBucket, apiEndpoint, assetPath, inboundEnabled } = props;
+    const { webBucket, apiEndpoint, assetPath, inboundEnabled, customDomain } = props;
+
+    // Optional custom domain: a DNS-validated ACM cert (validation records written
+    // into the hosted zone). The cert must be in the CloudFront cert region — us-east-1
+    // — which the stack is pinned to, so no cross-region cert stack is needed.
+    let certificate: acm.ICertificate | undefined;
+    if (customDomain) {
+      certificate = new acm.Certificate(this, 'Certificate', {
+        domainName: customDomain.domainName,
+        validation: acm.CertificateValidation.fromDns(customDomain.hostedZone),
+      });
+      this.customDomainName = customDomain.domainName;
+    }
 
     const spaRewrite = new cloudfront.Function(this, 'SpaRouting', {
       runtime: cloudfront.FunctionRuntime.JS_2_0,
@@ -192,6 +228,10 @@ export class WebConstruct extends Construct {
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: 'FreeMail web app',
       defaultRootObject: 'index.html',
+      // A configured custom domain aliases the distribution; absent → generated domain.
+      ...(customDomain && certificate
+        ? { domainNames: [customDomain.domainName], certificate }
+        : {}),
       // Cost-conscious default for a single-tenant self-host (North America + Europe edges).
       priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
       defaultBehavior: {
@@ -223,6 +263,25 @@ export class WebConstruct extends Construct {
         },
       },
     });
+
+    // Point the custom domain at the distribution (A for IPv4, AAAA for IPv6). The
+    // domain is ⊆ the zone (enforced by `parseFreeMailConfig`), so it's a plain string
+    // (not a token) and CDK's FQDN handling appends the zone correctly.
+    if (customDomain) {
+      const aliasTarget = route53.RecordTarget.fromAlias(
+        new targets.CloudFrontTarget(this.distribution),
+      );
+      new route53.ARecord(this, 'AliasRecord', {
+        zone: customDomain.hostedZone,
+        recordName: customDomain.domainName,
+        target: aliasTarget,
+      });
+      new route53.AaaaRecord(this, 'AliasRecordAaaa', {
+        zone: customDomain.hostedZone,
+        recordName: customDomain.domainName,
+        target: aliasTarget,
+      });
+    }
 
     // Content-hashed assets: long-lived, immutable. `prune: false` so this deploy
     // never deletes the root files the second deploy owns; orphaned old hashes are

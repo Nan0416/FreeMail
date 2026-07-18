@@ -144,6 +144,53 @@ describe('WebConstruct', () => {
   });
 });
 
+describe('WebConstruct custom domain (appDomain)', () => {
+  it('uses the generated CloudFront domain by default — no cert, no aliases', () => {
+    const template = synth();
+    template.resourceCountIs('AWS::CertificateManager::Certificate', 0);
+    template.hasResourceProperties('AWS::CloudFront::Distribution', {
+      DistributionConfig: { Aliases: Match.absent() },
+    });
+  });
+
+  it('aliases the distribution to the app domain with a DNS-validated cert + A/AAAA records', () => {
+    const template = synth({ appDomain: 'mail.example.com' });
+    // DNS-validated ACM cert (in-region us-east-1, which CloudFront requires).
+    template.hasResourceProperties('AWS::CertificateManager::Certificate', {
+      DomainName: 'mail.example.com',
+      ValidationMethod: 'DNS',
+    });
+    // The distribution carries the alias + the cert.
+    template.hasResourceProperties('AWS::CloudFront::Distribution', {
+      DistributionConfig: {
+        Aliases: ['mail.example.com'],
+        ViewerCertificate: Match.objectLike({ AcmCertificateArn: Match.anyValue() }),
+      },
+    });
+    // Both an A (IPv4) and AAAA (IPv6) alias record point at the distribution.
+    const aliasRecords = Object.values(template.findResources('AWS::Route53::RecordSet')).filter(
+      (r) =>
+        r.Properties?.Name === 'mail.example.com.' &&
+        (r.Properties?.Type === 'A' || r.Properties?.Type === 'AAAA'),
+    );
+    expect(aliasRecords).toHaveLength(2);
+    expect(aliasRecords.every((r) => r.Properties?.AliasTarget !== undefined)).toBe(true);
+  });
+
+  it('keeps the SPA same-origin (#31): the deployed config.json still points at relative /api', () => {
+    // A custom domain must NOT turn the SPA cross-origin — the app still calls the
+    // same-origin /api proxy, so the __Host- / SameSite=Strict cookie auth is unaffected.
+    expect(webRuntimeConfigJson(false)).toEqual({ apiBaseUrl: '/api', inboundEnabled: false });
+    // And the /api proxy behavior survives unchanged alongside a custom domain.
+    const template = synth({ appDomain: 'mail.example.com' });
+    template.hasResourceProperties('AWS::CloudFront::Distribution', {
+      DistributionConfig: {
+        CacheBehaviors: Match.arrayWith([Match.objectLike({ PathPattern: '/api/*' })]),
+      },
+    });
+  });
+});
+
 describe('webRuntimeConfigJson (deployed config.json content)', () => {
   it('points the SPA at the same-origin /api proxy and carries the inbound flag', () => {
     expect(webRuntimeConfigJson(false)).toEqual({ apiBaseUrl: '/api', inboundEnabled: false });

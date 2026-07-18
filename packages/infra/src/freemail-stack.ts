@@ -25,6 +25,7 @@ export class FreeMailStack extends Stack {
     super(scope, id, { ...props, env: { ...props.env, region: config.region } });
 
     this.assertInboundAcknowledged(config);
+    this.warnCustomDomainDelegation(config);
 
     const dns = new DnsConstruct(this, 'Dns', { hostedZone: config.hostedZone });
     const data = new DataConstruct(this, 'Data');
@@ -42,6 +43,10 @@ export class FreeMailStack extends Stack {
       mailBucket: data.mailBucket,
       emailDomain: config.emailDomain,
       sesConfigurationSetName: ses.configurationSet.configurationSetName,
+      // Optional custom API domain for direct agent/MCP access; omitted → generated URL.
+      ...(config.apiDomain
+        ? { customDomain: { domainName: config.apiDomain, hostedZone: dns.hostedZone } }
+        : {}),
     });
 
     // The React SPA on CloudFront + S3, learning the API endpoint at runtime.
@@ -50,6 +55,10 @@ export class FreeMailStack extends Stack {
       apiEndpoint: api.httpApi.apiEndpoint,
       assetPath: resolveWebAssetPath(),
       inboundEnabled: config.inbound.enabled,
+      // Optional custom app domain (CloudFront alias); omitted → generated CloudFront domain.
+      ...(config.appDomain
+        ? { customDomain: { domainName: config.appDomain, hostedZone: dns.hostedZone } }
+        : {}),
     });
 
     // Optional inbound: SES receipt rule set → S3 + the inbound MX record. Gated on
@@ -64,9 +73,6 @@ export class FreeMailStack extends Stack {
       });
     }
 
-    // Insertion points for later slices:
-    //   Web  → a custom app domain (dns.hostedZone + ACM) is Phase 3 (#15)
-
     new CfnOutput(this, 'HostedZoneId', { value: dns.hostedZone.hostedZoneId });
     if (config.hostedZone.mode === 'create' && dns.nameServers) {
       new CfnOutput(this, 'HostedZoneNameServers', {
@@ -79,14 +85,36 @@ export class FreeMailStack extends Stack {
     new CfnOutput(this, 'WebBucketName', { value: data.webBucket.bucketName });
 
     new CfnOutput(this, 'ApiEndpoint', {
-      description: 'Base URL of the FreeMail HTTP API.',
+      description:
+        'Base URL of the FreeMail HTTP API (generated execute-api URL). Also the target of ' +
+        'the CloudFront /api proxy and the api custom domain, when configured.',
       value: api.httpApi.apiEndpoint,
     });
+    if (api.customDomainName) {
+      new CfnOutput(this, 'ApiCustomDomainUrl', {
+        description: 'Custom API domain for direct agent/MCP (x-api-key) access.',
+        value: `https://${api.customDomainName}`,
+      });
+    }
 
     new CfnOutput(this, 'WebAppUrl', {
-      description: 'CloudFront URL of the FreeMail web app.',
-      value: `https://${web.distribution.distributionDomainName}`,
+      description:
+        'URL of the FreeMail web app (custom app domain if configured, else CloudFront).',
+      value: `https://${web.customDomainName ?? web.distribution.distributionDomainName}`,
     });
+    // Always surface the raw CloudFront domain — the alias target + a DNS/debug fallback.
+    new CfnOutput(this, 'WebDistributionDomainName', {
+      description: 'Generated CloudFront domain of the web distribution.',
+      value: web.distribution.distributionDomainName,
+    });
+    if (config.appDomain !== undefined || config.apiDomain !== undefined) {
+      new CfnOutput(this, 'CustomDomainValidationNote', {
+        description:
+          'Custom-domain ACM certs are DNS-validated via the hosted zone. If the zone was just ' +
+          'CREATED, delegate its name servers at your registrar or the deploy hangs on validation.',
+        value: 'DNS-validated ACM (us-east-1) via Route53',
+      });
+    }
 
     new CfnOutput(this, 'SesIdentityName', { value: ses.emailIdentity.emailIdentityName });
     new CfnOutput(this, 'SesMailFromDomain', { value: ses.mailFromDomain });
@@ -128,5 +156,27 @@ export class FreeMailStack extends Stack {
           'Set inbound.confirmInboundMx to true (re-run `freemail init` and confirm) before deploying inbound.',
       );
     }
+  }
+
+  /**
+   * DNS-validated ACM certificates BLOCK the CloudFormation deploy until their
+   * validation records resolve publicly. A freshly CREATED hosted zone is not yet
+   * delegated at the registrar, so the first deploy that adds a custom domain will
+   * HANG on certificate validation until the name servers are set (unlike SES DKIM,
+   * which verifies asynchronously after the deploy). Warn — but don't block, since the
+   * deployer may delegate the name servers as part of the same flow.
+   */
+  private warnCustomDomainDelegation(config: FreeMailConfig): void {
+    const hasCustomDomain = config.appDomain !== undefined || config.apiDomain !== undefined;
+    if (!hasCustomDomain || config.hostedZone.mode !== 'create') {
+      return;
+    }
+    Annotations.of(this).addWarning(
+      'A custom domain is configured on a CREATED hosted zone. Custom-domain ACM certificates are ' +
+        'DNS-validated, and that validation BLOCKS the deploy until the records resolve publicly — so ' +
+        'the FIRST deploy will HANG on certificate validation until you delegate the zone. Set the hosted ' +
+        'zone name servers (the HostedZoneNameServers output) at your domain registrar before, or promptly ' +
+        'during, the deploy. Unlike SES DKIM verification, this is not asynchronous — it gates the deploy.',
+    );
   }
 }

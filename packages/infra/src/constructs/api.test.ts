@@ -165,3 +165,40 @@ describe('ApiConstruct', () => {
     });
   });
 });
+
+describe('ApiConstruct custom domain (apiDomain)', () => {
+  function synthWith(overrides: Partial<FreeMailConfig>): Template {
+    return Template.fromStack(
+      new FreeMailStack(new App(), 'TestStack', { config: { ...config, ...overrides } }),
+    );
+  }
+
+  it('uses the generated execute-api URL by default — no cert / custom domain / mapping', () => {
+    const template = synth();
+    template.resourceCountIs('AWS::CertificateManager::Certificate', 0);
+    template.resourceCountIs('AWS::ApiGatewayV2::DomainName', 0);
+    template.resourceCountIs('AWS::ApiGatewayV2::ApiMapping', 0);
+  });
+
+  it('wires a REGIONAL custom domain (cert + domain + mapping + A/AAAA) when apiDomain is set', () => {
+    const template = synthWith({ apiDomain: 'api.example.com' });
+    // DNS-validated ACM cert — same-region as the regional HTTP-API domain (us-east-1).
+    template.hasResourceProperties('AWS::CertificateManager::Certificate', {
+      DomainName: 'api.example.com',
+      ValidationMethod: 'DNS',
+    });
+    template.resourceCountIs('AWS::ApiGatewayV2::DomainName', 1);
+    template.hasResourceProperties('AWS::ApiGatewayV2::DomainName', {
+      DomainName: 'api.example.com',
+      DomainNameConfigurations: Match.arrayWith([Match.objectLike({ EndpointType: 'REGIONAL' })]),
+    });
+    template.resourceCountIs('AWS::ApiGatewayV2::ApiMapping', 1);
+    const aliasRecords = Object.values(template.findResources('AWS::Route53::RecordSet')).filter(
+      (r) =>
+        r.Properties?.Name === 'api.example.com.' &&
+        (r.Properties?.Type === 'A' || r.Properties?.Type === 'AAAA'),
+    );
+    expect(aliasRecords).toHaveLength(2);
+    template.hasOutput('ApiCustomDomainUrl', { Value: 'https://api.example.com' });
+  });
+});

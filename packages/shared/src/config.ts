@@ -131,6 +131,26 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
     input.appDomain === undefined ? undefined : requireDomain(input.appDomain, 'appDomain');
   const apiDomain =
     input.apiDomain === undefined ? undefined : requireDomain(input.apiDomain, 'apiDomain');
+  // A custom domain's ACM validation records and CloudFront/API-GW alias records are
+  // created inside the single managed hosted zone, so a domain outside it would
+  // silently fail to validate/resolve — reject it at parse (same rule as emailDomain).
+  if (appDomain !== undefined && !isSubdomainOrEqual(appDomain, zoneName)) {
+    throw new Error(
+      `FreeMail config: "appDomain" (${appDomain}) must equal or be a subdomain of the hosted zone (${zoneName}).`,
+    );
+  }
+  if (apiDomain !== undefined && !isSubdomainOrEqual(apiDomain, zoneName)) {
+    throw new Error(
+      `FreeMail config: "apiDomain" (${apiDomain}) must equal or be a subdomain of the hosted zone (${zoneName}).`,
+    );
+  }
+  // The same host cannot be an alias for both the web app (CloudFront) and the API
+  // (API Gateway) — the two alias records would collide.
+  if (appDomain !== undefined && appDomain === apiDomain) {
+    throw new Error(
+      `FreeMail config: "appDomain" and "apiDomain" must be different domains (both are "${appDomain}").`,
+    );
+  }
 
   if (!isRecord(input.inbound)) {
     throw new Error('FreeMail config: "inbound" must be an object.');
