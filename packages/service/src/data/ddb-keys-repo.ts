@@ -24,9 +24,9 @@ function isConditionalCheckFailed(error: unknown): boolean {
 /** The slice of the DynamoDB document client this repo uses — injectable so the logic is testable against a fake. */
 export interface ApiKeysDocClient {
   send(command: GetCommand | PutCommand | DeleteCommand | ScanCommand): Promise<{
-    Item?: Record<string, unknown>;
-    Items?: Record<string, unknown>[];
-    LastEvaluatedKey?: Record<string, unknown>;
+    readonly Item?: Record<string, unknown>;
+    readonly Items?: readonly Record<string, unknown>[];
+    readonly LastEvaluatedKey?: Record<string, unknown>;
   }>;
 }
 

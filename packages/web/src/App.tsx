@@ -5,9 +5,9 @@ import { AuthGate } from './components/AuthGate.js';
 import { loadRuntimeConfig } from './config/runtime-config.js';
 
 type Boot =
-  | { status: 'loading' }
-  | { status: 'ready'; config: WebRuntimeConfig }
-  | { status: 'error'; message: string };
+  | { readonly status: 'loading' }
+  | { readonly status: 'ready'; readonly config: WebRuntimeConfig }
+  | { readonly status: 'error'; readonly message: string };
 
 /**
  * Boots by loading the deploy-time runtime config (the API endpoint), then mounts

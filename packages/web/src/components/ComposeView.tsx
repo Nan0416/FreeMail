@@ -34,7 +34,7 @@ function fileToAttachment(file: File): Promise<EmailAttachment> {
   });
 }
 
-type SentState = { id: string; messageId: string } | null;
+type SentState = { readonly id: string; readonly messageId: string } | null;
 
 export function ComposeView(): React.JSX.Element {
   const { client } = useAuth();
@@ -85,19 +85,17 @@ export function ComposeView(): React.JSX.Element {
     setBusy(true);
     try {
       const attachments = await Promise.all(files.map(fileToAttachment));
-      const request: SendEmailRequest = { from };
-      if (fromName.trim()) request.fromName = fromName.trim();
-      if (recipients.to.length) request.to = recipients.to;
-      if (recipients.cc.length) request.cc = recipients.cc;
-      if (recipients.bcc.length) request.bcc = recipients.bcc;
-      if (subject.trim()) request.subject = subject;
       // Send as the selected body part; the API requires at least one of text/html.
-      if (format === 'html') {
-        request.html = body;
-      } else {
-        request.text = body;
-      }
-      if (attachments.length) request.attachments = attachments;
+      const request: SendEmailRequest = {
+        from,
+        ...(fromName.trim() ? { fromName: fromName.trim() } : {}),
+        ...(recipients.to.length ? { to: recipients.to } : {}),
+        ...(recipients.cc.length ? { cc: recipients.cc } : {}),
+        ...(recipients.bcc.length ? { bcc: recipients.bcc } : {}),
+        ...(subject.trim() ? { subject } : {}),
+        ...(format === 'html' ? { html: body } : { text: body }),
+        ...(attachments.length ? { attachments } : {}),
+      };
 
       const result = await client.sendEmail(request);
       setSent({ id: result.id, messageId: result.messageId });

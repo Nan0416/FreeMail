@@ -17,9 +17,9 @@ import { generateApiKey, parseApiKey, verifyApiKeySecret } from './api-key.js';
 const MAX_CREATE_ATTEMPTS = 5;
 
 export interface ApiKeyServiceDeps {
-  repo: ApiKeysRepo;
+  readonly repo: ApiKeysRepo;
   /** Epoch-seconds clock; injectable for tests. */
-  now?: () => number;
+  readonly now?: () => number;
 }
 
 export class ApiKeyService {
@@ -56,7 +56,7 @@ export class ApiKeyService {
   /** All keys as summaries (newest first), never exposing the secret. */
   async list(): Promise<ApiKeySummary[]> {
     const records = await this.repo.list();
-    return records.sort((a, b) => b.createdAt - a.createdAt).map(toSummary);
+    return [...records].sort((a, b) => b.createdAt - a.createdAt).map(toSummary);
   }
 
   /** Revoke a key by id. Idempotent — revoking an unknown/already-revoked id is a no-op. */

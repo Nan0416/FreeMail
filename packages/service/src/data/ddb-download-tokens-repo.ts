@@ -25,7 +25,9 @@ const CONDITIONAL_CHECK_FAILED = 'ConditionalCheckFailedException';
 
 /** The slice of the document client this repo uses — injectable so the logic is testable against a fake. */
 export interface DownloadTokensDocClient {
-  send(command: PutCommand | UpdateCommand): Promise<{ Attributes?: Record<string, unknown> }>;
+  send(
+    command: PutCommand | UpdateCommand,
+  ): Promise<{ readonly Attributes?: Record<string, unknown> }>;
 }
 
 export class DdbDownloadTokensRepo implements DownloadTokensRepo {

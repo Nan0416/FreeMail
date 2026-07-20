@@ -6,16 +6,20 @@ import { formatDate } from '../lib/format.js';
 import { EmailReader } from './EmailReader.js';
 
 type State =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; emails: EmailListItem[]; nextCursor?: string };
+  | { readonly status: 'loading' }
+  | { readonly status: 'error'; readonly message: string }
+  | {
+      readonly status: 'ready';
+      readonly emails: readonly EmailListItem[];
+      readonly nextCursor?: string;
+    };
 
 export interface MailListViewProps {
   /** Which partition to list — `inbound` for the Inbox, `sent` for Sent. */
-  direction: EmailDirection;
-  title: string;
+  readonly direction: EmailDirection;
+  readonly title: string;
   /** Shown when the list is empty. */
-  emptyMessage: string;
+  readonly emptyMessage: string;
 }
 
 export function MailListView({

@@ -40,13 +40,13 @@ export const MCP_SERVER_VERSION = '0.1.0';
 
 /** Dependencies for {@link buildMcpServer}. Read tools register only when inbound is enabled. */
 export interface McpServerDeps {
-  emailService: EmailService;
+  readonly emailService: EmailService;
   /** Present + `inboundEnabled` → the read tools are registered over this service. */
-  readService?: EmailReadService | undefined;
+  readonly readService?: EmailReadService | undefined;
   /** Gate: the read tools are advertised only when inbound is enabled. Fail-closed. */
-  inboundEnabled: boolean;
+  readonly inboundEnabled: boolean;
   /** Per-response nonce for the untrusted-content text boundary; injectable for tests. */
-  nonce?: (() => string) | undefined;
+  readonly nonce?: (() => string) | undefined;
 }
 
 const sendEmailInputSchema = {

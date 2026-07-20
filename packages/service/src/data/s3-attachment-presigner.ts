@@ -14,12 +14,12 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 export interface PresignRequest {
   /** Server-owned S3 key — never client-supplied, never returned to the client. */
-  key: string;
+  readonly key: string;
   /** Value for the response `Content-Type` header (forced to a non-inline type). */
-  contentType: string;
+  readonly contentType: string;
   /** Value for the response `Content-Disposition` header (always `attachment`, safely encoded). */
-  contentDisposition: string;
-  expiresInSeconds: number;
+  readonly contentDisposition: string;
+  readonly expiresInSeconds: number;
 }
 
 /** Presigns an attachment download; returns just the URL (the caller stamps `expiresAt`). */

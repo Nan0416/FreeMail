@@ -324,40 +324,27 @@ function parseListQuery(event: APIGatewayProxyEventV2): ListEmailsQuery {
  * {@link EmailService} so REST and the MCP tool share them.
  */
 function parseSendEmailBody(body: Record<string, unknown>): SendEmailRequest {
-  const request: SendEmailRequest = { from: requireString(body, 'from') };
+  // `from` is validated first so a missing sender is reported before any other field error.
+  const from = requireString(body, 'from');
   const fromName = optionalString(body, 'fromName');
-  if (fromName !== undefined) {
-    request.fromName = fromName;
-  }
   const subject = optionalString(body, 'subject');
-  if (subject !== undefined) {
-    request.subject = subject;
-  }
   const text = optionalString(body, 'text');
-  if (text !== undefined) {
-    request.text = text;
-  }
   const html = optionalString(body, 'html');
-  if (html !== undefined) {
-    request.html = html;
-  }
   const to = optionalStringArray(body, 'to');
-  if (to !== undefined) {
-    request.to = to;
-  }
   const cc = optionalStringArray(body, 'cc');
-  if (cc !== undefined) {
-    request.cc = cc;
-  }
   const bcc = optionalStringArray(body, 'bcc');
-  if (bcc !== undefined) {
-    request.bcc = bcc;
-  }
   const attachments = optionalAttachments(body);
-  if (attachments !== undefined) {
-    request.attachments = attachments;
-  }
-  return request;
+  return {
+    from,
+    ...(fromName !== undefined ? { fromName } : {}),
+    ...(subject !== undefined ? { subject } : {}),
+    ...(text !== undefined ? { text } : {}),
+    ...(html !== undefined ? { html } : {}),
+    ...(to !== undefined ? { to } : {}),
+    ...(cc !== undefined ? { cc } : {}),
+    ...(bcc !== undefined ? { bcc } : {}),
+    ...(attachments !== undefined ? { attachments } : {}),
+  };
 }
 
 function optionalStringArray(body: Record<string, unknown>, field: string): string[] | undefined {

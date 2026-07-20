@@ -20,15 +20,19 @@ const KNOWN_VERDICTS: ReadonlySet<string> = new Set(['PASS', 'FAIL', 'GRAY', 'PR
  */
 export function verdictFromHeaders(lines: readonly HeaderLine[], header: string): InboundVerdict {
   const values = headerValues(lines, header);
-  if (values.length === 0) return 'ABSENT';
-  if (values.length > 1) return 'CONFLICTING';
+  if (values.length === 0) {
+    return 'ABSENT';
+  }
+  if (values.length > 1) {
+    return 'CONFLICTING';
+  }
   const token = values[0].trim().toUpperCase();
   return KNOWN_VERDICTS.has(token) ? (token as InboundVerdict) : 'UNKNOWN';
 }
 
 export interface Verdicts {
-  spamVerdict: InboundVerdict;
-  virusVerdict: InboundVerdict;
+  readonly spamVerdict: InboundVerdict;
+  readonly virusVerdict: InboundVerdict;
 }
 
 /** Extract both SES verdicts from the raw header lines. */
@@ -41,9 +45,9 @@ export function extractVerdicts(lines: readonly HeaderLine[]): Verdicts {
 
 export interface Exposure {
   /** Extract attachments + store a snippet/body. True only for a parsed, virus-`PASS` message. */
-  exposeContent: boolean;
+  readonly exposeContent: boolean;
   /** Hide by default: content suppressed for any reason, OR spam-flagged. */
-  quarantined: boolean;
+  readonly quarantined: boolean;
 }
 
 /**

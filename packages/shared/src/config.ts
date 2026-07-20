@@ -14,35 +14,35 @@ export type HostedZoneMode = 'import' | 'create';
 
 export interface HostedZoneConfig {
   /** `import` an existing Route53 zone, or `create` a new one. */
-  mode: HostedZoneMode;
+  readonly mode: HostedZoneMode;
   /** The zone apex domain, e.g. `example.com`. */
-  zoneName: string;
+  readonly zoneName: string;
   /** Required when `mode === 'import'`: the existing zone's ID. */
-  hostedZoneId?: string;
+  readonly hostedZoneId?: string;
 }
 
 export interface InboundConfig {
   /** Receive email (SES receipt → S3). Off by default. */
-  enabled: boolean;
+  readonly enabled: boolean;
   /**
    * Explicit acknowledgement of the MX override that enabling inbound performs.
    * Enabling inbound points the email domain's MX at SES; this must be `true`
    * before inbound can be enabled (enforced here and independently at synth).
    */
-  confirmInboundMx: boolean;
+  readonly confirmInboundMx: boolean;
 }
 
 export interface FreeMailConfig {
   /** AWS region. Pinned to us-east-1. */
-  region: string;
-  hostedZone: HostedZoneConfig;
+  readonly region: string;
+  readonly hostedZone: HostedZoneConfig;
   /** Domain email is sent from / received at — the zone apex or a subdomain of it. */
-  emailDomain: string;
+  readonly emailDomain: string;
   /** Custom domain for the web app. Omit to use the CloudFront default domain. */
-  appDomain?: string;
+  readonly appDomain?: string;
   /** Custom domain for the API. Omit to use the API Gateway default domain. */
-  apiDomain?: string;
-  inbound: InboundConfig;
+  readonly apiDomain?: string;
+  readonly inbound: InboundConfig;
 }
 
 /** Canonicalize a domain: trim, lowercase, drop a trailing dot (DNS is case-insensitive). */

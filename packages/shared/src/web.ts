@@ -12,14 +12,14 @@ export interface WebRuntimeConfig {
    * Base URL of the FreeMail HTTP API, with no trailing slash, e.g.
    * `https://abc123.execute-api.us-east-1.amazonaws.com`.
    */
-  apiBaseUrl: string;
+  readonly apiBaseUrl: string;
   /**
    * Whether inbound email is enabled for this deploy. CDK writes it from
    * `FreeMailConfig.inbound.enabled` at deploy time. The SPA gates the whole inbox
    * UI on it: an empty inbound timeline is indistinguishable from "inbound disabled",
    * so this deploy-time flag is the authoritative signal (sent history always shows).
    */
-  inboundEnabled: boolean;
+  readonly inboundEnabled: boolean;
 }
 
 /** Trim a base URL and drop a single trailing slash so callers can always append `/path`. */

@@ -18,11 +18,11 @@ const SECRET_BYTES = 32;
 
 export interface GeneratedApiKey {
   /** Public lookup id — persisted as the partition key. */
-  keyId: string;
+  readonly keyId: string;
   /** The full raw key to return to the caller once. */
-  key: string;
+  readonly key: string;
   /** SHA-256 (hex) of the secret half — the only part of the credential persisted. */
-  secretHash: string;
+  readonly secretHash: string;
 }
 
 /** Mint a fresh key. `key` is returned once; only `keyId` + `secretHash` are stored. */
@@ -37,8 +37,8 @@ export function generateApiKey(): GeneratedApiKey {
 }
 
 export interface ParsedApiKey {
-  keyId: string;
-  secret: string;
+  readonly keyId: string;
+  readonly secret: string;
 }
 
 /**

@@ -13,11 +13,11 @@
 /** An attachment embedded in the outgoing message. `contentBase64` is the raw bytes, base64-encoded. */
 export interface EmailAttachment {
   /** File name shown to the recipient. */
-  filename: string;
+  readonly filename: string;
   /** MIME content type, e.g. `application/pdf`. */
-  contentType: string;
+  readonly contentType: string;
   /** Attachment bytes, base64-encoded. */
-  contentBase64: string;
+  readonly contentBase64: string;
 }
 
 /**
@@ -28,28 +28,28 @@ export interface EmailAttachment {
  */
 export interface SendEmailRequest {
   /** Sender address — must be under the configured email domain. */
-  from: string;
+  readonly from: string;
   /** Optional display name for the sender (`Name <addr>`). */
-  fromName?: string;
-  to?: string[];
-  cc?: string[];
-  bcc?: string[];
-  subject?: string;
+  readonly fromName?: string;
+  readonly to?: readonly string[];
+  readonly cc?: readonly string[];
+  readonly bcc?: readonly string[];
+  readonly subject?: string;
   /** Plain-text body. At least one of `text` / `html` is required. */
-  text?: string;
+  readonly text?: string;
   /** HTML body. At least one of `text` / `html` is required. */
-  html?: string;
-  attachments?: EmailAttachment[];
+  readonly html?: string;
+  readonly attachments?: readonly EmailAttachment[];
 }
 
 /** Result of a successful send. */
 export interface SendEmailResponse {
   /** FreeMail's own id for the sent message (keys the metadata row). */
-  id: string;
+  readonly id: string;
   /** The message id SES assigned. */
-  messageId: string;
+  readonly messageId: string;
   /** Send time, ISO-8601. */
-  sentAt: string;
+  readonly sentAt: string;
 }
 
 /**
@@ -90,8 +90,8 @@ export const DOWNLOAD_PRESIGN_TTL_SECONDS = 60;
 export type EmailErrorCode = 'invalid_request' | 'invalid_sender' | 'not_found';
 
 export interface EmailErrorBody {
-  error: EmailErrorCode;
-  message: string;
+  readonly error: EmailErrorCode;
+  readonly message: string;
 }
 
 /**
@@ -136,88 +136,88 @@ export type InboundParseStatus = 'ok' | 'oversize' | 'limit_exceeded' | 'parse_f
  */
 export interface EmailAttachmentInfo {
   /** Stable per-message attachment id; pass to `GET /emails/{id}/attachments/{attachmentId}`. */
-  id: string;
+  readonly id: string;
   /** Display filename (sanitized). */
-  filename: string;
-  contentType: string;
-  sizeBytes: number;
+  readonly filename: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
 }
 
 /** One row of the merged timeline — envelope + preview, never the full body. */
 export interface EmailListItem {
   /** Opaque handle addressing this message; pass to `GET /emails/{id}`. */
-  id: string;
-  direction: EmailDirection;
-  from: string;
+  readonly id: string;
+  readonly direction: EmailDirection;
+  readonly from: string;
   /** Sender display name, if any (inbound). */
-  fromName?: string;
-  to: string[];
-  cc: string[];
-  subject: string;
+  readonly fromName?: string;
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly subject: string;
   /** Short plain-text preview — present only when content is exposable. */
-  snippet?: string;
+  readonly snippet?: string;
   /** Timeline sort time, ISO-8601 UTC (sent → send time, inbound → server receipt time). */
-  date: string;
-  hasAttachments: boolean;
-  attachmentCount: number;
+  readonly date: string;
+  readonly hasAttachments: boolean;
+  readonly attachmentCount: number;
   /** Inbound only: hidden-by-default (content suppressed OR spam-flagged). Absent on sent. */
-  quarantined?: boolean;
+  readonly quarantined?: boolean;
   /** Inbound only: SES verdicts, so the UI can explain a quarantine. Absent on sent. */
-  spamVerdict?: InboundVerdict;
-  virusVerdict?: InboundVerdict;
+  readonly spamVerdict?: InboundVerdict;
+  readonly virusVerdict?: InboundVerdict;
 }
 
 /** A single message with headers, body (received-only), and attachment list. */
 export interface EmailDetail {
   /** Opaque handle (echoes the request). */
-  id: string;
-  direction: EmailDirection;
-  from: string;
-  fromName?: string;
-  to: string[];
-  cc: string[];
+  readonly id: string;
+  readonly direction: EmailDirection;
+  readonly from: string;
+  readonly fromName?: string;
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
   /** Sent messages only (bcc is never retained for received mail). */
-  bcc?: string[];
-  subject: string;
+  readonly bcc?: readonly string[];
+  readonly subject: string;
   /** Timeline sort time, ISO-8601 UTC. */
-  date: string;
+  readonly date: string;
   /** Inbound only: the message's own `Date:` header (attacker-controlled), if present. */
-  headerDate?: string;
+  readonly headerDate?: string;
   /** Plain-text body — present only for an exposable received message. */
-  text?: string;
+  readonly text?: string;
   /**
    * HTML body, returned RAW as data. The client MUST sandbox + sanitize before
    * rendering (a sandboxed iframe with no `allow-same-origin`) — the API never
    * renders it. Present only for an exposable received message.
    */
-  html?: string;
+  readonly html?: string;
   /** True when a body part hit the read-size cap and was truncated. */
-  bodyTruncated?: boolean;
-  attachments: EmailAttachmentInfo[];
-  hasAttachments: boolean;
-  attachmentCount: number;
+  readonly bodyTruncated?: boolean;
+  readonly attachments: readonly EmailAttachmentInfo[];
+  readonly hasAttachments: boolean;
+  readonly attachmentCount: number;
   /** Inbound only. */
-  quarantined?: boolean;
-  spamVerdict?: InboundVerdict;
-  virusVerdict?: InboundVerdict;
-  parseStatus?: InboundParseStatus;
+  readonly quarantined?: boolean;
+  readonly spamVerdict?: InboundVerdict;
+  readonly virusVerdict?: InboundVerdict;
+  readonly parseStatus?: InboundParseStatus;
   /** Raw message size in bytes. */
-  sizeBytes: number;
+  readonly sizeBytes: number;
 }
 
 /** Paginated timeline page. `nextCursor` absent → no more results. */
 export interface ListEmailsResponse {
-  emails: EmailListItem[];
+  readonly emails: readonly EmailListItem[];
   /** Opaque continuation token — pass back as `?cursor=`. */
-  nextCursor?: string;
+  readonly nextCursor?: string;
 }
 
 /** A short-lived presigned download URL for one attachment. */
 export interface AttachmentDownloadResponse {
   /** Presigned S3 GET URL; downloads (never renders inline) and expires quickly. */
-  url: string;
+  readonly url: string;
   /** When the URL stops working, ISO-8601. */
-  expiresAt: string;
+  readonly expiresAt: string;
 }
 
 /** Default page size for `GET /emails` when `?limit=` is omitted. */

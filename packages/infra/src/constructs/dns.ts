@@ -3,7 +3,7 @@ import { Construct } from 'constructs';
 import type { HostedZoneConfig } from '@freemail/shared';
 
 export interface DnsConstructProps {
-  hostedZone: HostedZoneConfig;
+  readonly hostedZone: HostedZoneConfig;
 }
 
 /**

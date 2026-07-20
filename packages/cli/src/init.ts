@@ -14,13 +14,13 @@ import type { FreeMailConfig, HostedZoneConfig } from '@freemail/shared';
 export const DEFAULT_CONFIG_FILENAME = 'freemail.config.json';
 
 export interface InitAnswers {
-  hostedZone: HostedZoneConfig;
-  emailDomain: string;
-  appDomain?: string;
-  apiDomain?: string;
-  inboundEnabled: boolean;
+  readonly hostedZone: HostedZoneConfig;
+  readonly emailDomain: string;
+  readonly appDomain?: string;
+  readonly apiDomain?: string;
+  readonly inboundEnabled: boolean;
   /** Whether the deployer acknowledged the MX-override warning. */
-  inboundConfirmed: boolean;
+  readonly inboundConfirmed: boolean;
 }
 
 /** Build a validated config from gathered answers. Inbound ships only when acknowledged. */
@@ -55,11 +55,11 @@ export function parseOutArg(argv: string[]): string | undefined {
 }
 
 export interface InitIo {
-  prompt: () => Promise<InitAnswers>;
-  fileExists: (path: string) => boolean;
-  confirmOverwrite: (path: string) => Promise<boolean>;
-  write: (path: string, config: FreeMailConfig) => Promise<void>;
-  log: (message: string) => void;
+  readonly prompt: () => Promise<InitAnswers>;
+  readonly fileExists: (path: string) => boolean;
+  readonly confirmOverwrite: (path: string) => Promise<boolean>;
+  readonly write: (path: string, config: FreeMailConfig) => Promise<void>;
+  readonly log: (message: string) => void;
 }
 
 /** Orchestrate the init flow. Returns a process exit code. */

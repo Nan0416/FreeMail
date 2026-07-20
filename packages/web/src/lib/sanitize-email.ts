@@ -111,7 +111,7 @@ function installHooks(): void {
 
 export interface SanitizeOptions {
   /** When false (default), remote images are blocked (loader attributes stripped). */
-  allowImages: boolean;
+  readonly allowImages: boolean;
 }
 
 /** Sanitize an inbound HTML body to a safe fragment string. */

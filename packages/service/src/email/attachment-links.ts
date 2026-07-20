@@ -12,9 +12,9 @@
 
 /** One large attachment delivered as a link. */
 export interface DownloadLink {
-  filename: string;
-  sizeBytes: number;
-  url: string;
+  readonly filename: string;
+  readonly sizeBytes: number;
+  readonly url: string;
 }
 
 /** How long the links stay live, shown to the recipient (kept in sync with the token TTL). */

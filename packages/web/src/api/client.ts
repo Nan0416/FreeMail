@@ -13,11 +13,11 @@ import type {
 /** Query params for {@link FreeMailClient.listEmails}. */
 export interface ListEmailsParams {
   /** Restrict the merged timeline to one partition; omit for both. */
-  direction?: EmailDirection;
+  readonly direction?: EmailDirection;
   /** Page size (server clamps to its max); omit for the server default. */
-  limit?: number;
+  readonly limit?: number;
   /** Opaque continuation token from a prior `nextCursor`. */
-  cursor?: string;
+  readonly cursor?: string;
 }
 
 /** A typed error carrying the server's `{ error, message }` body plus the HTTP status. */
@@ -36,11 +36,11 @@ type Method = 'GET' | 'POST' | 'DELETE';
 
 export interface FreeMailClientOptions {
   /** API base URL from the runtime `config.json` — the same-origin `/api` proxy path. */
-  baseUrl: string;
+  readonly baseUrl: string;
   /** Injectable for tests; defaults to a `fetch` that keeps the global binding. */
-  fetchImpl?: typeof fetch;
+  readonly fetchImpl?: typeof fetch;
   /** Invoked when auth is irrecoverably lost (a refresh failed) so the UI can drop to the sign-in screen. */
-  onAuthLost?: () => void;
+  readonly onAuthLost?: () => void;
 }
 
 /**
@@ -128,9 +128,15 @@ export class FreeMailClient {
   /** The merged newest-first SENT + INBOUND timeline. */
   async listEmails(params: ListEmailsParams = {}): Promise<ListEmailsResponse> {
     const query = new URLSearchParams();
-    if (params.direction) query.set('direction', params.direction);
-    if (params.limit !== undefined) query.set('limit', String(params.limit));
-    if (params.cursor) query.set('cursor', params.cursor);
+    if (params.direction) {
+      query.set('direction', params.direction);
+    }
+    if (params.limit !== undefined) {
+      query.set('limit', String(params.limit));
+    }
+    if (params.cursor) {
+      query.set('cursor', params.cursor);
+    }
     const qs = query.toString();
     return this.request<ListEmailsResponse>('GET', `/emails${qs ? `?${qs}` : ''}`, { auth: true });
   }

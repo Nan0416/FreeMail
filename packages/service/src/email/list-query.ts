@@ -12,23 +12,21 @@ import type { ListEmailsQuery } from './read-service.js';
 
 /** Untyped inputs as they arrive from either a query string (all strings) or MCP args. */
 export interface RawListEmailsInput {
-  direction?: string | undefined;
-  limit?: string | number | undefined;
-  cursor?: string | undefined;
+  readonly direction?: string | undefined;
+  readonly limit?: string | number | undefined;
+  readonly cursor?: string | undefined;
 }
 
 /** Validate + normalize raw inputs into a {@link ListEmailsQuery}. */
 export function parseListEmailsQuery(input: RawListEmailsInput): ListEmailsQuery {
-  const query: ListEmailsQuery = { limit: parseLimit(input.limit) };
+  const limit = parseLimit(input.limit);
   const direction = parseDirection(input.direction);
-  if (direction) {
-    query.direction = direction;
-  }
-  // Opaque — validated when the read service decodes it. Empty string is treated as absent.
-  if (input.cursor) {
-    query.cursor = input.cursor;
-  }
-  return query;
+  // Cursor is opaque — validated when the read service decodes it. Empty string is treated as absent.
+  return {
+    limit,
+    ...(direction ? { direction } : {}),
+    ...(input.cursor ? { cursor: input.cursor } : {}),
+  };
 }
 
 function parseDirection(raw: string | undefined): 'sent' | 'inbound' | undefined {

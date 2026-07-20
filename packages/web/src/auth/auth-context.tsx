@@ -4,24 +4,24 @@ import { FreeMailClient } from '../api/client.js';
 type Status = 'loading' | 'authenticated' | 'unauthenticated';
 
 export interface AuthContextValue {
-  status: Status;
+  readonly status: Status;
   /** The authenticated subject (single-tenant owner), or null when signed out. */
-  subject: string | null;
-  client: FreeMailClient;
+  readonly subject: string | null;
+  readonly client: FreeMailClient;
   /** Sign in with the account password. */
-  login: (password: string) => Promise<void>;
+  readonly login: (password: string) => Promise<void>;
   /** First-run: set the password, then sign in with it. */
-  setPasswordAndLogin: (password: string) => Promise<void>;
-  logout: () => Promise<void>;
+  readonly setPasswordAndLogin: (password: string) => Promise<void>;
+  readonly logout: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export interface AuthProviderProps {
-  apiBaseUrl: string;
+  readonly apiBaseUrl: string;
   /** Injectable for tests (fetch stub). */
-  fetchImpl?: typeof fetch;
-  children: React.ReactNode;
+  readonly fetchImpl?: typeof fetch;
+  readonly children: React.ReactNode;
 }
 
 export function AuthProvider({

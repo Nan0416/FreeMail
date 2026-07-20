@@ -10,8 +10,8 @@ export const FREEMAIL_VERSION = '0.0.0';
 export type HealthStatus = 'ok' | 'degraded';
 
 export interface HealthReport {
-  status: HealthStatus;
-  service: string;
+  readonly status: HealthStatus;
+  readonly service: string;
 }
 
 export function healthOk(service: string): HealthReport {

@@ -37,27 +37,27 @@ export class RawByteLimiter extends Transform {
 }
 
 export interface BodyLimits {
-  maxTextBodyBytes: number;
-  maxHtmlBodyBytes: number;
+  readonly maxTextBodyBytes: number;
+  readonly maxHtmlBodyBytes: number;
   /** Cumulative text+HTML budget across ALL nodes — bounds MailParser's aggregate, not just one node. */
-  maxTotalBodyBytes: number;
+  readonly maxTotalBodyBytes: number;
 }
 
 /** The mailsplit chunk shapes this limiter reads (structural subset). */
 interface NodeChunk {
-  type: 'node';
-  root: boolean;
-  multipart: string | false;
-  contentType: string | false;
+  readonly type: 'node';
+  readonly root: boolean;
+  readonly multipart: string | false;
+  readonly contentType: string | false;
   /** Content-Disposition value (`attachment` / `inline`), or false when absent. */
-  disposition: string | false;
+  readonly disposition: string | false;
   /** Decoded attachment filename, or false when absent. */
-  filename: string | false;
+  readonly filename: string | false;
   getHeaders(): Buffer;
 }
 interface ContentChunk {
-  type: 'data' | 'body';
-  value?: Buffer;
+  readonly type: 'data' | 'body';
+  readonly value?: Buffer;
 }
 type MimeChunk = NodeChunk | ContentChunk;
 
@@ -119,11 +119,19 @@ export class BodyLimiter extends Transform {
    * streams it — so only INLINE text/plain and text/html count toward the body budget.
    */
   private textCapFor(node: NodeChunk): number {
-    if (node.multipart !== false) return 0; // structural node, not a leaf
-    if (node.disposition === 'attachment' || (node.filename && node.filename !== '')) return 0;
+    if (node.multipart !== false) {
+      return 0;
+    } // structural node, not a leaf
+    if (node.disposition === 'attachment' || (node.filename && node.filename !== '')) {
+      return 0;
+    }
     const ct = (node.contentType || '').toLowerCase();
-    if (ct === 'text/plain') return this.limits.maxTextBodyBytes;
-    if (ct === 'text/html') return this.limits.maxHtmlBodyBytes;
+    if (ct === 'text/plain') {
+      return this.limits.maxTextBodyBytes;
+    }
+    if (ct === 'text/html') {
+      return this.limits.maxHtmlBodyBytes;
+    }
     return 0; // attachment / other leaf → not capped here
   }
 }

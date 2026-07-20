@@ -23,7 +23,9 @@ const WHITESPACE_RUN = /\s+/g;
 
 /** Collapse a header/text value to a single line of safe, whitespace-normalized text, capped. */
 export function sanitizeText(value: string | undefined, maxChars: number): string {
-  if (!value) return '';
+  if (!value) {
+    return '';
+  }
   const cleaned = value.replace(CONTROL_AND_LINE, ' ').replace(WHITESPACE_RUN, ' ').trim();
   return cleaned.length > maxChars ? cleaned.slice(0, maxChars) : cleaned;
 }
@@ -57,14 +59,20 @@ export function sanitizeContentType(value: string | undefined): string {
 
 /** Flatten mailparser address object(s) to a bounded list of sanitized address strings. */
 export function normalizeAddressList(input: AddressObject | AddressObject[] | undefined): string[] {
-  if (!input) return [];
+  if (!input) {
+    return [];
+  }
   const objects = Array.isArray(input) ? input : [input];
   const out: string[] = [];
   for (const obj of objects) {
     for (const entry of flattenAddresses(obj.value)) {
-      if (out.length >= MAX_ADDRESSES_PER_HEADER) return out;
+      if (out.length >= MAX_ADDRESSES_PER_HEADER) {
+        return out;
+      }
       const addr = sanitizeAddress(entry.address);
-      if (addr) out.push(addr);
+      if (addr) {
+        out.push(addr);
+      }
     }
   }
   return out;
@@ -74,8 +82,11 @@ export function normalizeAddressList(input: AddressObject | AddressObject[] | un
 function flattenAddresses(entries: EmailAddress[]): EmailAddress[] {
   const out: EmailAddress[] = [];
   for (const e of entries) {
-    if (e.group && e.group.length > 0) out.push(...flattenAddresses(e.group));
-    else out.push(e);
+    if (e.group && e.group.length > 0) {
+      out.push(...flattenAddresses(e.group));
+    } else {
+      out.push(e);
+    }
   }
   return out;
 }
@@ -102,7 +113,9 @@ export function snippetFromText(text: string | undefined): string {
  * wrapping), then sanitized + capped like any other text.
  */
 export function snippetFromHtml(html: string | undefined): string {
-  if (!html) return '';
+  if (!html) {
+    return '';
+  }
   const bounded =
     html.length > MAX_HTML_SNIPPET_INPUT_BYTES ? html.slice(0, MAX_HTML_SNIPPET_INPUT_BYTES) : html;
   const text = htmlToText(bounded, {

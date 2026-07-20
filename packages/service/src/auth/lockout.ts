@@ -19,11 +19,11 @@ export const LOCKOUT_SECONDS = 15 * 60;
 
 export interface LockoutState {
   /** Failures counted in the current window. */
-  failedCount: number;
+  readonly failedCount: number;
   /** Epoch seconds of the first failure in the current window. */
-  windowStartedAt: number;
+  readonly windowStartedAt: number;
   /** Epoch seconds until which login is locked, if any. */
-  lockedUntil?: number;
+  readonly lockedUntil?: number;
 }
 
 export const INITIAL_LOCKOUT_STATE: LockoutState = { failedCount: 0, windowStartedAt: 0 };
@@ -48,7 +48,7 @@ export function registerFailure(state: LockoutState, nowSeconds: number): Lockou
     : { failedCount: state.failedCount + 1, windowStartedAt: state.windowStartedAt };
 
   if (next.failedCount >= MAX_FAILED_ATTEMPTS) {
-    next.lockedUntil = nowSeconds + LOCKOUT_SECONDS;
+    return { ...next, lockedUntil: nowSeconds + LOCKOUT_SECONDS };
   }
   return next;
 }

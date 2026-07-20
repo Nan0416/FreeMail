@@ -30,9 +30,9 @@ export function truncateToUtf8Bytes(
 }
 
 export interface FittedBody {
-  text?: string;
-  html?: string;
-  truncated: boolean;
+  readonly text?: string;
+  readonly html?: string;
+  readonly truncated: boolean;
 }
 
 function utf8Len(value: string | undefined): number {
@@ -76,12 +76,9 @@ export function fitBodyToBudget(
     truncated = true;
   }
 
-  const result: FittedBody = { truncated };
-  if (text !== undefined) {
-    result.text = text;
-  }
-  if (html !== undefined) {
-    result.html = html;
-  }
-  return result;
+  return {
+    truncated,
+    ...(text !== undefined ? { text } : {}),
+    ...(html !== undefined ? { html } : {}),
+  };
 }

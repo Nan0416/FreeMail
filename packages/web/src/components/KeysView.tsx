@@ -6,7 +6,7 @@ import { KeyRevealPanel } from './KeyRevealPanel.js';
 
 export function KeysView(): React.JSX.Element {
   const { client } = useAuth();
-  const [keys, setKeys] = useState<ApiKeySummary[]>([]);
+  const [keys, setKeys] = useState<readonly ApiKeySummary[]>([]);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);

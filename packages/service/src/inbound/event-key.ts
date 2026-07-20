@@ -18,7 +18,8 @@ export const INBOUND_PREFIX = 'inbound/';
 const MESSAGE_ID_RE = /^[A-Za-z0-9._-]+$/;
 
 export type EventKeyResult =
-  { ok: true; messageId: string; rawS3Key: string } | { ok: false; reason: string };
+  | { readonly ok: true; readonly messageId: string; readonly rawS3Key: string }
+  | { readonly ok: false; readonly reason: string };
 
 /**
  * Decode an S3 event key exactly once (form-encoding: `+` → space, then

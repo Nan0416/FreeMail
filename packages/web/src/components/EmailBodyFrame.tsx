@@ -3,9 +3,9 @@ import { buildEmailSrcdoc } from '../lib/sanitize-email.js';
 
 export interface EmailBodyFrameProps {
   /** Raw inbound HTML (as returned by the API); sanitized + sandboxed here. */
-  html: string;
+  readonly html: string;
   /** Whether to permit remote images (the "show images" toggle). Default-off blocks trackers. */
-  allowImages: boolean;
+  readonly allowImages: boolean;
 }
 
 /**

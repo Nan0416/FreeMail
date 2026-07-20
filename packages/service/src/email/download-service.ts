@@ -16,11 +16,11 @@ import { contentDispositionForDownload } from './content-disposition.js';
 import { isValidDownloadToken } from './download-token.js';
 
 export interface DownloadServiceDeps {
-  tokens: DownloadTokensRepo;
-  presigner: AttachmentPresigner;
-  now?: () => Date;
+  readonly tokens: DownloadTokensRepo;
+  readonly presigner: AttachmentPresigner;
+  readonly now?: () => Date;
   /** Presigned-GET lifetime; short, minted per click. Defaults to the shared constant. */
-  presignTtlSeconds?: number;
+  readonly presignTtlSeconds?: number;
 }
 
 export class DownloadService {

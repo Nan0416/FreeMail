@@ -23,4 +23,27 @@ export default tseslint.config(
     },
   },
   prettier,
+  // Placed after eslint-config-prettier, which disables `curly`; re-enable it so
+  // every control statement requires a block. `curly` is a style rule, not a
+  // formatting one, so it does not conflict with Prettier.
+  {
+    rules: {
+      curly: ['error', 'all'],
+      // Immutable-by-default: every interface field must be `readonly`. Enforced
+      // via core selectors (no type-aware linting / no extra dependency).
+      // Element-level array immutability (`readonly readonly T[]`) is not
+      // selector-expressible; it is applied by hand and covered by review.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'TSInterfaceBody > TSPropertySignature[readonly!=true]',
+          message: 'Interface properties must be readonly (immutable by default).',
+        },
+        {
+          selector: 'TSInterfaceBody > TSIndexSignature[readonly!=true]',
+          message: 'Interface index signatures must be readonly (immutable by default).',
+        },
+      ],
+    },
+  },
 );

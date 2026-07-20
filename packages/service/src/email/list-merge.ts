@@ -23,29 +23,29 @@ type Direction = 'sent' | 'inbound';
 /** Fetch one partition newest-first, at most `limit` rows strictly older than `afterSk`. */
 export type MergeQuery = (
   direction: Direction,
-  opts: { limit: number; afterSk?: string },
-) => Promise<StoredEmailRow[]>;
+  opts: { readonly limit: number; readonly afterSk?: string },
+) => Promise<readonly StoredEmailRow[]>;
 
 export interface ListEmailsParams {
-  query: MergeQuery;
+  readonly query: MergeQuery;
   /** Restrict to one partition; omit for the merged timeline. */
-  direction?: Direction;
+  readonly direction?: Direction;
   /** Page size — the caller clamps this to the allowed range. */
-  limit: number;
+  readonly limit: number;
   /** Opaque continuation token from a previous page. */
-  cursor?: string;
+  readonly cursor?: string;
 }
 
 export interface MergedPage {
-  rows: StoredEmailRow[];
+  readonly rows: readonly StoredEmailRow[];
   /** Absent → the timeline is exhausted. */
-  nextCursor?: string;
+  readonly nextCursor?: string;
 }
 
 interface ListCursor {
-  v: 1;
-  sent?: string;
-  inbound?: string;
+  readonly v: 1;
+  readonly sent?: string;
+  readonly inbound?: string;
 }
 
 /** Encode the per-direction continuation state into an opaque token. */
@@ -68,23 +68,27 @@ export function decodeListCursor(token: string): ListCursor {
   if (raw.v !== 1) {
     throw emailErrors.invalidRequest('Invalid cursor.');
   }
-  const cursor: ListCursor = { v: 1 };
+  const positions: Partial<Record<Direction, string>> = {};
   for (const dir of ['sent', 'inbound'] as const) {
     const value = raw[dir];
     if (value !== undefined) {
       if (typeof value !== 'string' || value.length === 0) {
         throw emailErrors.invalidRequest('Invalid cursor.');
       }
-      cursor[dir] = value;
+      positions[dir] = value;
     }
   }
-  return cursor;
+  return { v: 1, ...positions };
 }
 
 /** Descending sk order (newest first); total because sk carries the unique `#<id>` suffix. */
 function bySkDescending(a: StoredEmailRow, b: StoredEmailRow): number {
-  if (a.sk < b.sk) return 1;
-  if (a.sk > b.sk) return -1;
+  if (a.sk < b.sk) {
+    return 1;
+  }
+  if (a.sk > b.sk) {
+    return -1;
+  }
   return 0;
 }
 
@@ -94,7 +98,7 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
   const decoded = params.cursor ? decodeListCursor(params.cursor) : { v: 1 as const };
   const directions: Direction[] = params.direction ? [params.direction] : ['sent', 'inbound'];
 
-  const fetched = {} as Record<Direction, StoredEmailRow[]>;
+  const fetched = {} as Record<Direction, readonly StoredEmailRow[]>;
   for (const dir of directions) {
     fetched[dir] = await query(dir, { limit, afterSk: decoded[dir] });
   }
@@ -103,7 +107,7 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
   pool.sort(bySkDescending);
   const rows = pool.slice(0, limit);
 
-  const next: ListCursor = { v: 1 };
+  const positions: Partial<Record<Direction, string>> = {};
   let anyMore = false;
   for (const dir of directions) {
     const emitted = rows.filter((row) => row.direction === dir);
@@ -116,13 +120,14 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
     // it emitted nothing AND had no prior cursor (fully dominated on page 1) — then it
     // re-competes from the top next page, which re-fetches (never skips).
     if (lastEmittedSk !== undefined) {
-      next[dir] = lastEmittedSk;
+      positions[dir] = lastEmittedSk;
     }
     // More remains if we hit the fetch limit, or some fetched rows lost the merge this page.
     if (fetched[dir].length === limit || fetched[dir].length > emitted.length) {
       anyMore = true;
     }
   }
+  const next: ListCursor = { v: 1, ...positions };
 
   return { rows, ...(anyMore ? { nextCursor: encodeListCursor(next) } : {}) };
 }
