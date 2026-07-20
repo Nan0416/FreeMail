@@ -1,4 +1,5 @@
-import { App, Stack, aws_route53 as route53 } from 'aws-cdk-lib';
+import { App, Stack } from 'aws-cdk-lib';
+import { HostedZone } from 'aws-cdk-lib/aws-route53';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import { SesConstruct } from '../../src/constructs/ses.js';
@@ -7,7 +8,7 @@ function synth(emailDomain = 'mail.example.com', zoneName = 'example.com'): Temp
   const stack = new Stack(new App(), 'TestStack', {
     env: { region: 'us-east-1', account: '111111111111' },
   });
-  const hostedZone = new route53.HostedZone(stack, 'Zone', { zoneName });
+  const hostedZone = new HostedZone(stack, 'Zone', { zoneName });
   new SesConstruct(stack, 'Ses', { hostedZone, emailDomain, region: 'us-east-1' });
   return Template.fromStack(stack);
 }

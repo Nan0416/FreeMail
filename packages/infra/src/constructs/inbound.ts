@@ -1,23 +1,19 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  CustomResource,
-  Duration,
-  RemovalPolicy,
-  aws_dynamodb as dynamodb,
-  aws_iam as iam,
-  aws_lambda as lambda,
-  aws_lambda_destinations as destinations,
-  aws_lambda_nodejs as nodejs,
-  aws_logs as logs,
-  aws_route53 as route53,
-  aws_s3 as s3,
-  aws_s3_notifications as s3n,
-  aws_ses as ses,
-  aws_ses_actions as actions,
-  aws_sqs as sqs,
-  custom_resources as cr,
-} from 'aws-cdk-lib';
+import { CustomResource, Duration, RemovalPolicy } from 'aws-cdk-lib';
+import type { Table } from 'aws-cdk-lib/aws-dynamodb';
+import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { Architecture, Code, Function as LambdaFunction, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { SqsDestination } from 'aws-cdk-lib/aws-lambda-destinations';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
+import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { CfnRecordSet, type IHostedZone } from 'aws-cdk-lib/aws-route53';
+import { EventType, type Bucket } from 'aws-cdk-lib/aws-s3';
+import { LambdaDestination } from 'aws-cdk-lib/aws-s3-notifications';
+import { ReceiptRuleSet } from 'aws-cdk-lib/aws-ses';
+import { S3 as S3Action } from 'aws-cdk-lib/aws-ses-actions';
+import { Queue } from 'aws-cdk-lib/aws-sqs';
+import { Provider } from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 import { buildActivateHandlerSource } from '../inbound/activate-rule-set.js';
 
@@ -33,15 +29,15 @@ const HANDLERS_DIR = join(
 
 export interface InboundConstructProps {
   /** The Route53 zone that owns the email domain — the inbound MX record is written here. */
-  readonly hostedZone: route53.IHostedZone;
+  readonly hostedZone: IHostedZone;
   /** Domain email is received at (the zone apex or a subdomain). The receipt rule is scoped to it. */
   readonly emailDomain: string;
   /** Deploy region — the inbound SMTP MX target (inbound-smtp.<region>.amazonaws.com) is region-specific. */
   readonly region: string;
   /** Raw inbound MIME is delivered under the `inbound/` prefix of this bucket; parsed attachments go under `attachments/`. */
-  readonly mailBucket: s3.Bucket;
+  readonly mailBucket: Bucket;
   /** Email metadata index — the parser writes each received message here (`pk='INBOUND'`). */
-  readonly emailsTable: dynamodb.Table;
+  readonly emailsTable: Table;
 }
 
 /** SES writes each received message under this prefix as `<prefix><messageId>`. */
@@ -64,13 +60,13 @@ const RECORD_TTL = '1800';
  * (first occurrence, fail-closed) and owns the quarantine decision.
  */
 export class InboundConstruct extends Construct {
-  readonly ruleSet: ses.ReceiptRuleSet;
+  readonly ruleSet: ReceiptRuleSet;
 
   constructor(scope: Construct, id: string, props: InboundConstructProps) {
     super(scope, id);
     const { hostedZone, emailDomain, region, mailBucket, emailsTable } = props;
 
-    this.ruleSet = new ses.ReceiptRuleSet(this, 'RuleSet');
+    this.ruleSet = new ReceiptRuleSet(this, 'RuleSet');
 
     // One catch-all rule, scoped to the configured domain. Scoping to `emailDomain`
     // (rather than an empty recipient list) still matches every local part under the
@@ -81,7 +77,7 @@ export class InboundConstruct extends Construct {
       recipients: [emailDomain],
       scanEnabled: true,
       actions: [
-        new actions.S3({
+        new S3Action({
           bucket: mailBucket,
           objectKeyPrefix: INBOUND_PREFIX,
         }),
@@ -90,7 +86,7 @@ export class InboundConstruct extends Construct {
 
     // Route the domain's mail to SES. This OVERRIDES any existing MX on the domain
     // — the stack warns about it and gates on `confirmInboundMx`.
-    new route53.CfnRecordSet(this, 'InboundMx', {
+    new CfnRecordSet(this, 'InboundMx', {
       hostedZoneId: hostedZone.hostedZoneId,
       name: emailDomain,
       type: 'MX',
@@ -114,16 +110,16 @@ export class InboundConstruct extends Construct {
    * treats malformed/oversized/over-limit messages as handled quarantine writes and
    * returns success, so a poison message can't spin forever.
    */
-  private wireParser(mailBucket: s3.Bucket, emailsTable: dynamodb.Table): void {
-    const dlq = new sqs.Queue(this, 'ParserDlq', {
+  private wireParser(mailBucket: Bucket, emailsTable: Table): void {
+    const dlq = new Queue(this, 'ParserDlq', {
       retentionPeriod: Duration.days(14),
     });
 
-    const parser = new nodejs.NodejsFunction(this, 'ParserFn', {
+    const parser = new NodejsFunction(this, 'ParserFn', {
       entry: join(HANDLERS_DIR, 'inbound.ts'),
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_22_X,
-      architecture: lambda.Architecture.ARM_64,
+      runtime: Runtime.NODEJS_22_X,
+      architecture: Architecture.ARM_64,
       // Sized to hold one capped message + one buffered attachment; parsing a large
       // message is I/O + CPU bound, so allow headroom in time and memory.
       memorySize: 1024,
@@ -133,8 +129,8 @@ export class InboundConstruct extends Construct {
         EMAILS_TABLE: emailsTable.tableName,
         MAIL_BUCKET: mailBucket.bucketName,
       },
-      logGroup: new logs.LogGroup(this, 'ParserLogs', {
-        retention: logs.RetentionDays.THREE_MONTHS,
+      logGroup: new LogGroup(this, 'ParserLogs', {
+        retention: RetentionDays.THREE_MONTHS,
         removalPolicy: RemovalPolicy.DESTROY,
       }),
     });
@@ -147,17 +143,13 @@ export class InboundConstruct extends Construct {
     parser.configureAsyncInvoke({
       retryAttempts: 2,
       maxEventAge: Duration.hours(1),
-      onFailure: new destinations.SqsDestination(dlq),
+      onFailure: new SqsDestination(dlq),
     });
 
     // Trigger ONLY on the inbound/ prefix — extracted attachments live elsewhere.
-    mailBucket.addEventNotification(
-      s3.EventType.OBJECT_CREATED,
-      new s3n.LambdaDestination(parser),
-      {
-        prefix: INBOUND_PREFIX,
-      },
-    );
+    mailBucket.addEventNotification(EventType.OBJECT_CREATED, new LambdaDestination(parser), {
+      prefix: INBOUND_PREFIX,
+    });
   }
 
   /**
@@ -175,19 +167,19 @@ export class InboundConstruct extends Construct {
    * still the active set).
    */
   private activateRuleSet(ruleSetName: string): void {
-    const onEvent = new lambda.Function(this, 'ActivateRuleSetFn', {
-      runtime: lambda.Runtime.NODEJS_22_X,
+    const onEvent = new LambdaFunction(this, 'ActivateRuleSetFn', {
+      runtime: Runtime.NODEJS_22_X,
       handler: 'index.handler',
       timeout: Duration.seconds(30),
       description: "Activates FreeMail's SES receipt rule set (the region-wide active singleton).",
-      code: lambda.Code.fromInline(buildActivateHandlerSource()),
-      logGroup: new logs.LogGroup(this, 'ActivateRuleSetLogs', {
-        retention: logs.RetentionDays.THREE_MONTHS,
+      code: Code.fromInline(buildActivateHandlerSource()),
+      logGroup: new LogGroup(this, 'ActivateRuleSetLogs', {
+        retention: RetentionDays.THREE_MONTHS,
         removalPolicy: RemovalPolicy.DESTROY,
       }),
     });
     onEvent.addToRolePolicy(
-      new iam.PolicyStatement({
+      new PolicyStatement({
         // Receipt-rule-set activation is account-level; SES does not support
         // resource-scoping these actions.
         actions: ['ses:DescribeActiveReceiptRuleSet', 'ses:SetActiveReceiptRuleSet'],
@@ -195,7 +187,7 @@ export class InboundConstruct extends Construct {
       }),
     );
 
-    const provider = new cr.Provider(this, 'ActivateRuleSetProvider', {
+    const provider = new Provider(this, 'ActivateRuleSetProvider', {
       onEventHandler: onEvent,
     });
 

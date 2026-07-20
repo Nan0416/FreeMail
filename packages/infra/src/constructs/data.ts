@@ -1,7 +1,9 @@
-import { RemovalPolicy, aws_dynamodb as dynamodb, aws_s3 as s3 } from 'aws-cdk-lib';
+import { RemovalPolicy } from 'aws-cdk-lib';
+import { AttributeType, BillingMode, Table } from 'aws-cdk-lib/aws-dynamodb';
+import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 
-const STRING = dynamodb.AttributeType.STRING;
+const STRING = AttributeType.STRING;
 
 /**
  * The persistence layer: DynamoDB tables + S3 buckets that the API, MCP, and
@@ -14,45 +16,45 @@ const STRING = dynamodb.AttributeType.STRING;
  */
 export class DataConstruct extends Construct {
   /** Single-tenant password hash + rotating refresh tokens (TTL on `ttl`). */
-  readonly authTable: dynamodb.Table;
+  readonly authTable: Table;
   /** Hashed agent API keys, keyed by public key ID. */
-  readonly apiKeysTable: dynamodb.Table;
+  readonly apiKeysTable: Table;
   /** Email metadata / index (inbound + sent). Populated by the read slice. */
-  readonly emailsTable: dynamodb.Table;
+  readonly emailsTable: Table;
   /** Large-attachment download tokens (TTL on `ttl`). */
-  readonly downloadTokensTable: dynamodb.Table;
+  readonly downloadTokensTable: Table;
   /** Inbound raw MIME, parsed attachments, and outbound large attachments. */
-  readonly mailBucket: s3.Bucket;
+  readonly mailBucket: Bucket;
   /** Static hosting origin for the React SPA (served via CloudFront in the web slice). */
-  readonly webBucket: s3.Bucket;
+  readonly webBucket: Bucket;
 
   constructor(scope: Construct, id: string) {
     super(scope, id);
 
-    this.authTable = new dynamodb.Table(this, 'AuthTable', {
+    this.authTable = new Table(this, 'AuthTable', {
       partitionKey: { name: 'pk', type: STRING },
       sortKey: { name: 'sk', type: STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      billingMode: BillingMode.PAY_PER_REQUEST,
       timeToLiveAttribute: 'ttl',
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
-    this.apiKeysTable = new dynamodb.Table(this, 'ApiKeysTable', {
+    this.apiKeysTable = new Table(this, 'ApiKeysTable', {
       partitionKey: { name: 'keyId', type: STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      billingMode: BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
-    this.emailsTable = new dynamodb.Table(this, 'EmailsTable', {
+    this.emailsTable = new Table(this, 'EmailsTable', {
       partitionKey: { name: 'pk', type: STRING },
       sortKey: { name: 'sk', type: STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      billingMode: BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.RETAIN,
     });
 
-    this.downloadTokensTable = new dynamodb.Table(this, 'DownloadTokensTable', {
+    this.downloadTokensTable = new Table(this, 'DownloadTokensTable', {
       partitionKey: { name: 'token', type: STRING },
-      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      billingMode: BillingMode.PAY_PER_REQUEST,
       timeToLiveAttribute: 'ttl',
       removalPolicy: RemovalPolicy.RETAIN,
     });
@@ -61,10 +63,10 @@ export class DataConstruct extends Construct {
     this.webBucket = this.privateBucket('WebBucket');
   }
 
-  private privateBucket(id: string): s3.Bucket {
-    return new s3.Bucket(this, id, {
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      encryption: s3.BucketEncryption.S3_MANAGED,
+  private privateBucket(id: string): Bucket {
+    return new Bucket(this, id, {
+      blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+      encryption: BucketEncryption.S3_MANAGED,
       enforceSSL: true,
       removalPolicy: RemovalPolicy.RETAIN,
     });

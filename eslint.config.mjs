@@ -55,6 +55,17 @@ export default tseslint.config(
           selector: 'TSTypeAliasDeclaration TSTypeLiteral > TSIndexSignature[readonly!=true]',
           message: 'Type-alias object index signatures must be readonly (immutable by default).',
         },
+        // packages/infra imports the AWS CDK: require its service modules via their deep
+        // subpaths (`import { Table } from 'aws-cdk-lib/aws-dynamodb'`) rather than the
+        // `aws-cdk-lib` namespace barrel (`import { aws_dynamodb as dynamodb } from
+        // 'aws-cdk-lib'`), so the dependency surface is explicit. Core exports (Duration,
+        // Stack, Fn, …) have no subpath and stay imported from 'aws-cdk-lib'.
+        {
+          selector:
+            "ImportDeclaration[source.value='aws-cdk-lib'] > ImportSpecifier[imported.name=/^aws_|^custom_resources$/]",
+          message:
+            "Import CDK service modules from their deep subpath (e.g. `import { Table } from 'aws-cdk-lib/aws-dynamodb'`), not the `aws-cdk-lib` namespace barrel.",
+        },
       ],
     },
   },

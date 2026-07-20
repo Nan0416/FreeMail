@@ -1,18 +1,22 @@
+import { Duration, RemovalPolicy } from 'aws-cdk-lib';
+import { Code, Function as LambdaFunction, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
+import { CfnRecordSet, type IHostedZone } from 'aws-cdk-lib/aws-route53';
 import {
-  Duration,
-  RemovalPolicy,
-  aws_lambda as lambda,
-  aws_logs as logs,
-  aws_route53 as route53,
-  aws_ses as ses,
-  aws_sns as sns,
-  aws_sns_subscriptions as subscriptions,
-} from 'aws-cdk-lib';
+  ConfigurationSet,
+  EmailIdentity,
+  EmailSendingEvent,
+  EventDestination,
+  Identity,
+  SuppressionReasons,
+} from 'aws-cdk-lib/aws-ses';
+import { Topic } from 'aws-cdk-lib/aws-sns';
+import { LambdaSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
 
 export interface SesConstructProps {
   /** The Route53 zone that owns the email domain — all auth records are written here. */
-  readonly hostedZone: route53.IHostedZone;
+  readonly hostedZone: IHostedZone;
   /** Domain SES sends from (any address under it). The zone apex or a subdomain of it. */
   readonly emailDomain: string;
   /** Deploy region — the custom MAIL FROM MX target (feedback-smtp.<region>.amazonses.com) is region-specific. */
@@ -42,12 +46,12 @@ function txt(value: string): string {
  * already-fully-qualified DKIM token host, so raw `CfnRecordSet`s are used instead.
  */
 export class SesConstruct extends Construct {
-  readonly emailIdentity: ses.EmailIdentity;
-  readonly configurationSet: ses.ConfigurationSet;
+  readonly emailIdentity: EmailIdentity;
+  readonly configurationSet: ConfigurationSet;
   /** Bounce & complaint notifications, consumed by the audit logger below (add richer consumers later). */
-  readonly bounceComplaintTopic: sns.Topic;
+  readonly bounceComplaintTopic: Topic;
   /** Logs every bounce/complaint SNS notification to CloudWatch for audit. */
-  readonly bounceComplaintLogger: lambda.Function;
+  readonly bounceComplaintLogger: LambdaFunction;
   /** Custom MAIL FROM subdomain (`bounce.<emailDomain>`) — keeps SPF/DMARC aligned with the From domain. */
   readonly mailFromDomain: string;
 
@@ -56,30 +60,30 @@ export class SesConstruct extends Construct {
     const { hostedZone, emailDomain, region } = props;
     this.mailFromDomain = `bounce.${emailDomain}`;
 
-    this.bounceComplaintTopic = new sns.Topic(this, 'BounceComplaintTopic', {
+    this.bounceComplaintTopic = new Topic(this, 'BounceComplaintTopic', {
       displayName: `FreeMail SES bounces & complaints (${emailDomain})`,
     });
 
     // Enable the account-level suppression list for bounces + complaints so a hard
     // bounce / complaint address is dropped from future sends automatically
     // (reputation), and publish every bounce/complaint to SNS for logging.
-    this.configurationSet = new ses.ConfigurationSet(this, 'ConfigSet', {
+    this.configurationSet = new ConfigurationSet(this, 'ConfigSet', {
       reputationMetrics: true,
-      suppressionReasons: ses.SuppressionReasons.BOUNCES_AND_COMPLAINTS,
+      suppressionReasons: SuppressionReasons.BOUNCES_AND_COMPLAINTS,
     });
     this.configurationSet.addEventDestination('BounceComplaintSns', {
-      destination: ses.EventDestination.snsTopic(this.bounceComplaintTopic),
+      destination: EventDestination.snsTopic(this.bounceComplaintTopic),
       events: [
-        ses.EmailSendingEvent.BOUNCE,
-        ses.EmailSendingEvent.COMPLAINT,
-        ses.EmailSendingEvent.REJECT,
-        ses.EmailSendingEvent.DELIVERY_DELAY,
+        EmailSendingEvent.BOUNCE,
+        EmailSendingEvent.COMPLAINT,
+        EmailSendingEvent.REJECT,
+        EmailSendingEvent.DELIVERY_DELAY,
       ],
     });
     this.bounceComplaintLogger = this.addBounceComplaintLogger();
 
-    this.emailIdentity = new ses.EmailIdentity(this, 'Identity', {
-      identity: ses.Identity.domain(emailDomain),
+    this.emailIdentity = new EmailIdentity(this, 'Identity', {
+      identity: Identity.domain(emailDomain),
       configurationSet: this.configurationSet,
       dkimSigning: true,
       mailFromDomain: this.mailFromDomain,
@@ -97,19 +101,19 @@ export class SesConstruct extends Construct {
    * CloudWatch log group. Richer handling (alerting, a suppression-audit store) can
    * subscribe to the same topic or replace this later.
    */
-  private addBounceComplaintLogger(): lambda.Function {
-    const logGroup = new logs.LogGroup(this, 'BounceComplaintLogGroup', {
-      retention: logs.RetentionDays.THREE_MONTHS,
+  private addBounceComplaintLogger(): LambdaFunction {
+    const logGroup = new LogGroup(this, 'BounceComplaintLogGroup', {
+      retention: RetentionDays.THREE_MONTHS,
       // Audit logs, not user data — safe to remove with the stack.
       removalPolicy: RemovalPolicy.DESTROY,
     });
-    const logger = new lambda.Function(this, 'BounceComplaintLogger', {
-      runtime: lambda.Runtime.NODEJS_22_X,
+    const logger = new LambdaFunction(this, 'BounceComplaintLogger', {
+      runtime: Runtime.NODEJS_22_X,
       handler: 'index.handler',
       timeout: Duration.seconds(10),
       logGroup,
       description: 'Logs SES bounce/complaint notifications to CloudWatch for audit.',
-      code: lambda.Code.fromInline(
+      code: Code.fromInline(
         [
           'exports.handler = async (event) => {',
           '  for (const record of event.Records ?? []) {',
@@ -119,15 +123,11 @@ export class SesConstruct extends Construct {
         ].join('\n'),
       ),
     });
-    this.bounceComplaintTopic.addSubscription(new subscriptions.LambdaSubscription(logger));
+    this.bounceComplaintTopic.addSubscription(new LambdaSubscription(logger));
     return logger;
   }
 
-  private writeAuthRecords(
-    hostedZone: route53.IHostedZone,
-    emailDomain: string,
-    region: string,
-  ): void {
+  private writeAuthRecords(hostedZone: IHostedZone, emailDomain: string, region: string): void {
     // Easy DKIM: 3 CNAMEs. `record.name` is already the fully-qualified host, so a
     // raw CfnRecordSet (which does no FQDN munging) is required — the L2
     // CnameRecord would append the zone name a second time and break DKIM.
@@ -168,10 +168,10 @@ export class SesConstruct extends Construct {
 
   private record(
     id: string,
-    hostedZone: route53.IHostedZone,
+    hostedZone: IHostedZone,
     props: { name: string; type: string; resourceRecords: string[] },
-  ): route53.CfnRecordSet {
-    return new route53.CfnRecordSet(this, `${id}Record`, {
+  ): CfnRecordSet {
+    return new CfnRecordSet(this, `${id}Record`, {
       hostedZoneId: hostedZone.hostedZoneId,
       name: props.name,
       type: props.type,

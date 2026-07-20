@@ -1,17 +1,33 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Duration, Fn } from 'aws-cdk-lib';
 import {
-  Duration,
-  Fn,
-  aws_certificatemanager as acm,
-  aws_cloudfront as cloudfront,
-  aws_cloudfront_origins as origins,
-  aws_route53 as route53,
-  aws_route53_targets as targets,
-  aws_s3 as s3,
-  aws_s3_deployment as s3deploy,
-} from 'aws-cdk-lib';
+  Certificate,
+  CertificateValidation,
+  type ICertificate,
+} from 'aws-cdk-lib/aws-certificatemanager';
+import {
+  AllowedMethods,
+  CachePolicy,
+  Distribution,
+  Function as CloudFrontFunction,
+  FunctionCode,
+  FunctionEventType,
+  FunctionRuntime,
+  HeadersFrameOption,
+  HeadersReferrerPolicy,
+  OriginProtocolPolicy,
+  OriginRequestPolicy,
+  PriceClass,
+  ResponseHeadersPolicy,
+  ViewerProtocolPolicy,
+} from 'aws-cdk-lib/aws-cloudfront';
+import { HttpOrigin, S3BucketOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
+import { AaaaRecord, ARecord, RecordTarget, type IHostedZone } from 'aws-cdk-lib/aws-route53';
+import { CloudFrontTarget } from 'aws-cdk-lib/aws-route53-targets';
+import type { Bucket } from 'aws-cdk-lib/aws-s3';
+import { BucketDeployment, CacheControl, Source } from 'aws-cdk-lib/aws-s3-deployment';
 import { Construct } from 'constructs';
 
 /**
@@ -22,7 +38,7 @@ import { Construct } from 'constructs';
  */
 export interface CustomDomainProps {
   readonly domainName: string;
-  readonly hostedZone: route53.IHostedZone;
+  readonly hostedZone: IHostedZone;
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -123,7 +139,7 @@ export const APP_CONTENT_SECURITY_POLICY = [
 
 export interface WebConstructProps {
   /** The private S3 bucket that holds the built SPA (from {@link DataConstruct}). */
-  readonly webBucket: s3.Bucket;
+  readonly webBucket: Bucket;
   /**
    * The HTTP API base URL (e.g. `https://abc123.execute-api.us-east-1.amazonaws.com`).
    * Its host backs the same-origin `/api/*` CloudFront proxy origin. The SPA itself
@@ -166,7 +182,7 @@ export interface WebConstructProps {
  * that points it at the relative `/api`; content-hashed `/assets/*` stay long-immutable.
  */
 export class WebConstruct extends Construct {
-  readonly distribution: cloudfront.Distribution;
+  readonly distribution: Distribution;
   /** The configured custom app domain, if any (from `FreeMailConfig.appDomain`). */
   readonly customDomainName?: string;
 
@@ -177,24 +193,24 @@ export class WebConstruct extends Construct {
     // Optional custom domain: a DNS-validated ACM cert (validation records written
     // into the hosted zone). The cert must be in the CloudFront cert region — us-east-1
     // — which the stack is pinned to, so no cross-region cert stack is needed.
-    let certificate: acm.ICertificate | undefined;
+    let certificate: ICertificate | undefined;
     if (customDomain) {
-      certificate = new acm.Certificate(this, 'Certificate', {
+      certificate = new Certificate(this, 'Certificate', {
         domainName: customDomain.domainName,
-        validation: acm.CertificateValidation.fromDns(customDomain.hostedZone),
+        validation: CertificateValidation.fromDns(customDomain.hostedZone),
       });
       this.customDomainName = customDomain.domainName;
     }
 
-    const spaRewrite = new cloudfront.Function(this, 'SpaRouting', {
-      runtime: cloudfront.FunctionRuntime.JS_2_0,
+    const spaRewrite = new CloudFrontFunction(this, 'SpaRouting', {
+      runtime: FunctionRuntime.JS_2_0,
       comment: 'Serve index.html for SPA client routes (extensionless paths).',
-      code: cloudfront.FunctionCode.fromInline(cloudFrontFunctionCode(rewriteSpaPath)),
+      code: FunctionCode.fromInline(cloudFrontFunctionCode(rewriteSpaPath)),
     });
-    const apiRewrite = new cloudfront.Function(this, 'ApiPathRewrite', {
-      runtime: cloudfront.FunctionRuntime.JS_2_0,
+    const apiRewrite = new CloudFrontFunction(this, 'ApiPathRewrite', {
+      runtime: FunctionRuntime.JS_2_0,
       comment: 'Strip the /api prefix before routing to the HTTP API origin.',
-      code: cloudfront.FunctionCode.fromInline(cloudFrontFunctionCode(rewriteApiPath)),
+      code: FunctionCode.fromInline(cloudFrontFunctionCode(rewriteApiPath)),
     });
 
     // The API endpoint is `https://<host>` (no trailing slash / stage) — take the host.
@@ -204,7 +220,7 @@ export class WebConstruct extends Construct {
     // only — NEVER the /api proxy, whose JSON responses need no CSP). This is the app
     // CSP layer of the four independent HTML-render controls; it also sets
     // frame-ancestors 'none' + nosniff + no-referrer + HSTS.
-    const securityHeaders = new cloudfront.ResponseHeadersPolicy(this, 'SecurityHeaders', {
+    const securityHeaders = new ResponseHeadersPolicy(this, 'SecurityHeaders', {
       comment: 'FreeMail SPA: strict CSP + security headers.',
       securityHeadersBehavior: {
         contentSecurityPolicy: {
@@ -212,9 +228,9 @@ export class WebConstruct extends Construct {
           override: true,
         },
         contentTypeOptions: { override: true },
-        frameOptions: { frameOption: cloudfront.HeadersFrameOption.DENY, override: true },
+        frameOptions: { frameOption: HeadersFrameOption.DENY, override: true },
         referrerPolicy: {
-          referrerPolicy: cloudfront.HeadersReferrerPolicy.NO_REFERRER,
+          referrerPolicy: HeadersReferrerPolicy.NO_REFERRER,
           override: true,
         },
         strictTransportSecurity: {
@@ -225,7 +241,7 @@ export class WebConstruct extends Construct {
       },
     });
 
-    this.distribution = new cloudfront.Distribution(this, 'Distribution', {
+    this.distribution = new Distribution(this, 'Distribution', {
       comment: 'FreeMail web app',
       defaultRootObject: 'index.html',
       // A configured custom domain aliases the distribution; absent → generated domain.
@@ -233,15 +249,15 @@ export class WebConstruct extends Construct {
         ? { domainNames: [customDomain.domainName], certificate }
         : {}),
       // Cost-conscious default for a single-tenant self-host (North America + Europe edges).
-      priceClass: cloudfront.PriceClass.PRICE_CLASS_100,
+      priceClass: PriceClass.PRICE_CLASS_100,
       defaultBehavior: {
-        origin: origins.S3BucketOrigin.withOriginAccessControl(webBucket),
-        viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-        allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,
-        cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
+        origin: S3BucketOrigin.withOriginAccessControl(webBucket),
+        viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+        allowedMethods: AllowedMethods.ALLOW_GET_HEAD,
+        cachePolicy: CachePolicy.CACHING_OPTIMIZED,
         responseHeadersPolicy: securityHeaders,
         functionAssociations: [
-          { function: spaRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+          { function: spaRewrite, eventType: FunctionEventType.VIEWER_REQUEST },
         ],
       },
       additionalBehaviors: {
@@ -250,15 +266,15 @@ export class WebConstruct extends Construct {
         // viewer header/cookie/query + body forwarded to the API (except Host); `/api`
         // stripped before origin routing.
         '/api/*': {
-          origin: new origins.HttpOrigin(apiHost, {
-            protocolPolicy: cloudfront.OriginProtocolPolicy.HTTPS_ONLY,
+          origin: new HttpOrigin(apiHost, {
+            protocolPolicy: OriginProtocolPolicy.HTTPS_ONLY,
           }),
-          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
-          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
-          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+          viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          allowedMethods: AllowedMethods.ALLOW_ALL,
+          cachePolicy: CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
           functionAssociations: [
-            { function: apiRewrite, eventType: cloudfront.FunctionEventType.VIEWER_REQUEST },
+            { function: apiRewrite, eventType: FunctionEventType.VIEWER_REQUEST },
           ],
         },
       },
@@ -268,15 +284,13 @@ export class WebConstruct extends Construct {
     // domain is ⊆ the zone (enforced by `parseFreeMailConfig`), so it's a plain string
     // (not a token) and CDK's FQDN handling appends the zone correctly.
     if (customDomain) {
-      const aliasTarget = route53.RecordTarget.fromAlias(
-        new targets.CloudFrontTarget(this.distribution),
-      );
-      new route53.ARecord(this, 'AliasRecord', {
+      const aliasTarget = RecordTarget.fromAlias(new CloudFrontTarget(this.distribution));
+      new ARecord(this, 'AliasRecord', {
         zone: customDomain.hostedZone,
         recordName: customDomain.domainName,
         target: aliasTarget,
       });
-      new route53.AaaaRecord(this, 'AliasRecordAaaa', {
+      new AaaaRecord(this, 'AliasRecordAaaa', {
         zone: customDomain.hostedZone,
         recordName: customDomain.domainName,
         target: aliasTarget,
@@ -286,13 +300,13 @@ export class WebConstruct extends Construct {
     // Content-hashed assets: long-lived, immutable. `prune: false` so this deploy
     // never deletes the root files the second deploy owns; orphaned old hashes are
     // harmless (unique filenames, tiny, single-tenant traffic).
-    new s3deploy.BucketDeployment(this, 'SpaAssets', {
+    new BucketDeployment(this, 'SpaAssets', {
       destinationBucket: webBucket,
-      sources: [s3deploy.Source.asset(assetPath, { exclude: ['index.html'] })],
+      sources: [Source.asset(assetPath, { exclude: ['index.html'] })],
       cacheControl: [
-        s3deploy.CacheControl.setPublic(),
-        s3deploy.CacheControl.maxAge(Duration.days(365)),
-        s3deploy.CacheControl.immutable(),
+        CacheControl.setPublic(),
+        CacheControl.maxAge(Duration.days(365)),
+        CacheControl.immutable(),
       ],
       prune: false,
     });
@@ -300,13 +314,13 @@ export class WebConstruct extends Construct {
     // index.html + the deploy-time config.json: no-cache, and invalidated every
     // deploy so a new build propagates immediately. The SPA is same-origin with the
     // API, so its base URL is the relative `/api` proxy path (not a cross-origin URL).
-    new s3deploy.BucketDeployment(this, 'SpaRoot', {
+    new BucketDeployment(this, 'SpaRoot', {
       destinationBucket: webBucket,
       sources: [
-        s3deploy.Source.asset(assetPath, { exclude: ['assets/**'] }),
-        s3deploy.Source.jsonData('config.json', webRuntimeConfigJson(inboundEnabled)),
+        Source.asset(assetPath, { exclude: ['assets/**'] }),
+        Source.jsonData('config.json', webRuntimeConfigJson(inboundEnabled)),
       ],
-      cacheControl: [s3deploy.CacheControl.noCache(), s3deploy.CacheControl.mustRevalidate()],
+      cacheControl: [CacheControl.noCache(), CacheControl.mustRevalidate()],
       prune: false,
       distribution: this.distribution,
       distributionPaths: ['/', '/index.html', '/config.json'],

@@ -1,19 +1,16 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  Duration,
-  Stack,
-  aws_apigatewayv2 as apigwv2,
-  aws_certificatemanager as acm,
-  aws_dynamodb as dynamodb,
-  aws_iam as iam,
-  aws_lambda as lambda,
-  aws_lambda_nodejs as nodejs,
-  aws_route53 as route53,
-  aws_route53_targets as targets,
-  aws_s3 as s3,
-  aws_secretsmanager as secretsmanager,
-} from 'aws-cdk-lib';
+import { Duration, Stack } from 'aws-cdk-lib';
+import { ApiMapping, DomainName, HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
+import { Certificate, CertificateValidation } from 'aws-cdk-lib/aws-certificatemanager';
+import type { Table } from 'aws-cdk-lib/aws-dynamodb';
+import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { Architecture, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
+import { AaaaRecord, ARecord, RecordTarget } from 'aws-cdk-lib/aws-route53';
+import { ApiGatewayv2DomainProperties } from 'aws-cdk-lib/aws-route53-targets';
+import type { IBucket } from 'aws-cdk-lib/aws-s3';
+import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
 import {
   HttpLambdaAuthorizer,
   HttpLambdaResponseType,
@@ -34,15 +31,15 @@ const HANDLERS_DIR = join(
 
 export interface ApiConstructProps {
   /** Single-tenant password hash + rotating refresh tokens + lockout counters. */
-  readonly authTable: dynamodb.Table;
+  readonly authTable: Table;
   /** Hashed agent API keys — the REST handler manages them; the authorizer validates presented keys. */
-  readonly apiKeysTable: dynamodb.Table;
+  readonly apiKeysTable: Table;
   /** Sent/inbound email metadata — the send route records sent messages, the read routes list/get them. */
-  readonly emailsTable: dynamodb.Table;
+  readonly emailsTable: Table;
   /** Outbound large-attachment download tokens (#14) — send mints them, `GET /d/{token}` claims them. */
-  readonly downloadTokensTable: dynamodb.Table;
+  readonly downloadTokensTable: Table;
   /** Inbound raw MIME + extracted attachments + outbound large attachments (send writes, reads presign). */
-  readonly mailBucket: s3.IBucket;
+  readonly mailBucket: IBucket;
   /** The SES send domain — `from` must be under it, and it scopes the send IAM grant. */
   readonly emailDomain: string;
   /** SES configuration set the send route routes through (suppression + bounce/complaint tracking). */
@@ -77,14 +74,14 @@ export interface ApiConstructProps {
  * routes are open); all authentication happens in the backend authorizer.
  */
 export class ApiConstruct extends Construct {
-  readonly httpApi: apigwv2.HttpApi;
+  readonly httpApi: HttpApi;
   readonly authorizer: HttpLambdaAuthorizer;
-  readonly restHandler: nodejs.NodejsFunction;
-  readonly authorizerHandler: nodejs.NodejsFunction;
+  readonly restHandler: NodejsFunction;
+  readonly authorizerHandler: NodejsFunction;
   /** MCP server (agent-facing `send_email` tool) — its own handler behind the shared authorizer. */
-  readonly mcpHandler: nodejs.NodejsFunction;
+  readonly mcpHandler: NodejsFunction;
   /** Auto-generated HS256 signing key (no manual bootstrap step). */
-  readonly signingKey: secretsmanager.Secret;
+  readonly signingKey: Secret;
   /** The configured custom API domain, if any (from `FreeMailConfig.apiDomain`). */
   readonly customDomainName?: string;
   private readonly restIntegration: HttpLambdaIntegration;
@@ -103,7 +100,7 @@ export class ApiConstruct extends Construct {
       customDomain,
     } = props;
 
-    this.signingKey = new secretsmanager.Secret(this, 'JwtSigningKey', {
+    this.signingKey = new Secret(this, 'JwtSigningKey', {
       description: 'HS256 signing key for FreeMail access tokens.',
       // Generated at deploy → the "one cdk deploy" UX needs no out-of-band secret.
       generateSecretString: { passwordLength: 64, excludePunctuation: true },
@@ -112,7 +109,7 @@ export class ApiConstruct extends Construct {
     // Created before the handlers so its endpoint can be baked into their env as the
     // public base for `/d/{token}` download links (DOWNLOAD_BASE_URL). The Api resource
     // itself has no dependency on the handlers (only the Routes do), so this is acyclic.
-    this.httpApi = new apigwv2.HttpApi(this, 'HttpApi', {
+    this.httpApi = new HttpApi(this, 'HttpApi', {
       apiName: 'FreeMail',
       description: 'FreeMail REST + MCP API.',
       // NO CORS (#31): the web app calls the API SAME-ORIGIN through the CloudFront
@@ -214,34 +211,34 @@ export class ApiConstruct extends Construct {
     this.restIntegration = new HttpLambdaIntegration('RestIntegration', this.restHandler);
 
     // Public (no token yet): set-password, login, refresh, logout.
-    this.addRestRoute('/auth/set-password', apigwv2.HttpMethod.POST);
-    this.addRestRoute('/auth/login', apigwv2.HttpMethod.POST);
-    this.addRestRoute('/auth/refresh', apigwv2.HttpMethod.POST);
-    this.addRestRoute('/auth/logout', apigwv2.HttpMethod.POST);
+    this.addRestRoute('/auth/set-password', HttpMethod.POST);
+    this.addRestRoute('/auth/login', HttpMethod.POST);
+    this.addRestRoute('/auth/refresh', HttpMethod.POST);
+    this.addRestRoute('/auth/logout', HttpMethod.POST);
     // Protected sample route — proves the authorizer end to end.
-    this.addRestRoute('/me', apigwv2.HttpMethod.GET, { authorized: true });
+    this.addRestRoute('/me', HttpMethod.GET, { authorized: true });
 
     // Agent API-key management (access-token authed).
-    this.addRestRoute('/keys', apigwv2.HttpMethod.POST, { authorized: true });
-    this.addRestRoute('/keys', apigwv2.HttpMethod.GET, { authorized: true });
-    this.addRestRoute('/keys/{id}', apigwv2.HttpMethod.DELETE, { authorized: true });
+    this.addRestRoute('/keys', HttpMethod.POST, { authorized: true });
+    this.addRestRoute('/keys', HttpMethod.GET, { authorized: true });
+    this.addRestRoute('/keys/{id}', HttpMethod.DELETE, { authorized: true });
 
     // Send email — dual-scheme (Bearer human OR x-api-key agent), so it's behind
     // the authorizer but the handler does NOT restrict it to the access scheme.
-    this.addRestRoute('/emails', apigwv2.HttpMethod.POST, { authorized: true });
+    this.addRestRoute('/emails', HttpMethod.POST, { authorized: true });
 
     // Read the mailbox (access-token only — the handler enforces the scheme): list the
     // merged timeline, read one message, and mint a presigned attachment download URL.
-    this.addRestRoute('/emails', apigwv2.HttpMethod.GET, { authorized: true });
-    this.addRestRoute('/emails/{id}', apigwv2.HttpMethod.GET, { authorized: true });
-    this.addRestRoute('/emails/{id}/attachments/{attachmentId}', apigwv2.HttpMethod.GET, {
+    this.addRestRoute('/emails', HttpMethod.GET, { authorized: true });
+    this.addRestRoute('/emails/{id}', HttpMethod.GET, { authorized: true });
+    this.addRestRoute('/emails/{id}/attachments/{attachmentId}', HttpMethod.GET, {
       authorized: true,
     });
 
     // Outbound large-attachment download (#14) — PUBLIC (no authorizer): the token IS the
     // capability. The handler validates it and 302s to a short-lived presigned GET, or
     // returns a uniform 404 for any unknown/expired/revoked/exhausted token.
-    this.addRestRoute('/d/{token}', apigwv2.HttpMethod.GET);
+    this.addRestRoute('/d/{token}', HttpMethod.GET);
 
     // MCP server (agents) — its own handler behind the SAME dual-scheme authorizer.
     // Both schemes resolve to the owner and `send_email` is the same capability as
@@ -249,7 +246,7 @@ export class ApiConstruct extends Construct {
     // request/response, so only POST is registered (no GET/SSE stream).
     this.httpApi.addRoutes({
       path: '/mcp',
-      methods: [apigwv2.HttpMethod.POST],
+      methods: [HttpMethod.POST],
       integration: new HttpLambdaIntegration('McpIntegration', this.mcpHandler),
       authorizer: this.authorizer,
     });
@@ -261,31 +258,31 @@ export class ApiConstruct extends Construct {
     // URL keeps working (the CloudFront `/api/*` proxy still targets it), so the SPA is
     // unaffected — this domain is a same-target alias for external callers only.
     if (customDomain) {
-      const certificate = new acm.Certificate(this, 'Certificate', {
+      const certificate = new Certificate(this, 'Certificate', {
         domainName: customDomain.domainName,
-        validation: acm.CertificateValidation.fromDns(customDomain.hostedZone),
+        validation: CertificateValidation.fromDns(customDomain.hostedZone),
       });
-      const domainName = new apigwv2.DomainName(this, 'DomainName', {
+      const domainName = new DomainName(this, 'DomainName', {
         domainName: customDomain.domainName,
         certificate,
       });
-      new apigwv2.ApiMapping(this, 'ApiMapping', {
+      new ApiMapping(this, 'ApiMapping', {
         api: this.httpApi,
         domainName,
         stage: this.httpApi.defaultStage,
       });
-      const aliasTarget = route53.RecordTarget.fromAlias(
-        new targets.ApiGatewayv2DomainProperties(
+      const aliasTarget = RecordTarget.fromAlias(
+        new ApiGatewayv2DomainProperties(
           domainName.regionalDomainName,
           domainName.regionalHostedZoneId,
         ),
       );
-      new route53.ARecord(this, 'AliasRecord', {
+      new ARecord(this, 'AliasRecord', {
         zone: customDomain.hostedZone,
         recordName: customDomain.domainName,
         target: aliasTarget,
       });
-      new route53.AaaaRecord(this, 'AliasRecordAaaa', {
+      new AaaaRecord(this, 'AliasRecordAaaa', {
         zone: customDomain.hostedZone,
         recordName: customDomain.domainName,
         target: aliasTarget,
@@ -298,11 +295,7 @@ export class ApiConstruct extends Construct {
    * Add a route served by the shared REST handler. `authorized` puts it behind the
    * dual-scheme authorizer; omit it for a public route.
    */
-  addRestRoute(
-    path: string,
-    method: apigwv2.HttpMethod,
-    opts: { authorized?: boolean } = {},
-  ): void {
+  addRestRoute(path: string, method: HttpMethod, opts: { authorized?: boolean } = {}): void {
     this.httpApi.addRoutes({
       path,
       methods: [method],
@@ -317,9 +310,9 @@ export class ApiConstruct extends Construct {
    * Shared by the REST send route and the MCP server, which send through the same
    * EmailService.
    */
-  private grantSesSend(fn: nodejs.NodejsFunction, emailDomain: string): void {
+  private grantSesSend(fn: NodejsFunction, emailDomain: string): void {
     fn.addToRolePolicy(
-      new iam.PolicyStatement({
+      new PolicyStatement({
         actions: ['ses:SendEmail', 'ses:SendRawEmail'],
         resources: [
           Stack.of(this).formatArn({
@@ -340,12 +333,12 @@ export class ApiConstruct extends Construct {
       environment: Record<string, string>;
       memorySize?: number;
     },
-  ): nodejs.NodejsFunction {
-    return new nodejs.NodejsFunction(this, id, {
+  ): NodejsFunction {
+    return new NodejsFunction(this, id, {
       entry: join(HANDLERS_DIR, entryFile),
       handler: 'handler',
-      runtime: lambda.Runtime.NODEJS_22_X,
-      architecture: lambda.Architecture.ARM_64,
+      runtime: Runtime.NODEJS_22_X,
+      architecture: Architecture.ARM_64,
       timeout: Duration.seconds(10),
       memorySize: props.memorySize ?? 256,
       description: props.description,
