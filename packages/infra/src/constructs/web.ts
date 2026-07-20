@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Duration, Fn } from 'aws-cdk-lib';
+import { Duration, Fn, RemovalPolicy } from 'aws-cdk-lib';
 import {
   Certificate,
   CertificateValidation,
@@ -26,7 +26,7 @@ import {
 import { HttpOrigin, S3BucketOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
 import { AaaaRecord, ARecord, RecordTarget, type IHostedZone } from 'aws-cdk-lib/aws-route53';
 import { CloudFrontTarget } from 'aws-cdk-lib/aws-route53-targets';
-import type { Bucket } from 'aws-cdk-lib/aws-s3';
+import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { BucketDeployment, CacheControl, Source } from 'aws-cdk-lib/aws-s3-deployment';
 import { Construct } from 'constructs';
 
@@ -138,8 +138,6 @@ export const APP_CONTENT_SECURITY_POLICY = [
 ].join('; ');
 
 export interface WebConstructProps {
-  /** The private S3 bucket that holds the built SPA (from {@link DataConstruct}). */
-  readonly webBucket: Bucket;
   /**
    * The HTTP API base URL (e.g. `https://abc123.execute-api.us-east-1.amazonaws.com`).
    * Its host backs the same-origin `/api/*` CloudFront proxy origin. The SPA itself
@@ -182,13 +180,27 @@ export interface WebConstructProps {
  * that points it at the relative `/api`; content-hashed `/assets/*` stay long-immutable.
  */
 export class WebConstruct extends Construct {
+  /** The private origin bucket for the SPA — owned here (not DataConstruct) and disposable; see the constructor. */
+  readonly webBucket: Bucket;
   readonly distribution: Distribution;
   /** The configured custom app domain, if any (from `FreeMailConfig.appDomain`). */
   readonly customDomainName?: string;
 
   constructor(scope: Construct, id: string, props: WebConstructProps) {
     super(scope, id);
-    const { webBucket, apiEndpoint, assetPath, inboundEnabled, customDomain } = props;
+    const { apiEndpoint, assetPath, inboundEnabled, customDomain } = props;
+
+    // This construct OWNS the SPA's private origin bucket. Unlike the mail bucket
+    // (real email → RETAIN), the web bucket holds only the redeployable SPA build,
+    // so it is DESTROY + auto-emptied: a `cdk destroy` removes it cleanly
+    // (CloudFormation cannot delete a non-empty bucket without autoDeleteObjects).
+    this.webBucket = new Bucket(this, 'WebBucket', {
+      blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
+      encryption: BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+      removalPolicy: RemovalPolicy.DESTROY,
+      autoDeleteObjects: true,
+    });
 
     // Optional custom domain: a DNS-validated ACM cert (validation records written
     // into the hosted zone). The cert must be in the CloudFront cert region — us-east-1
@@ -251,7 +263,7 @@ export class WebConstruct extends Construct {
       // Cost-conscious default for a single-tenant self-host (North America + Europe edges).
       priceClass: PriceClass.PRICE_CLASS_100,
       defaultBehavior: {
-        origin: S3BucketOrigin.withOriginAccessControl(webBucket),
+        origin: S3BucketOrigin.withOriginAccessControl(this.webBucket),
         viewerProtocolPolicy: ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
         allowedMethods: AllowedMethods.ALLOW_GET_HEAD,
         cachePolicy: CachePolicy.CACHING_OPTIMIZED,
@@ -301,7 +313,7 @@ export class WebConstruct extends Construct {
     // never deletes the root files the second deploy owns; orphaned old hashes are
     // harmless (unique filenames, tiny, single-tenant traffic).
     new BucketDeployment(this, 'SpaAssets', {
-      destinationBucket: webBucket,
+      destinationBucket: this.webBucket,
       sources: [Source.asset(assetPath, { exclude: ['index.html'] })],
       cacheControl: [
         CacheControl.setPublic(),
@@ -315,7 +327,7 @@ export class WebConstruct extends Construct {
     // deploy so a new build propagates immediately. The SPA is same-origin with the
     // API, so its base URL is the relative `/api` proxy path (not a cross-origin URL).
     new BucketDeployment(this, 'SpaRoot', {
-      destinationBucket: webBucket,
+      destinationBucket: this.webBucket,
       sources: [
         Source.asset(assetPath, { exclude: ['assets/**'] }),
         Source.jsonData('config.json', webRuntimeConfigJson(inboundEnabled)),

@@ -63,6 +63,21 @@ describe('WebConstruct', () => {
     });
   });
 
+  it('owns a private, disposable SPA bucket (block-all, DESTROY + auto-emptied)', () => {
+    const template = synth();
+    // The web bucket is the disposable one — the mail bucket is RETAIN.
+    const webBuckets = Object.values(template.findResources('AWS::S3::Bucket')).filter(
+      (b) => b.DeletionPolicy === 'Delete',
+    );
+    expect(webBuckets).toHaveLength(1);
+    expect(webBuckets[0].Properties?.PublicAccessBlockConfiguration).toMatchObject({
+      BlockPublicAcls: true,
+      RestrictPublicBuckets: true,
+    });
+    // Auto-emptied on delete so a `cdk destroy` removes the redeployable SPA cleanly.
+    template.resourceCountIs('Custom::S3AutoDeleteObjects', 1);
+  });
+
   it('proxies /api/* same-origin to the HTTPS API: no caching, all methods, prefix stripped', () => {
     const template = synth();
     template.hasResourceProperties('AWS::CloudFront::Distribution', {

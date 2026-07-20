@@ -25,18 +25,23 @@ describe('FreeMailStack', () => {
     expect(stack.region).toBe('us-east-1');
   });
 
-  it('creates the data layer: 4 tables + 2 buckets, all retained', () => {
+  it('creates the data layer: 4 tables + 2 buckets — data retained, web disposable', () => {
     const template = synth(makeConfig());
     template.resourceCountIs('AWS::DynamoDB::Table', 4);
     template.resourceCountIs('AWS::S3::Bucket', 2);
     template.allResourcesProperties('AWS::DynamoDB::Table', { BillingMode: 'PAY_PER_REQUEST' });
-    // RETAIN is expressed as a resource-level DeletionPolicy, not a property.
-    for (const resource of Object.values(template.findResources('AWS::S3::Bucket'))) {
-      expect(resource.DeletionPolicy).toBe('Retain');
-    }
+    // Tables + the mail bucket hold the deployer's real data → RETAIN (a cdk destroy
+    // must never wipe email). RETAIN is a resource-level DeletionPolicy, not a property.
     for (const resource of Object.values(template.findResources('AWS::DynamoDB::Table'))) {
       expect(resource.DeletionPolicy).toBe('Retain');
     }
+    // Exactly one retained bucket (mail) and one disposable bucket (the SPA web bucket,
+    // owned by WebConstruct — holds only the redeployable build).
+    const buckets = Object.values(template.findResources('AWS::S3::Bucket'));
+    expect(buckets.filter((b) => b.DeletionPolicy === 'Retain')).toHaveLength(1);
+    expect(buckets.filter((b) => b.DeletionPolicy === 'Delete')).toHaveLength(1);
+    // The disposable web bucket is auto-emptied on delete (CFN can't remove a non-empty bucket).
+    template.resourceCountIs('Custom::S3AutoDeleteObjects', 1);
   });
 
   it('buckets block public access and enforce SSL', () => {
