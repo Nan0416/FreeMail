@@ -23,4 +23,12 @@ export default tseslint.config(
     },
   },
   prettier,
+  // Placed after eslint-config-prettier, which disables `curly`; re-enable it so
+  // every control statement requires a block. `curly` is a style rule, not a
+  // formatting one, so it does not conflict with Prettier.
+  {
+    rules: {
+      curly: ['error', 'all'],
+    },
+  },
 );

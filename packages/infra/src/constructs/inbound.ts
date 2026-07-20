@@ -33,15 +33,15 @@ const HANDLERS_DIR = join(
 
 export interface InboundConstructProps {
   /** The Route53 zone that owns the email domain — the inbound MX record is written here. */
-  hostedZone: route53.IHostedZone;
+  readonly hostedZone: route53.IHostedZone;
   /** Domain email is received at (the zone apex or a subdomain). The receipt rule is scoped to it. */
-  emailDomain: string;
+  readonly emailDomain: string;
   /** Deploy region — the inbound SMTP MX target (inbound-smtp.<region>.amazonaws.com) is region-specific. */
-  region: string;
+  readonly region: string;
   /** Raw inbound MIME is delivered under the `inbound/` prefix of this bucket; parsed attachments go under `attachments/`. */
-  mailBucket: s3.Bucket;
+  readonly mailBucket: s3.Bucket;
   /** Email metadata index — the parser writes each received message here (`pk='INBOUND'`). */
-  emailsTable: dynamodb.Table;
+  readonly emailsTable: dynamodb.Table;
 }
 
 /** SES writes each received message under this prefix as `<prefix><messageId>`. */

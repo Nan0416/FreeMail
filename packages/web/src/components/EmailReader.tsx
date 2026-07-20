@@ -7,15 +7,15 @@ import { formatBytes, formatDate } from '../lib/format.js';
 import { EmailBodyFrame } from './EmailBodyFrame.js';
 
 type State =
-  | { status: 'loading' }
-  | { status: 'error'; message: string }
-  | { status: 'ready'; email: EmailDetail };
+  | { readonly status: 'loading' }
+  | { readonly status: 'error'; readonly message: string }
+  | { readonly status: 'ready'; readonly email: EmailDetail };
 
 export interface EmailReaderProps {
   /** Opaque message handle from the list. */
-  id: string;
+  readonly id: string;
   /** Return to the list. */
-  onBack: () => void;
+  readonly onBack: () => void;
 }
 
 export function EmailReader({ id, onBack }: EmailReaderProps): React.JSX.Element {

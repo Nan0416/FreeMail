@@ -19,19 +19,19 @@ export const EMAIL_PARTITIONS: ReadonlySet<string> = new Set([SENT_PARTITION, IN
 /** Metadata for one sent message — headers + SES id, never the body/attachment bytes. */
 export interface SentEmailRecord {
   /** FreeMail's own id for the message. */
-  id: string;
-  from: string;
-  to: string[];
-  cc: string[];
-  bcc: string[];
-  subject: string;
+  readonly id: string;
+  readonly from: string;
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly bcc: readonly string[];
+  readonly subject: string;
   /** The message id SES assigned. */
-  sesMessageId: string;
+  readonly sesMessageId: string;
   /** Send time, ISO-8601. */
-  sentAt: string;
-  attachmentCount: number;
+  readonly sentAt: string;
+  readonly attachmentCount: number;
   /** Size of the raw MIME message in bytes. */
-  sizeBytes: number;
+  readonly sizeBytes: number;
 }
 
 /**
@@ -54,50 +54,50 @@ export type InboundParseStatus = 'ok' | 'oversize' | 'limit_exceeded' | 'parse_f
  */
 export interface InboundAttachmentDescriptor {
   /** Stable per-message id (the MIME part index). */
-  id: string;
+  readonly id: string;
   /** Original, sanitized filename — metadata only, never used in the S3 key. */
-  filename: string;
-  contentType: string;
-  sizeBytes: number;
+  readonly filename: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
   /** Server-side S3 pointer (`attachments/inbound/<id>/<partIndex>`). Never exposed by the read API. */
-  s3Key: string;
+  readonly s3Key: string;
 }
 
 /** Metadata for one received message. Attachments + snippet are present only when content is exposable. */
 export interface InboundEmailRecord {
   /** FreeMail's id for the message — the validated SES message id (stable → idempotent). */
-  id: string;
+  readonly id: string;
   /** Same value as `id`; kept explicit to mirror the sent-side field. */
-  sesMessageId: string;
+  readonly sesMessageId: string;
   /** First `From` address, sanitized. */
-  from: string;
+  readonly from: string;
   /** `From` display name, sanitized, if present. */
-  fromName?: string;
+  readonly fromName?: string;
   /** `To` addresses, sanitized + count-capped. */
-  to: string[];
+  readonly to: readonly string[];
   /** `Cc` addresses, sanitized + count-capped. */
-  cc: string[];
+  readonly cc: readonly string[];
   /** Subject, sanitized + length-capped (`''` if absent). */
-  subject: string;
+  readonly subject: string;
   /** Short plain-text preview — present ONLY when content is exposable (parsed + virus `PASS`). */
-  snippet?: string;
+  readonly snippet?: string;
   /** Server-trusted receipt time (S3 object `LastModified`), ISO-8601 — the sort-key basis. */
-  receivedAt: string;
+  readonly receivedAt: string;
   /** The message's own `Date:` header, ISO-8601 — display-only, attacker-controlled, may be absent. */
-  headerDate?: string;
-  hasAttachments: boolean;
-  attachmentCount: number;
+  readonly headerDate?: string;
+  readonly hasAttachments: boolean;
+  readonly attachmentCount: number;
   /** Extracted attachments — empty unless content is exposable. */
-  attachments: InboundAttachmentDescriptor[];
-  spamVerdict: InboundVerdict;
-  virusVerdict: InboundVerdict;
-  parseStatus: InboundParseStatus;
+  readonly attachments: readonly InboundAttachmentDescriptor[];
+  readonly spamVerdict: InboundVerdict;
+  readonly virusVerdict: InboundVerdict;
+  readonly parseStatus: InboundParseStatus;
   /** Hidden-by-default: content suppressed (not virus-`PASS`/parse-failed) OR spam-flagged. */
-  quarantined: boolean;
+  readonly quarantined: boolean;
   /** S3 pointer to the raw MIME kept as the forensic source of truth (`inbound/<id>`). */
-  rawS3Key: string;
+  readonly rawS3Key: string;
   /** Raw MIME size in bytes (from S3 `HeadObject`). */
-  sizeBytes: number;
+  readonly sizeBytes: number;
 }
 
 export interface EmailsRepo {
@@ -117,8 +117,8 @@ export interface EmailsRepo {
  * from a client-supplied key.
  */
 export type StoredEmailRow =
-  | ({ direction: 'sent'; sk: string } & SentEmailRecord)
-  | ({ direction: 'inbound'; sk: string } & InboundEmailRecord);
+  | ({ readonly direction: 'sent'; readonly sk: string } & SentEmailRecord)
+  | ({ readonly direction: 'inbound'; readonly sk: string } & InboundEmailRecord);
 
 /**
  * Read-side queries over the same two-partition table. Kept a separate interface so the
@@ -135,7 +135,7 @@ export interface EmailsReadRepo {
   queryDirection(
     direction: 'sent' | 'inbound',
     opts: { limit: number; afterSk?: string },
-  ): Promise<StoredEmailRow[]>;
+  ): Promise<readonly StoredEmailRow[]>;
   /** Fetch exactly one row by its full primary key, or `null` if absent. */
   getByKey(key: { pk: string; sk: string }): Promise<StoredEmailRow | null>;
 }

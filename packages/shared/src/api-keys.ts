@@ -20,24 +20,24 @@ export const MAX_API_KEY_NAME_LENGTH = 100;
 /** A key as shown in the management list — deliberately never includes the secret. */
 export interface ApiKeySummary {
   /** Public key id (the `keyId` half of the raw key). Stable and safe to display. */
-  id: string;
+  readonly id: string;
   /** Optional human label, or null when the key was created unnamed. */
-  name: string | null;
+  readonly name: string | null;
   /** Creation time, ISO-8601. */
-  createdAt: string;
+  readonly createdAt: string;
 }
 
 export interface CreateApiKeyRequest {
   /** Optional label so keys can be told apart in the UI. */
-  name?: string;
+  readonly name?: string;
 }
 
 /** Creation response: the summary plus the raw key, returned only this once. */
 export interface CreateApiKeyResponse extends ApiKeySummary {
   /** The full `fm_<keyId>_<secret>` key. Shown once — it is never retrievable again. */
-  key: string;
+  readonly key: string;
 }
 
 export interface ListApiKeysResponse {
-  keys: ApiKeySummary[];
+  readonly keys: readonly ApiKeySummary[];
 }

@@ -25,11 +25,11 @@ export type AuthErrorCode =
   | 'forbidden';
 
 export interface SetPasswordRequest {
-  password: string;
+  readonly password: string;
 }
 
 export interface LoginRequest {
-  password: string;
+  readonly password: string;
 }
 
 /**
@@ -39,15 +39,15 @@ export interface LoginRequest {
  * token from the cookie, never a request body or query.
  */
 export interface TokenPair {
-  tokenType: 'Bearer';
-  accessToken: string;
-  refreshToken: string;
-  expiresIn: number;
+  readonly tokenType: 'Bearer';
+  readonly accessToken: string;
+  readonly refreshToken: string;
+  readonly expiresIn: number;
 }
 
 export interface SessionResponse {
   /** The authenticated subject — always the single-tenant owner. */
-  subject: string;
+  readonly subject: string;
 }
 
 /**
@@ -57,8 +57,8 @@ export interface SessionResponse {
 export type LoginResponse = SessionResponse;
 
 export interface AuthErrorBody {
-  error: AuthErrorCode;
-  message: string;
+  readonly error: AuthErrorCode;
+  readonly message: string;
 }
 
 /**

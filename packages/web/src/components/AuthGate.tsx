@@ -4,7 +4,7 @@ import { SignInView } from './SignInView.js';
 
 export interface AuthGateProps {
   /** Deploy-time inbound flag, threaded to the shell to gate the Inbox tab. */
-  inboundEnabled?: boolean;
+  readonly inboundEnabled?: boolean;
 }
 
 /** Route between the sign-in screen and the app based on auth status. */

@@ -22,8 +22,8 @@ import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
 import { ApiKeyService } from '../keys/service.js';
 
 interface AuthorizerContext {
-  sub: string;
-  scheme: 'access' | 'apiKey';
+  readonly sub: string;
+  readonly scheme: 'access' | 'apiKey';
 }
 
 // Reused across warm invocations. Verification is a table read; no signing key needed.

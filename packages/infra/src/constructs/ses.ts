@@ -12,11 +12,11 @@ import { Construct } from 'constructs';
 
 export interface SesConstructProps {
   /** The Route53 zone that owns the email domain — all auth records are written here. */
-  hostedZone: route53.IHostedZone;
+  readonly hostedZone: route53.IHostedZone;
   /** Domain SES sends from (any address under it). The zone apex or a subdomain of it. */
-  emailDomain: string;
+  readonly emailDomain: string;
   /** Deploy region — the custom MAIL FROM MX target (feedback-smtp.<region>.amazonses.com) is region-specific. */
-  region: string;
+  readonly region: string;
 }
 
 const RECORD_TTL = '1800';

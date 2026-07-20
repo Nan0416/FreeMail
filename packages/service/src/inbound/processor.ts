@@ -32,9 +32,9 @@ export const ATTACHMENTS_PREFIX = 'attachments/inbound/';
 export type ProcessOutcome = 'indexed' | 'quarantined' | 'duplicate' | 'skipped';
 
 export interface ProcessResult {
-  outcome: ProcessOutcome;
-  messageId?: string;
-  reason?: string;
+  readonly outcome: ProcessOutcome;
+  readonly messageId?: string;
+  readonly reason?: string;
 }
 
 const ABSENT_VERDICTS = {
@@ -99,7 +99,9 @@ export class InboundProcessor {
   /** Conditional-put the row (the commit marker) and map the outcome. */
   private async commit(record: InboundEmailRecord, messageId: string): Promise<ProcessResult> {
     const written = await this.emails.putInbound(record);
-    if (!written) return { outcome: 'duplicate', messageId };
+    if (!written) {
+      return { outcome: 'duplicate', messageId };
+    }
     return { outcome: record.quarantined ? 'quarantined' : 'indexed', messageId };
   }
 
@@ -163,14 +165,16 @@ export class InboundProcessor {
 
   private snippet(parsed: ParsedInbound): string {
     const fromText = snippetFromText(parsed.textBody);
-    if (fromText) return fromText;
+    if (fromText) {
+      return fromText;
+    }
     return snippetFromHtml(parsed.htmlBody);
   }
 }
 
 interface RecordBase {
-  messageId: string;
-  receivedAt: string;
-  rawS3Key: string;
-  sizeBytes: number;
+  readonly messageId: string;
+  readonly receivedAt: string;
+  readonly rawS3Key: string;
+  readonly sizeBytes: number;
 }

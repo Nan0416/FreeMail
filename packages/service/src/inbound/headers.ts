@@ -9,8 +9,8 @@
 
 /** One parsed header line: lowercased key + its unfolded value, in source order. */
 export interface HeaderLine {
-  key: string;
-  value: string;
+  readonly key: string;
+  readonly value: string;
 }
 
 /**
@@ -22,7 +22,9 @@ export function parseHeaderLines(block: string): HeaderLine[] {
   const physical = block.split(/\r\n|\n|\r/);
   const logical: string[] = [];
   for (const line of physical) {
-    if (line === '') continue;
+    if (line === '') {
+      continue;
+    }
     if ((line.startsWith(' ') || line.startsWith('\t')) && logical.length > 0) {
       logical[logical.length - 1] += ' ' + line.trim();
     } else {
@@ -32,7 +34,9 @@ export function parseHeaderLines(block: string): HeaderLine[] {
   const out: HeaderLine[] = [];
   for (const line of logical) {
     const colon = line.indexOf(':');
-    if (colon <= 0) continue;
+    if (colon <= 0) {
+      continue;
+    }
     out.push({
       key: line.slice(0, colon).trim().toLowerCase(),
       value: line.slice(colon + 1).trim(),

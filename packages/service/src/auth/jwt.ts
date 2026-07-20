@@ -11,22 +11,22 @@ import { SignJWT, errors, jwtVerify } from 'jose';
 
 export interface AccessTokenClaims {
   /** Subject — the single-tenant owner. */
-  sub: string;
+  readonly sub: string;
   /** Issued-at (epoch seconds). */
-  iat: number;
+  readonly iat: number;
   /** Expiry (epoch seconds). */
-  exp: number;
+  readonly exp: number;
 }
 
 export interface SignAccessTokenOptions {
-  subject: string;
-  issuedAt: number;
-  ttlSeconds: number;
+  readonly subject: string;
+  readonly issuedAt: number;
+  readonly ttlSeconds: number;
 }
 
 export type VerifyResult =
-  | { valid: true; claims: AccessTokenClaims }
-  | { valid: false; reason: 'malformed' | 'bad_signature' | 'expired' };
+  | { readonly valid: true; readonly claims: AccessTokenClaims }
+  | { readonly valid: false; readonly reason: 'malformed' | 'bad_signature' | 'expired' };
 
 function encodeKey(key: string): Uint8Array {
   return new TextEncoder().encode(key);

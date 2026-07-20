@@ -8,9 +8,9 @@
  * logins can't overwrite one another and undercount past the threshold.
  */
 export interface VersionedValue<T> {
-  value: T | null;
+  readonly value: T | null;
   /** 0 when the record does not exist yet. */
-  version: number;
+  readonly version: number;
 }
 
 export async function optimisticUpdate<T>(

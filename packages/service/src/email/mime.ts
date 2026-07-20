@@ -11,32 +11,32 @@
 import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 
 export interface RawMimeAttachment {
-  filename: string;
-  contentType: string;
+  readonly filename: string;
+  readonly contentType: string;
   /** Base64-encoded, whitespace already stripped. */
-  contentBase64: string;
+  readonly contentBase64: string;
 }
 
 export interface RawMimeInput {
-  from: string;
-  fromName?: string;
-  to: string[];
-  cc: string[];
+  readonly from: string;
+  readonly fromName?: string;
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
   /** Passed to the composer but never emitted as a header (see file header). */
-  bcc: string[];
-  subject: string;
-  text?: string;
-  html?: string;
-  attachments: RawMimeAttachment[];
+  readonly bcc: readonly string[];
+  readonly subject: string;
+  readonly text?: string;
+  readonly html?: string;
+  readonly attachments: readonly RawMimeAttachment[];
 }
 
 /** Assemble the message into a raw MIME buffer. */
 export function buildRawMime(input: RawMimeInput): Promise<Buffer> {
   const composer = new MailComposer({
     from: input.fromName ? { name: input.fromName, address: input.from } : input.from,
-    ...(input.to.length > 0 ? { to: input.to } : {}),
-    ...(input.cc.length > 0 ? { cc: input.cc } : {}),
-    ...(input.bcc.length > 0 ? { bcc: input.bcc } : {}),
+    ...(input.to.length > 0 ? { to: [...input.to] } : {}),
+    ...(input.cc.length > 0 ? { cc: [...input.cc] } : {}),
+    ...(input.bcc.length > 0 ? { bcc: [...input.bcc] } : {}),
     subject: input.subject,
     ...(input.text !== undefined ? { text: input.text } : {}),
     ...(input.html !== undefined ? { html: input.html } : {}),

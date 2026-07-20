@@ -34,26 +34,26 @@ const HANDLERS_DIR = join(
 
 export interface ApiConstructProps {
   /** Single-tenant password hash + rotating refresh tokens + lockout counters. */
-  authTable: dynamodb.Table;
+  readonly authTable: dynamodb.Table;
   /** Hashed agent API keys — the REST handler manages them; the authorizer validates presented keys. */
-  apiKeysTable: dynamodb.Table;
+  readonly apiKeysTable: dynamodb.Table;
   /** Sent/inbound email metadata — the send route records sent messages, the read routes list/get them. */
-  emailsTable: dynamodb.Table;
+  readonly emailsTable: dynamodb.Table;
   /** Outbound large-attachment download tokens (#14) — send mints them, `GET /d/{token}` claims them. */
-  downloadTokensTable: dynamodb.Table;
+  readonly downloadTokensTable: dynamodb.Table;
   /** Inbound raw MIME + extracted attachments + outbound large attachments (send writes, reads presign). */
-  mailBucket: s3.IBucket;
+  readonly mailBucket: s3.IBucket;
   /** The SES send domain — `from` must be under it, and it scopes the send IAM grant. */
-  emailDomain: string;
+  readonly emailDomain: string;
   /** SES configuration set the send route routes through (suppression + bounce/complaint tracking). */
-  sesConfigurationSetName: string;
+  readonly sesConfigurationSetName: string;
   /**
    * Whether inbound email is enabled. Gates the MCP read tools (#13): when true, the MCP
    * handler gets `INBOUND_ENABLED='true'` plus read-only grants scoped to exactly what the
    * read service touches (emails table + the inbound raw/attachment prefixes). When false,
    * the read tools are never registered and no read grants are added.
    */
-  inboundEnabled: boolean;
+  readonly inboundEnabled: boolean;
   /**
    * Optional custom domain for the API (from `FreeMailConfig.apiDomain`), for DIRECT
    * agent/MCP (`x-api-key`) access at a stable branded host. When set, a DNS-validated
@@ -63,7 +63,7 @@ export interface ApiConstructProps {
    * CloudFront `/api/*` proxy (which targets the generated endpoint), so this custom
    * domain is never used by the browser and does not affect the #31 cookie auth.
    */
-  customDomain?: CustomDomainProps;
+  readonly customDomain?: CustomDomainProps;
 }
 
 /**

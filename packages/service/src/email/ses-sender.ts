@@ -12,18 +12,18 @@
 import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
 
 export interface SendRawParams {
-  from: string;
+  readonly from: string;
   /** Envelope recipients (headers carry to/cc; bcc rides only here). */
-  to: string[];
-  cc: string[];
-  bcc: string[];
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly bcc: readonly string[];
   /** The assembled raw MIME message. */
-  raw: Uint8Array;
+  readonly raw: Uint8Array;
 }
 
 export interface SesSender {
   /** Send a raw MIME message; resolves to the SES message id. */
-  send(params: SendRawParams): Promise<{ messageId: string }>;
+  send(params: SendRawParams): Promise<{ readonly messageId: string }>;
 }
 
 export class SesV2Sender implements SesSender {
@@ -40,9 +40,9 @@ export class SesV2Sender implements SesSender {
       new SendEmailCommand({
         FromEmailAddress: params.from,
         Destination: {
-          ToAddresses: params.to,
-          CcAddresses: params.cc,
-          BccAddresses: params.bcc,
+          ToAddresses: [...params.to],
+          CcAddresses: [...params.cc],
+          BccAddresses: [...params.bcc],
         },
         Content: { Raw: { Data: params.raw } },
         ...(this.configurationSetName ? { ConfigurationSetName: this.configurationSetName } : {}),

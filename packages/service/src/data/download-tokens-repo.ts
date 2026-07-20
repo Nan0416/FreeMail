@@ -12,31 +12,31 @@
 /** One download token — the capability for one uploaded outbound attachment. */
 export interface DownloadTokenRecord {
   /** High-entropy random token (the partition key). The capability itself. */
-  token: string;
+  readonly token: string;
   /** Server-side S3 pointer to the uploaded attachment. NEVER returned to a client. */
-  s3Key: string;
+  readonly s3Key: string;
   /** Original filename, for the download's `Content-Disposition`. */
-  filename: string;
+  readonly filename: string;
   /** Stored content type — metadata only; the download is always served as an octet-stream. */
-  contentType: string;
-  sizeBytes: number;
+  readonly contentType: string;
+  readonly sizeBytes: number;
   /** FreeMail id of the sent message this attachment belongs to (correlation). */
-  emailId: string;
+  readonly emailId: string;
   /** Mint time, ISO-8601 UTC. */
-  createdAt: string;
+  readonly createdAt: string;
   /**
    * Server-authoritative expiry, ISO-8601 UTC. Enforced on every claim (a claim past
    * this instant fails closed). DynamoDB TTL (`ttl`) only garbage-collects the row later.
    */
-  expiresAt: string;
+  readonly expiresAt: string;
   /** DynamoDB TTL attribute (epoch seconds = `expiresAt`). Best-effort cleanup, not the gate. */
-  ttl: number;
+  readonly ttl: number;
   /** Revoked tokens fail closed on claim (the revoke endpoint/UI is #35). */
-  revoked: boolean;
+  readonly revoked: boolean;
   /** How many times the token has been successfully claimed. */
-  downloadCount: number;
+  readonly downloadCount: number;
   /** Optional cap; when set, a claim past the cap fails closed. Multi-use (unlimited) when absent. */
-  maxDownloads?: number;
+  readonly maxDownloads?: number;
 }
 
 export interface DownloadTokensRepo {

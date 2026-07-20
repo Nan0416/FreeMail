@@ -5,11 +5,11 @@ import type { FreeMailConfig } from '@freemail/shared';
 
 export interface ConfigPathOptions {
   /** `-c configPath=...` CDK context value, if provided. */
-  contextPath?: unknown;
+  readonly contextPath?: unknown;
   /** `FREEMAIL_CONFIG` environment override, if set. */
-  envPath?: string;
+  readonly envPath?: string;
   /** Fallback path when neither context nor env is provided. */
-  defaultPath: string;
+  readonly defaultPath: string;
 }
 
 /** Resolve the config file path from CDK context, then env, then the default. */

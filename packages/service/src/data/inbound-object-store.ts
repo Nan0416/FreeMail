@@ -19,8 +19,8 @@ import {
 
 /** Trusted object metadata from a HEAD — the size gate + the stable receipt time. */
 export interface ObjectHead {
-  sizeBytes: number;
-  lastModified: Date;
+  readonly sizeBytes: number;
+  readonly lastModified: Date;
 }
 
 export interface InboundObjectStore {

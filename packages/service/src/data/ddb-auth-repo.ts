@@ -35,8 +35,8 @@ function isConditionalCheckFailed(error: unknown): boolean {
 /** The slice of the DynamoDB document client this repo uses — injectable so the CAS logic is testable against a fake. */
 export interface AuthDocClient {
   send(command: GetCommand | PutCommand | DeleteCommand | UpdateCommand): Promise<{
-    Item?: Record<string, unknown>;
-    Attributes?: Record<string, unknown>;
+    readonly Item?: Record<string, unknown>;
+    readonly Attributes?: Record<string, unknown>;
   }>;
 }
 

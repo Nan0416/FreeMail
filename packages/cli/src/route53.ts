@@ -3,9 +3,9 @@ import { DEFAULT_REGION } from '@freemail/shared';
 
 export interface HostedZoneSummary {
   /** Zone apex domain, trailing dot stripped (e.g. `example.com`). */
-  name: string;
+  readonly name: string;
   /** Bare zone ID, `/hostedzone/` prefix stripped (e.g. `Z0123ABC`). */
-  id: string;
+  readonly id: string;
 }
 
 /**

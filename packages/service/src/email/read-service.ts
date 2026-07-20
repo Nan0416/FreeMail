@@ -68,17 +68,17 @@ export type ParseInbound = (
 ) => Promise<ParsedInbound>;
 
 export interface EmailReadServiceDeps {
-  emails: EmailsReadRepo;
-  presigner: AttachmentPresigner;
-  rawMime: RawMimeSource;
-  now?: () => Date;
-  parse?: ParseInbound;
+  readonly emails: EmailsReadRepo;
+  readonly presigner: AttachmentPresigner;
+  readonly rawMime: RawMimeSource;
+  readonly now?: () => Date;
+  readonly parse?: ParseInbound;
 }
 
 export interface ListEmailsQuery {
-  direction?: 'sent' | 'inbound';
-  limit: number;
-  cursor?: string;
+  readonly direction?: 'sent' | 'inbound';
+  readonly limit: number;
+  readonly cursor?: string;
 }
 
 /**

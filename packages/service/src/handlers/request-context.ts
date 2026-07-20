@@ -7,8 +7,8 @@ import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { authErrors } from '../auth/errors.js';
 
 interface AuthorizerLambdaContext {
-  sub?: unknown;
-  scheme?: unknown;
+  readonly sub?: unknown;
+  readonly scheme?: unknown;
 }
 
 function authorizerContext(event: APIGatewayProxyEventV2): AuthorizerLambdaContext {

@@ -5,13 +5,13 @@
  */
 export interface ApiKeyRecord {
   /** Public lookup id — the partition key. */
-  keyId: string;
+  readonly keyId: string;
   /** SHA-256 (hex) of the secret half. Never the raw secret. */
-  secretHash: string;
+  readonly secretHash: string;
   /** Optional human label, or null when unnamed. */
-  name: string | null;
+  readonly name: string | null;
   /** Creation time, epoch seconds. */
-  createdAt: number;
+  readonly createdAt: number;
 }
 
 export interface ApiKeysRepo {
@@ -26,7 +26,7 @@ export interface ApiKeysRepo {
   getByKeyId(keyId: string): Promise<ApiKeyRecord | null>;
 
   /** Every key row (single-tenant → a handful; returned unordered). */
-  list(): Promise<ApiKeyRecord[]>;
+  list(): Promise<readonly ApiKeyRecord[]>;
 
   /** Delete a key by id. Idempotent — deleting an unknown id is a no-op. */
   delete(keyId: string): Promise<void>;

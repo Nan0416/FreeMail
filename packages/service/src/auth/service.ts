@@ -20,11 +20,11 @@ import { generateRefreshToken, hashRefreshToken } from './refresh-token.js';
 export const OWNER_SUBJECT = 'owner';
 
 export interface AuthServiceDeps {
-  repo: AuthRepo;
+  readonly repo: AuthRepo;
   /** HS256 signing key for access tokens (resolved from Secrets Manager by the caller). */
-  signingKey: string;
+  readonly signingKey: string;
   /** Epoch-seconds clock; injectable for tests. */
-  now?: () => number;
+  readonly now?: () => number;
 }
 
 export class AuthService {

@@ -35,33 +35,33 @@ import { buildRawMime, type RawMimeAttachment, type RawMimeInput } from './mime.
 import type { SesSender } from './ses-sender.js';
 
 export interface EmailServiceDeps {
-  ses: SesSender;
-  emails: EmailsRepo;
+  readonly ses: SesSender;
+  readonly emails: EmailsRepo;
   /** Stores outbound large attachments in S3 (#14). */
-  objectStore: OutboundAttachmentStore;
+  readonly objectStore: OutboundAttachmentStore;
   /** Persists the download tokens minted for large attachments (#14). */
-  tokens: DownloadTokensRepo;
+  readonly tokens: DownloadTokensRepo;
   /** Public base URL for download links — the API's own endpoint (`https://…`). */
-  downloadBaseUrl: string;
+  readonly downloadBaseUrl: string;
   /** The domain every `from` must be under (the configured send domain). */
-  emailDomain: string;
+  readonly emailDomain: string;
   /** MIME builder; injectable so service tests don't depend on the MIME library. */
-  buildMime?: (input: RawMimeInput) => Promise<Buffer>;
+  readonly buildMime?: (input: RawMimeInput) => Promise<Buffer>;
   /** Clock, injectable for tests. */
-  now?: () => Date;
+  readonly now?: () => Date;
   /** Id generator, injectable for tests. */
-  generateId?: () => string;
+  readonly generateId?: () => string;
   /** Download-token generator, injectable for tests. */
-  generateToken?: () => string;
+  readonly generateToken?: () => string;
 }
 
 /** A validated attachment plus its decoded bytes — the input to embed-vs-link routing. */
 interface ProcessedAttachment {
-  filename: string;
-  contentType: string;
-  contentBase64: string;
-  bytes: Buffer;
-  sizeBytes: number;
+  readonly filename: string;
+  readonly contentType: string;
+  readonly contentBase64: string;
+  readonly bytes: Buffer;
+  readonly sizeBytes: number;
 }
 
 export class EmailService {
@@ -311,7 +311,7 @@ export class EmailService {
 }
 
 /** Trim, drop empty strings; leaves address case untouched (local parts are case-sensitive). */
-function normalizeRecipients(list: string[] | undefined): string[] {
+function normalizeRecipients(list: readonly string[] | undefined): string[] {
   if (list === undefined) {
     return [];
   }

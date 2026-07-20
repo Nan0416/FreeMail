@@ -21,8 +21,8 @@ import { Construct } from 'constructs';
  * AWS domain. `domainName` is guaranteed ⊆ the zone by `parseFreeMailConfig`.
  */
 export interface CustomDomainProps {
-  domainName: string;
-  hostedZone: route53.IHostedZone;
+  readonly domainName: string;
+  readonly hostedZone: route53.IHostedZone;
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -123,21 +123,21 @@ export const APP_CONTENT_SECURITY_POLICY = [
 
 export interface WebConstructProps {
   /** The private S3 bucket that holds the built SPA (from {@link DataConstruct}). */
-  webBucket: s3.Bucket;
+  readonly webBucket: s3.Bucket;
   /**
    * The HTTP API base URL (e.g. `https://abc123.execute-api.us-east-1.amazonaws.com`).
    * Its host backs the same-origin `/api/*` CloudFront proxy origin. The SPA itself
    * calls the API at the relative same-origin path `/api`, so no cross-origin URL is
    * baked into the bundle.
    */
-  apiEndpoint: string;
+  readonly apiEndpoint: string;
   /** The SPA asset directory (built dist or placeholder). See {@link resolveWebAssetPath}. */
-  assetPath: string;
+  readonly assetPath: string;
   /**
    * Whether inbound email is enabled (from `FreeMailConfig.inbound.enabled`). Written
    * into `config.json` so the SPA can gate the inbox UI; sent history always shows.
    */
-  inboundEnabled: boolean;
+  readonly inboundEnabled: boolean;
   /**
    * Optional custom domain (from `FreeMailConfig.appDomain`). When set, the SPA is
    * served at this domain via a DNS-validated ACM cert + a CloudFront alias; the SPA
@@ -145,7 +145,7 @@ export interface WebConstructProps {
    * Omitted → the generated CloudFront domain (no cert/DNS resources). The ACM cert
    * lives in the stack region (pinned us-east-1), which is what CloudFront requires.
    */
-  customDomain?: CustomDomainProps;
+  readonly customDomain?: CustomDomainProps;
 }
 
 /**

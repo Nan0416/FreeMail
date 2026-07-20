@@ -10,7 +10,7 @@ import { SesConstruct } from './constructs/ses.js';
 import { WebConstruct, resolveWebAssetPath } from './constructs/web.js';
 
 export interface FreeMailStackProps extends StackProps {
-  config: FreeMailConfig;
+  readonly config: FreeMailConfig;
 }
 
 /**

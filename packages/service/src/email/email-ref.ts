@@ -15,14 +15,14 @@ import { emailErrors } from './errors.js';
 
 /** The primary-key pair a handle resolves to. */
 export interface EmailRef {
-  pk: string;
-  sk: string;
+  readonly pk: string;
+  readonly sk: string;
 }
 
 interface EncodedRef {
-  v: 1;
-  pk: string;
-  sk: string;
+  readonly v: 1;
+  readonly pk: string;
+  readonly sk: string;
 }
 
 /** Mint the opaque handle for a stored row's primary key. */

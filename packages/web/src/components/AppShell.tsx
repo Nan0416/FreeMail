@@ -12,7 +12,7 @@ export interface AppShellProps {
    * there is no inbox (sent history still shows). Defaults to false so components that
    * mount the shell without config (tests) get the pre-inbound behavior.
    */
-  inboundEnabled?: boolean;
+  readonly inboundEnabled?: boolean;
 }
 
 /**

@@ -20,6 +20,6 @@
     "moduleDetection": "force",
     "verbatimModuleSyntax": true
   },
-  "include": ["src"],
+  "include": ["src", "tests"],
   "references": [{ "path": "../shared" }]
 }

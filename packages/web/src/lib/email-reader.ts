@@ -14,9 +14,9 @@ export function bodyKind(email: EmailDetail): BodyKind {
 }
 
 export interface QuarantineNotice {
-  message: string;
+  readonly message: string;
   /** True only when a body actually exists to reveal (spam-flagged, virus-PASS, parse-ok). */
-  canReveal: boolean;
+  readonly canReveal: boolean;
 }
 
 /**

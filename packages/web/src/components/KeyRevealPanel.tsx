@@ -2,9 +2,9 @@ import { useState } from 'react';
 
 export interface KeyRevealPanelProps {
   /** The raw `fm_…` key, shown exactly once. */
-  apiKey: string;
+  readonly apiKey: string;
   /** Dismiss — the parent clears the secret from state, unmounting this panel. */
-  onDismiss: () => void;
+  readonly onDismiss: () => void;
 }
 
 /**

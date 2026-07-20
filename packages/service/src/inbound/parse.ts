@@ -62,53 +62,53 @@ export interface AttachmentSink {
 }
 
 export interface ParsedInbound {
-  parseStatus: InboundParseStatus;
-  from: string;
-  fromName?: string;
-  to: string[];
-  cc: string[];
-  subject: string;
+  readonly parseStatus: InboundParseStatus;
+  readonly from: string;
+  readonly fromName?: string;
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly subject: string;
   /** The `Date:` header as ISO, if present and parseable. Display-only, attacker-controlled. */
-  headerDate?: string;
-  verdicts: Verdicts;
+  readonly headerDate?: string;
+  readonly verdicts: Verdicts;
   /** Whether attachments were extracted / body retained (parse ok AND virus `PASS`). */
-  exposed: boolean;
+  readonly exposed: boolean;
   /** Plain-text body, retained only when exposed — for the snippet. */
-  textBody?: string;
+  readonly textBody?: string;
   /** HTML body, retained only when exposed — for the snippet. */
-  htmlBody?: string;
+  readonly htmlBody?: string;
   /** Attachments actually seen (whether or not stored). */
-  attachmentCount: number;
+  readonly attachmentCount: number;
   /** Stored descriptors — non-empty only when exposed and parsing succeeded. */
-  attachments: InboundAttachmentDescriptor[];
+  readonly attachments: readonly InboundAttachmentDescriptor[];
 }
 
 /** The streaming attachment node's shape (the parts of mailparser's AttachmentStream we use). */
 interface AttachmentNode {
-  type: 'attachment';
-  content: Readable;
-  filename?: string;
-  contentType: string;
+  readonly type: 'attachment';
+  readonly content: Readable;
+  readonly filename?: string;
+  readonly contentType: string;
   release(): void;
 }
 
 /** Resource limits for one parse — defaults to the module constants; overridable in tests. */
 export interface ParseLimits {
   /** Total raw bytes (HEAD/GET-race defence). */
-  maxRawBytes: number;
+  readonly maxRawBytes: number;
   /** Max MIME child nodes (real structure, incl. nesting) — enforced by the Splitter. */
-  maxChildNodes: number;
+  readonly maxChildNodes: number;
   /** Max per-node header block size — enforced by the Splitter. */
-  maxHeadSize: number;
-  maxAttachments: number;
-  maxAttachmentBytes: number;
-  maxAttachmentTotalBytes: number;
-  maxTextBodyBytes: number;
-  maxHtmlBodyBytes: number;
+  readonly maxHeadSize: number;
+  readonly maxAttachments: number;
+  readonly maxAttachmentBytes: number;
+  readonly maxAttachmentTotalBytes: number;
+  readonly maxTextBodyBytes: number;
+  readonly maxHtmlBodyBytes: number;
   /** Cumulative text+HTML budget across ALL nodes — bounds MailParser's aggregate. */
-  maxTotalBodyBytes: number;
+  readonly maxTotalBodyBytes: number;
   /** How much body we RETAIN for snippet derivation — a small slice; we never hold the full body. */
-  maxSnippetSourceBytes: number;
+  readonly maxSnippetSourceBytes: number;
 }
 
 const DEFAULT_LIMITS: ParseLimits = {
@@ -176,18 +176,24 @@ export function parseInbound(
     const attachments: InboundAttachmentDescriptor[] = [];
 
     const ensureVerdicts = (): void => {
-      if (verdicts) return;
+      if (verdicts) {
+        return;
+      }
       const lines: HeaderLine[] = parseHeaderLines(bodyLimiter.rootHeaderBlock);
       verdicts = extractVerdicts(lines);
       exposed = verdicts.virusVerdict === 'PASS';
     };
 
     const teardown = (): void => {
-      for (const s of [source, rawLimiter, splitter, bodyLimiter, joiner, parser]) s.destroy();
+      for (const s of [source, rawLimiter, splitter, bodyLimiter, joiner, parser]) {
+        s.destroy();
+      }
     };
 
     const settleResolve = (): void => {
-      if (outcome === 'settled') return;
+      if (outcome === 'settled') {
+        return;
+      }
       outcome = 'settled';
       ensureVerdicts();
       resolve({
@@ -209,15 +215,21 @@ export function parseInbound(
 
     /** A handled (attacker) failure: mark status, stop, resolve-quarantine. */
     const degrade = (status: Exclude<InboundParseStatus, 'ok'>): void => {
-      if (outcome === 'settled') return;
-      if (parseStatus === 'ok') parseStatus = status;
+      if (outcome === 'settled') {
+        return;
+      }
+      if (parseStatus === 'ok') {
+        parseStatus = status;
+      }
       teardown();
       settleResolve();
     };
 
     /** A real infra failure: reject so the async invocation retries. */
     const failInfra = (err: unknown): void => {
-      if (outcome === 'settled') return;
+      if (outcome === 'settled') {
+        return;
+      }
       outcome = 'settled';
       teardown();
       reject(err instanceof Error ? err : new Error(String(err)));
@@ -256,7 +268,9 @@ export function parseInbound(
 
     parser.on('data', (data) => {
       if (outcome === 'settled') {
-        if (data.type === 'attachment') safeRelease(data);
+        if (data.type === 'attachment') {
+          safeRelease(data);
+        }
         return;
       }
       if (data.type === 'attachment') {
@@ -271,10 +285,12 @@ export function parseInbound(
       } else {
         // Retain only a snippet-sized slice — never hold the full body (the BodyLimiter
         // already capped/quarantined an over-cap body upstream, before aggregation).
-        if (typeof data.text === 'string')
+        if (typeof data.text === 'string') {
           textBody = data.text.slice(0, limits.maxSnippetSourceBytes);
-        if (typeof data.html === 'string')
+        }
+        if (typeof data.html === 'string') {
           htmlBody = data.html.slice(0, limits.maxSnippetSourceBytes);
+        }
       }
     });
 
@@ -284,7 +300,9 @@ export function parseInbound(
     });
 
     function maybeFinish(): void {
-      if (outcome === 'settled' || !ended || pending > 0) return;
+      if (outcome === 'settled' || !ended || pending > 0) {
+        return;
+      }
       settleResolve();
     }
 
@@ -295,8 +313,11 @@ export function parseInbound(
       } catch (err) {
         safeRelease(data);
         pending--;
-        if (err instanceof InboundLimitError) degrade('limit_exceeded');
-        else degrade('parse_failed');
+        if (err instanceof InboundLimitError) {
+          degrade('limit_exceeded');
+        } else {
+          degrade('parse_failed');
+        }
         return;
       }
       totalBytes += bytes.length;
