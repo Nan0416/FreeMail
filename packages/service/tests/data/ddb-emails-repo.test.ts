@@ -1,13 +1,13 @@
-import { GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { DdbEmailsRepo, type EmailsDocClient } from '../../src/data/ddb-emails-repo.js';
 import type { InboundEmailRecord, SentEmailRecord } from '../../src/data/emails-repo.js';
 
 class FakeDoc implements EmailsDocClient {
-  readonly commands: PutCommand[] = [];
+  readonly commands: (PutCommand | UpdateCommand)[] = [];
   /** When set, `send` rejects with a named error (e.g. the conditional-check failure). */
   failWith?: string;
-  send(command: PutCommand): Promise<unknown> {
+  send(command: PutCommand | UpdateCommand): Promise<unknown> {
     this.commands.push(command);
     if (this.failWith) {
       const err = new Error('conditional check failed');
@@ -50,6 +50,7 @@ function inboundRecord(overrides: Partial<InboundEmailRecord> = {}): InboundEmai
   };
 }
 
+/** The write-before-send initial row shape: status 'sending', archive key, no SES id yet. */
 function record(overrides: Partial<SentEmailRecord> = {}): SentEmailRecord {
   return {
     id: 'id-1',
@@ -58,23 +59,24 @@ function record(overrides: Partial<SentEmailRecord> = {}): SentEmailRecord {
     cc: ['c@cc.com'],
     bcc: ['b@bcc.com'],
     subject: 'Hello',
-    sesMessageId: 'ses-msg-1',
     sentAt: '2026-07-17T00:00:00.000Z',
     attachmentCount: 2,
     sizeBytes: 4096,
+    status: 'sending',
+    rawS3Key: 'sent/id-1',
     ...overrides,
   };
 }
 
 describe('DdbEmailsRepo', () => {
-  it('writes a sent message under the SENT partition, keyed newest-first', async () => {
+  it('writes the sending row under the SENT partition with archive key, keyed newest-first', async () => {
     const doc = new FakeDoc();
     const repo = new DdbEmailsRepo('emails-test', doc);
 
     await repo.putSent(record());
 
     expect(doc.commands).toHaveLength(1);
-    const input = doc.commands[0]?.input;
+    const input = (doc.commands[0] as PutCommand).input;
     expect(input?.TableName).toBe('emails-test');
     expect(input?.ConditionExpression).toBe('attribute_not_exists(pk)');
     expect(input?.Item).toMatchObject({
@@ -87,9 +89,54 @@ describe('DdbEmailsRepo', () => {
       cc: ['c@cc.com'],
       bcc: ['b@bcc.com'],
       subject: 'Hello',
-      sesMessageId: 'ses-msg-1',
+      status: 'sending',
+      rawS3Key: 'sent/id-1',
       attachmentCount: 2,
       sizeBytes: 4096,
+    });
+    // No SES id yet at the sending write — it's set on the 'sent' transition.
+    expect(input?.Item?.sesMessageId).toBeUndefined();
+  });
+
+  it('updateSentStatus → sent: SETs status + sesMessageId, guarded on the row existing', async () => {
+    const doc = new FakeDoc();
+    const repo = new DdbEmailsRepo('emails-test', doc);
+
+    await repo.updateSentStatus({
+      id: 'id-1',
+      sentAt: '2026-07-17T00:00:00.000Z',
+      status: 'sent',
+      sesMessageId: 'ses-msg-1',
+    });
+
+    const input = (doc.commands[0] as UpdateCommand).input;
+    expect(input?.Key).toEqual({ pk: 'SENT', sk: '2026-07-17T00:00:00.000Z#id-1' });
+    expect(input?.UpdateExpression).toBe('SET #status = :status, #mid = :mid');
+    expect(input?.ExpressionAttributeNames).toEqual({
+      '#status': 'status',
+      '#mid': 'sesMessageId',
+    });
+    expect(input?.ExpressionAttributeValues).toEqual({ ':status': 'sent', ':mid': 'ses-msg-1' });
+    expect(input?.ConditionExpression).toBe('attribute_exists(pk)');
+  });
+
+  it('updateSentStatus → send_failed: SETs status + error', async () => {
+    const doc = new FakeDoc();
+    const repo = new DdbEmailsRepo('emails-test', doc);
+
+    await repo.updateSentStatus({
+      id: 'id-1',
+      sentAt: '2026-07-17T00:00:00.000Z',
+      status: 'send_failed',
+      error: 'SES rejected: throttled',
+    });
+
+    const input = (doc.commands[0] as UpdateCommand).input;
+    expect(input?.UpdateExpression).toBe('SET #status = :status, #error = :error');
+    expect(input?.ExpressionAttributeNames).toEqual({ '#status': 'status', '#error': 'error' });
+    expect(input?.ExpressionAttributeValues).toEqual({
+      ':status': 'send_failed',
+      ':error': 'SES rejected: throttled',
     });
   });
 

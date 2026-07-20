@@ -26,8 +26,8 @@ import {
   type SendEmailResponse,
 } from '@freemail/shared';
 import type { DownloadTokensRepo } from '../data/download-tokens-repo.js';
-import type { EmailsRepo } from '../data/emails-repo.js';
-import type { OutboundAttachmentStore } from '../data/outbound-attachment-store.js';
+import type { EmailsRepo, SentStatusUpdate } from '../data/emails-repo.js';
+import type { OutboundObjectStore } from '../data/outbound-object-store.js';
 import { appendDownloadLinks, type DownloadLink } from './attachment-links.js';
 import { downloadUrl, generateDownloadToken, outboundAttachmentKey } from './download-token.js';
 import { emailErrors } from './errors.js';
@@ -37,8 +37,12 @@ import type { SesSender } from './ses-sender.js';
 export interface EmailServiceDeps {
   readonly ses: SesSender;
   readonly emails: EmailsRepo;
-  /** Stores outbound large attachments in S3 (#14). */
-  readonly objectStore: OutboundAttachmentStore;
+  /**
+   * Stores send-path objects in the mail bucket: outbound large attachments (#14,
+   * `attachments/outbound/*`) and the archived composed raw MIME (#29, `sent/<id>`). The
+   * archive is only ever re-read server-side, so the store's octet-stream disposition is harmless.
+   */
+  readonly objectStore: OutboundObjectStore;
   /** Persists the download tokens minted for large attachments (#14). */
   readonly tokens: DownloadTokensRepo;
   /** Public base URL for download links — the API's own endpoint (`https://…`). */
@@ -67,7 +71,7 @@ interface ProcessedAttachment {
 export class EmailService {
   private readonly ses: SesSender;
   private readonly emails: EmailsRepo;
-  private readonly objectStore: OutboundAttachmentStore;
+  private readonly objectStore: OutboundObjectStore;
   private readonly tokens: DownloadTokensRepo;
   private readonly downloadBaseUrl: string;
   private readonly emailDomain: string;
@@ -160,35 +164,65 @@ export class EmailService {
       throw emailErrors.invalidRequest('The assembled message exceeds the maximum size.');
     }
 
-    const { messageId } = await this.ses.send({ from, to, cc, bcc, raw });
     const sentAt = nowDate.toISOString();
+    const rawS3Key = sentRawKey(id);
 
-    // Best-effort: the mail is already out, so a metadata write failure must not
-    // fail the response — history is a convenience, delivery is the contract.
+    // Write-before-send (#29), FAIL-CLOSED: archive the EXACT composed MIME, then record the
+    // attempt as `status:'sending'` — both BEFORE SES. A failure in either throws (no send),
+    // so we never send a message we couldn't archive + record; the caller can retry with a
+    // fresh id. An orphan `sent/<id>` object from a later putSent failure is harmless (RETAINed).
+    await this.objectStore.put(rawS3Key, raw);
+    await this.emails.putSent({
+      id,
+      from,
+      to,
+      cc,
+      bcc,
+      subject: request.subject ?? '',
+      sentAt,
+      attachmentCount: processed.length,
+      sizeBytes: raw.length,
+      status: 'sending',
+      rawS3Key,
+    });
+
+    let messageId: string;
     try {
-      await this.emails.putSent({
-        id,
-        from,
-        to,
-        cc,
-        bcc,
-        subject: request.subject ?? '',
-        sesMessageId: messageId,
-        sentAt,
-        attachmentCount: processed.length,
-        sizeBytes: raw.length,
-      });
+      ({ messageId } = await this.ses.send({ from, to, cc, bcc, raw }));
     } catch (error) {
-      // Error level so a systematic loss of history rows is alarmable; include the
-      // correlating ids so the sent mail can be reconciled from SES logs.
+      // SES rejected the message: mark the archived row send_failed so the failure is visible
+      // in the mailbox, then surface the error to the caller (delivery did not happen).
+      await this.recordTerminalStatus({
+        id,
+        sentAt,
+        status: 'send_failed',
+        error: describeError(error),
+      });
+      throw error;
+    }
+
+    // Delivered: mark sent (+ the SES id). Best-effort — the mail is already out, so this must
+    // not fail the response; a lost update leaves the row at 'sending' (self-describing).
+    await this.recordTerminalStatus({ id, sentAt, status: 'sent', sesMessageId: messageId });
+
+    return { id, messageId, sentAt };
+  }
+
+  /**
+   * Apply the terminal status transition, swallowing a store failure. Durability requirement:
+   * a lost update is logged at ERROR (alarmable) with the correlating ids so the sent mail can
+   * be reconciled from SES logs — the row simply stays `sending` rather than corrupting.
+   */
+  private async recordTerminalStatus(update: SentStatusUpdate): Promise<void> {
+    try {
+      await this.emails.updateSentStatus(update);
+    } catch (error) {
       console.error(
-        'Failed to record sent-email metadata',
-        { emailId: id, sesMessageId: messageId },
+        'Failed to update sent-email status',
+        { emailId: update.id, status: update.status },
         error,
       );
     }
-
-    return { id, messageId, sentAt };
   }
 
   /**
@@ -308,6 +342,23 @@ export class EmailService {
     }
     return normalized;
   }
+}
+
+/** Max chars of a `send_failed` reason kept on the row — bounds an unexpectedly verbose SES error. */
+const MAX_ERROR_LENGTH = 1000;
+
+/**
+ * S3 key for a sent message's archived composed raw MIME. Opaque, namespaced by the send id;
+ * mirrors the inbound layout (`inbound/<id>`). The read path re-parses this on demand.
+ */
+export function sentRawKey(id: string): string {
+  return `sent/${id}`;
+}
+
+/** A short, bounded failure reason for a `send_failed` row (server-side only, never in the read DTO). */
+function describeError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.length > MAX_ERROR_LENGTH ? `${message.slice(0, MAX_ERROR_LENGTH)}…` : message;
 }
 
 /** Trim, drop empty strings; leaves address case untouched (local parts are case-sensitive). */

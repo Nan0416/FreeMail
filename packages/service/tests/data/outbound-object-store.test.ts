@@ -1,6 +1,6 @@
 import { PutObjectCommand, type S3Client } from '@aws-sdk/client-s3';
 import { describe, expect, it } from 'vitest';
-import { S3OutboundAttachmentStore } from '../../src/data/outbound-attachment-store.js';
+import { S3OutboundObjectStore } from '../../src/data/outbound-object-store.js';
 
 class FakeS3 {
   readonly calls: PutObjectCommand[] = [];
@@ -10,10 +10,10 @@ class FakeS3 {
   }
 }
 
-describe('S3OutboundAttachmentStore', () => {
+describe('S3OutboundObjectStore', () => {
   it('puts the bytes as a non-inline octet-stream download at the given key', async () => {
     const fake = new FakeS3();
-    const store = new S3OutboundAttachmentStore('mail-bucket', fake as unknown as S3Client);
+    const store = new S3OutboundObjectStore('mail-bucket', fake as unknown as S3Client);
     const body = Buffer.from('the-file-bytes');
 
     await store.put('attachments/outbound/email-1/0', body);

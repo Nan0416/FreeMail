@@ -291,19 +291,41 @@ function renderListText(page: ListEmailsResponse, nonce: () => string): string {
 function listRow(email: EmailListItem): string {
   const who =
     email.direction === 'inbound' ? `from ${email.from}` : `to ${email.to.join(', ') || '(none)'}`;
-  const flags = email.direction === 'inbound' && email.quarantined ? ' [quarantined]' : '';
+  let flags = '';
+  if (email.direction === 'inbound' && email.quarantined) {
+    flags = ' [quarantined]';
+  } else if (email.direction === 'sent' && email.status && email.status !== 'sent') {
+    // Surface a not-yet-delivered send (`sending`/`send_failed`) so a failed send is visible.
+    flags = ` [${email.status}]`;
+  }
   return `- [${email.direction}] ${email.date} ${who} — ${email.subject || '(no subject)'} (id: ${email.id})${flags}`;
 }
 
 /** Human-readable text for one message; inbound content is wrapped in the untrusted frame. */
 function renderDetailText(email: EmailDetail, nonce: () => string): string {
   if (email.direction === 'sent') {
-    const lines = [`Sent email ${email.id}`, `To: ${email.to.join(', ') || '(none)'}`];
+    // Own outgoing message — self-authored, so NOT wrapped in the untrusted frame.
+    const lines = [`Sent email ${email.id}`];
+    if (email.status) {
+      lines.push(`Status: ${email.status}`);
+    }
+    lines.push(`To: ${email.to.join(', ') || '(none)'}`);
     if (email.cc.length) {
       lines.push(`Cc: ${email.cc.join(', ')}`);
     }
-    lines.push(`Subject: ${email.subject || '(no subject)'}`, `Date: ${email.date}`);
-    lines.push('(Sent messages have no stored body — envelope only.)');
+    lines.push(`Subject: ${email.subject || '(no subject)'}`, `Date: ${email.date}`, '');
+    if (email.text !== undefined) {
+      lines.push(email.text);
+    } else if (email.html !== undefined) {
+      lines.push(
+        `(HTML body — ${Buffer.byteLength(email.html, 'utf8')} bytes; raw HTML in structuredContent.email.html.)`,
+      );
+    } else {
+      lines.push('(No stored body for this message.)');
+    }
+    if (email.bodyTruncated) {
+      lines.push('', '(Body truncated at the read-size cap.)');
+    }
     return lines.join('\n');
   }
   return frameUntrusted(nonce(), inboundDetailInner(email));

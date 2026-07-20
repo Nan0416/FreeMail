@@ -7,6 +7,7 @@
  * `pk='INBOUND'`, each `sk='<iso>#<id>'` so the read slice lists either partition
  * newest-first and merges them into one timeline.
  */
+import type { SentStatus } from '@freemail/shared';
 
 /** Partition holding sent messages. */
 export const SENT_PARTITION = 'SENT';
@@ -16,7 +17,7 @@ export const INBOUND_PARTITION = 'INBOUND';
 /** The two (and only) valid partitions — used to validate a decoded message handle. */
 export const EMAIL_PARTITIONS: ReadonlySet<string> = new Set([SENT_PARTITION, INBOUND_PARTITION]);
 
-/** Metadata for one sent message — headers + SES id, never the body/attachment bytes. */
+/** Metadata for one sent message — headers + SES id + status; the body lives in S3 (`rawS3Key`). */
 export interface SentEmailRecord {
   /** FreeMail's own id for the message. */
   readonly id: string;
@@ -25,13 +26,43 @@ export interface SentEmailRecord {
   readonly cc: readonly string[];
   readonly bcc: readonly string[];
   readonly subject: string;
-  /** The message id SES assigned. */
-  readonly sesMessageId: string;
-  /** Send time, ISO-8601. */
+  /**
+   * The message id SES assigned. Absent until SES accepts the message: the row is first
+   * written `status:'sending'` with no id, then the id is set on the `'sent'` transition.
+   */
+  readonly sesMessageId?: string;
+  /** Send time (attempt time), ISO-8601 — the sort-key basis, stable across the status update. */
   readonly sentAt: string;
   readonly attachmentCount: number;
   /** Size of the raw MIME message in bytes. */
   readonly sizeBytes: number;
+  /**
+   * Delivery status, set write-before-send (`sending` → `sent`/`send_failed`). Optional on the
+   * type so a legacy row written before this field reads back without it (→ envelope-only detail).
+   */
+  readonly status?: SentStatus;
+  /**
+   * S3 pointer to the archived composed raw MIME (`sent/<id>`) — the source the read path
+   * re-parses on demand for the sent body. Absent on a legacy row (→ envelope-only detail).
+   */
+  readonly rawS3Key?: string;
+  /** Short failure reason on a `send_failed` row — server-side only, never surfaced in the read DTO. */
+  readonly error?: string;
+}
+
+/**
+ * The terminal status transition of a sent message after the SES call: `sent` (+ `sesMessageId`)
+ * or `send_failed` (+ `error`). Keyed by `id` + `sentAt` (the sort-key basis), so the update
+ * targets the exact row without moving it.
+ */
+export interface SentStatusUpdate {
+  readonly id: string;
+  readonly sentAt: string;
+  readonly status: Extract<SentStatus, 'sent' | 'send_failed'>;
+  /** Set on `sent`. */
+  readonly sesMessageId?: string;
+  /** Set on `send_failed` — a short reason. */
+  readonly error?: string;
 }
 
 /**
@@ -101,8 +132,18 @@ export interface InboundEmailRecord {
 }
 
 export interface EmailsRepo {
-  /** Record a sent message for later list/history. */
+  /**
+   * Record a sent message before the SES call (`status:'sending'`, with `rawS3Key` +
+   * metadata, no `sesMessageId` yet). Conditional on the id not already existing, so a
+   * reused id can never clobber an existing row.
+   */
   putSent(record: SentEmailRecord): Promise<void>;
+  /**
+   * Apply the terminal status transition after the SES call — `sent` (+ `sesMessageId`)
+   * or `send_failed` (+ `error`). Conditional on the row existing (it was just written);
+   * a plain `SET`, it never moves the row (the sort key is derived from the unchanged `sentAt`).
+   */
+  updateSentStatus(update: SentStatusUpdate): Promise<void>;
   /**
    * Record a received message. The write is conditional on the id not already
    * existing, so an at-least-once redelivery is a no-op rather than a double-write —

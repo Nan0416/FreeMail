@@ -16,6 +16,7 @@ import {
   PutCommand,
   QueryCommand,
   type QueryCommandOutput,
+  UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import {
   type EmailsReadRepo,
@@ -24,6 +25,7 @@ import {
   INBOUND_PARTITION,
   type SentEmailRecord,
   SENT_PARTITION,
+  type SentStatusUpdate,
   type StoredEmailRow,
 } from './emails-repo.js';
 
@@ -32,7 +34,7 @@ const CONDITIONAL_CHECK_FAILED = 'ConditionalCheckFailedException';
 
 /** The slice of the document client this repo uses — injectable so the logic is testable against a fake. */
 export interface EmailsDocClient {
-  send(command: PutCommand | QueryCommand | GetCommand): Promise<unknown>;
+  send(command: PutCommand | QueryCommand | GetCommand | UpdateCommand): Promise<unknown>;
 }
 
 /** Direction → partition. */
@@ -78,12 +80,45 @@ export class DdbEmailsRepo implements EmailsRepo, EmailsReadRepo {
           cc: record.cc,
           bcc: record.bcc,
           subject: record.subject,
+          // Undefined at the initial 'sending' write; removeUndefinedValues drops it, and it's
+          // filled by updateSentStatus on the 'sent' transition.
           sesMessageId: record.sesMessageId,
           sentAt: record.sentAt,
           attachmentCount: record.attachmentCount,
           sizeBytes: record.sizeBytes,
+          status: record.status,
+          rawS3Key: record.rawS3Key,
+          error: record.error,
         },
         ConditionExpression: 'attribute_not_exists(pk)',
+      }),
+    );
+  }
+
+  async updateSentStatus(update: SentStatusUpdate): Promise<void> {
+    // 'status' is a DynamoDB reserved word; alias every updated name to be safe.
+    const names: Record<string, string> = { '#status': 'status' };
+    const values: Record<string, unknown> = { ':status': update.status };
+    const sets = ['#status = :status'];
+    if (update.sesMessageId !== undefined) {
+      names['#mid'] = 'sesMessageId';
+      values[':mid'] = update.sesMessageId;
+      sets.push('#mid = :mid');
+    }
+    if (update.error !== undefined) {
+      names['#error'] = 'error';
+      values[':error'] = update.error;
+      sets.push('#error = :error');
+    }
+    await this.doc.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: { pk: SENT_PARTITION, sk: `${update.sentAt}#${update.id}` },
+        UpdateExpression: `SET ${sets.join(', ')}`,
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+        // The row was just written by putSent; guard against a vanished/absent row.
+        ConditionExpression: 'attribute_exists(pk)',
       }),
     );
   }

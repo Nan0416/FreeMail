@@ -4,8 +4,8 @@ import type {
   DownloadTokenRecord,
   DownloadTokensRepo,
 } from '../../src/data/download-tokens-repo.js';
-import type { EmailsRepo, SentEmailRecord } from '../../src/data/emails-repo.js';
-import type { OutboundAttachmentStore } from '../../src/data/outbound-attachment-store.js';
+import type { EmailsRepo, SentEmailRecord, SentStatusUpdate } from '../../src/data/emails-repo.js';
+import type { OutboundObjectStore } from '../../src/data/outbound-object-store.js';
 import { EmailError } from '../../src/email/errors.js';
 import type { RawMimeInput } from '../../src/email/mime.js';
 import { EmailService, type EmailServiceDeps } from '../../src/email/service.js';
@@ -14,29 +14,65 @@ import type { SendRawParams, SesSender } from '../../src/email/ses-sender.js';
 class FakeSes implements SesSender {
   readonly calls: SendRawParams[] = [];
   messageId = 'ses-msg-1';
+  fail = false;
   send(params: SendRawParams): Promise<{ messageId: string }> {
     this.calls.push(params);
+    if (this.fail) {
+      return Promise.reject(new Error('ses boom'));
+    }
     return Promise.resolve({ messageId: this.messageId });
   }
 }
 
 class FakeEmails implements EmailsRepo {
+  /** Rows as written by putSent, mutated in place by updateSentStatus (so [0] is the final state). */
   readonly records: SentEmailRecord[] = [];
-  fail = false;
+  readonly statusUpdates: SentStatusUpdate[] = [];
+  failPut = false;
+  failUpdate = false;
   putSent(record: SentEmailRecord): Promise<void> {
-    if (this.fail) {
-      return Promise.reject(new Error('ddb down'));
+    if (this.failPut) {
+      return Promise.reject(new Error('ddb put down'));
     }
-    this.records.push(record);
+    this.records.push({ ...record });
+    return Promise.resolve();
+  }
+  updateSentStatus(update: SentStatusUpdate): Promise<void> {
+    this.statusUpdates.push(update);
+    if (this.failUpdate) {
+      return Promise.reject(new Error('ddb update down'));
+    }
+    const row = this.records.find((r) => r.id === update.id);
+    if (row) {
+      row.status = update.status;
+      if (update.sesMessageId !== undefined) {
+        row.sesMessageId = update.sesMessageId;
+      }
+      if (update.error !== undefined) {
+        row.error = update.error;
+      }
+    }
     return Promise.resolve();
   }
 }
 
-class FakeObjectStore implements OutboundAttachmentStore {
+class FakeObjectStore implements OutboundObjectStore {
   readonly puts: { key: string; bytes: Buffer }[] = [];
+  failKeyPrefix?: string;
   put(key: string, body: Buffer): Promise<void> {
+    if (this.failKeyPrefix !== undefined && key.startsWith(this.failKeyPrefix)) {
+      return Promise.reject(new Error('s3 down'));
+    }
     this.puts.push({ key, bytes: body });
     return Promise.resolve();
+  }
+  /** Only the large-attachment (#14) uploads. */
+  get attachmentPuts(): { key: string; bytes: Buffer }[] {
+    return this.puts.filter((p) => p.key.startsWith('attachments/outbound/'));
+  }
+  /** Only the sent raw-MIME archive (#29). */
+  get archivePuts(): { key: string; bytes: Buffer }[] {
+    return this.puts.filter((p) => p.key.startsWith('sent/'));
   }
 }
 
@@ -115,8 +151,8 @@ afterEach(() => {
 });
 
 describe('EmailService.send', () => {
-  it('sends and records a valid message, passing bcc through the SES envelope', async () => {
-    const { service, ses, emails } = makeService();
+  it('archives the MIME, records the attempt, sends, and marks it sent (write-before-send)', async () => {
+    const { service, ses, emails, objectStore } = makeService();
 
     const result = await service.send(
       request({ to: ['a@x.com'], cc: ['c@x.com'], bcc: ['b@x.com'], html: '<p>hi</p>' }),
@@ -134,6 +170,15 @@ describe('EmailService.send', () => {
       cc: ['c@x.com'],
       bcc: ['b@x.com'],
     });
+    // The EXACT composed buffer handed to SES is the one archived — not a rebuild.
+    expect(objectStore.archivePuts).toHaveLength(1);
+    expect(objectStore.archivePuts[0].key).toBe('sent/id-1');
+    expect(objectStore.archivePuts[0].bytes).toBe(ses.calls[0].raw);
+    // The row was written 'sending' with rawS3Key + no SES id, then transitioned to 'sent'.
+    expect(emails.statusUpdates).toEqual([
+      { id: 'id-1', sentAt: NOW_ISO, status: 'sent', sesMessageId: 'ses-msg-1' },
+    ]);
+    // Final row state after the in-place status update.
     expect(emails.records[0]).toMatchObject({
       id: 'id-1',
       from: 'me@example.com',
@@ -141,6 +186,8 @@ describe('EmailService.send', () => {
       cc: ['c@x.com'],
       bcc: ['b@x.com'],
       subject: 'Hi',
+      status: 'sent',
+      rawS3Key: 'sent/id-1',
       sesMessageId: 'ses-msg-1',
       attachmentCount: 0,
       sizeBytes: Buffer.from('RAW-MIME').length,
@@ -165,13 +212,15 @@ describe('EmailService.send', () => {
     expect(ses.calls[0]?.from).toBe('bot@mail.example.com');
   });
 
-  it('rejects a sender outside the configured domain with invalid_sender (no send)', async () => {
-    const { service, ses } = makeService();
+  it('rejects a sender outside the configured domain with invalid_sender (no send, no archive)', async () => {
+    const { service, ses, objectStore, emails } = makeService();
     await expect(service.send(request({ from: 'me@evil.com' }))).rejects.toMatchObject({
       code: 'invalid_sender',
       status: 400,
     });
     expect(ses.calls).toHaveLength(0);
+    expect(objectStore.puts).toHaveLength(0);
+    expect(emails.records).toHaveLength(0);
   });
 
   it('rejects a malformed sender address with invalid_sender', async () => {
@@ -274,17 +323,61 @@ describe('EmailService.send', () => {
     expect(mimeInputs[0]?.attachments[0]?.contentBase64).toBe(b64);
     expect(emails.records[0]?.attachmentCount).toBe(1);
   });
+});
 
-  it('still succeeds when recording metadata fails, logging correlating ids', async () => {
+describe('EmailService.send — write-before-send failure paths (#29)', () => {
+  it('FAILS CLOSED when the MIME archive write fails: no send, no row', async () => {
+    const objectStore = new FakeObjectStore();
+    objectStore.failKeyPrefix = 'sent/';
+    const { service, ses, emails } = makeService({ objectStore });
+
+    await expect(service.send(request())).rejects.toThrow('s3 down');
+    expect(ses.calls).toHaveLength(0);
+    expect(emails.records).toHaveLength(0);
+    expect(emails.statusUpdates).toHaveLength(0);
+  });
+
+  it('FAILS CLOSED when the sending-row write fails: no send', async () => {
     const emails = new FakeEmails();
-    emails.fail = true;
+    emails.failPut = true;
+    const { service, ses, objectStore } = makeService({ emails });
+
+    await expect(service.send(request())).rejects.toThrow('ddb put down');
+    expect(ses.calls).toHaveLength(0);
+    // The archive object was written before the row (orphan, harmless + RETAINed).
+    expect(objectStore.archivePuts).toHaveLength(1);
+    expect(emails.statusUpdates).toHaveLength(0);
+  });
+
+  it('records send_failed and rethrows when SES rejects the message', async () => {
+    const ses = new FakeSes();
+    ses.fail = true;
+    const { service, emails, objectStore } = makeService({ ses });
+
+    await expect(service.send(request())).rejects.toThrow('ses boom');
+    // Archived + recorded, then marked send_failed with the reason.
+    expect(objectStore.archivePuts).toHaveLength(1);
+    expect(emails.statusUpdates).toEqual([
+      { id: 'id-1', sentAt: NOW_ISO, status: 'send_failed', error: 'ses boom' },
+    ]);
+    expect(emails.records[0]).toMatchObject({ status: 'send_failed', error: 'ses boom' });
+    expect(emails.records[0]?.sesMessageId).toBeUndefined();
+  });
+
+  it('still succeeds when the terminal status update fails, logging correlating ids', async () => {
+    const emails = new FakeEmails();
+    emails.failUpdate = true;
     const { service, ses } = makeService({ emails });
+
     const result = await service.send(request());
+
+    // Delivery is the contract: the send succeeds even though the row stays 'sending'.
     expect(result.messageId).toBe('ses-msg-1');
     expect(ses.calls).toHaveLength(1);
+    expect(emails.records[0]?.status).toBe('sending');
     expect(console.error).toHaveBeenCalledWith(
-      'Failed to record sent-email metadata',
-      { emailId: 'id-1', sesMessageId: 'ses-msg-1' },
+      'Failed to update sent-email status',
+      { emailId: 'id-1', status: 'sent' },
       expect.any(Error),
     );
   });
@@ -313,9 +406,9 @@ describe('EmailService.send — large attachments (#14)', () => {
     // Not embedded in the MIME.
     expect(mimeInputs[0]?.attachments).toEqual([]);
     // Uploaded to the opaque outbound key.
-    expect(objectStore.puts).toHaveLength(1);
-    expect(objectStore.puts[0].key).toBe('attachments/outbound/id-1/0');
-    expect(objectStore.puts[0].bytes.length).toBe(LARGE_BLOCKS * 3);
+    expect(objectStore.attachmentPuts).toHaveLength(1);
+    expect(objectStore.attachmentPuts[0].key).toBe('attachments/outbound/id-1/0');
+    expect(objectStore.attachmentPuts[0].bytes.length).toBe(LARGE_BLOCKS * 3);
     // Token minted with server-authoritative expiry + TTL and a zero counter.
     expect(tokens.created).toHaveLength(1);
     const expiresAt = new Date(
@@ -353,7 +446,7 @@ describe('EmailService.send — large attachments (#14)', () => {
       }),
     );
     expect(mimeInputs[0]?.attachments).toHaveLength(1);
-    expect(objectStore.puts).toHaveLength(0);
+    expect(objectStore.attachmentPuts).toHaveLength(0);
     expect(tokens.created).toHaveLength(0);
   });
 
@@ -372,7 +465,7 @@ describe('EmailService.send — large attachments (#14)', () => {
       }),
     );
     expect(mimeInputs[0]?.attachments).toEqual([]);
-    expect(objectStore.puts).toHaveLength(1);
+    expect(objectStore.attachmentPuts).toHaveLength(1);
     expect(tokens.created).toHaveLength(1);
   });
 
@@ -394,7 +487,7 @@ describe('EmailService.send — large attachments (#14)', () => {
     // Only the small one is embedded; the large one is a link.
     expect(mimeInputs[0]?.attachments).toHaveLength(1);
     expect(mimeInputs[0]?.attachments[0]?.filename).toBe('small.txt');
-    expect(objectStore.puts).toHaveLength(1);
+    expect(objectStore.attachmentPuts).toHaveLength(1);
     expect(tokens.created).toHaveLength(1);
     expect(tokens.created[0]?.filename).toBe('big.bin');
   });
@@ -440,7 +533,7 @@ describe('EmailService.send — large attachments (#14)', () => {
         ],
       }),
     );
-    expect(objectStore.puts.map((p) => p.key)).toEqual([
+    expect(objectStore.attachmentPuts.map((p) => p.key)).toEqual([
       'attachments/outbound/id-1/0',
       'attachments/outbound/id-1/1',
     ]);

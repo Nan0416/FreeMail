@@ -120,6 +120,15 @@ export function isValidEmailAddress(value: string): boolean {
 export type EmailDirection = 'sent' | 'inbound';
 
 /**
+ * Delivery status of a sent message (present on `sent` rows only). Set write-before-send:
+ * `sending` the instant the message is archived + recorded, then `sent` once SES accepts it
+ * (a `sesMessageId` exists) or `send_failed` if SES rejects it — so a failed send is visible
+ * in the mailbox instead of vanishing. Absent on inbound rows (and on any legacy sent row
+ * written before this field existed).
+ */
+export type SentStatus = 'sending' | 'sent' | 'send_failed';
+
+/**
  * A normalized SES scan verdict on a received message. `PASS` is the only
  * affirmative-clean value; everything else (missing/injected/unknown header, or an
  * explicit fail) is fail-closed. Present on inbound rows only.
@@ -158,6 +167,8 @@ export interface EmailListItem {
   readonly snippet?: string;
   /** Timeline sort time, ISO-8601 UTC (sent → send time, inbound → server receipt time). */
   readonly date: string;
+  /** Sent only: delivery status (`sending`/`sent`/`send_failed`). Absent on inbound + legacy rows. */
+  readonly status?: SentStatus;
   readonly hasAttachments: boolean;
   readonly attachmentCount: number;
   /** Inbound only: hidden-by-default (content suppressed OR spam-flagged). Absent on sent. */
@@ -181,6 +192,8 @@ export interface EmailDetail {
   readonly subject: string;
   /** Timeline sort time, ISO-8601 UTC. */
   readonly date: string;
+  /** Sent only: delivery status (`sending`/`sent`/`send_failed`). Absent on inbound + legacy rows. */
+  readonly status?: SentStatus;
   /** Inbound only: the message's own `Date:` header (attacker-controlled), if present. */
   readonly headerDate?: string;
   /** Plain-text body — present only for an exposable received message. */

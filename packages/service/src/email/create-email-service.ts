@@ -6,13 +6,13 @@
  */
 import { DdbDownloadTokensRepo } from '../data/ddb-download-tokens-repo.js';
 import { DdbEmailsRepo } from '../data/ddb-emails-repo.js';
-import { S3OutboundAttachmentStore } from '../data/outbound-attachment-store.js';
+import { S3OutboundObjectStore } from '../data/outbound-object-store.js';
 import { EmailService } from './service.js';
 import { SesV2Sender } from './ses-sender.js';
 
 let emailsRepo: DdbEmailsRepo | undefined;
 let sesSender: SesV2Sender | undefined;
-let objectStore: S3OutboundAttachmentStore | undefined;
+let objectStore: S3OutboundObjectStore | undefined;
 let tokensRepo: DdbDownloadTokensRepo | undefined;
 
 export function createEmailServiceFromEnv(): EmailService {
@@ -39,7 +39,7 @@ export function createEmailServiceFromEnv(): EmailService {
   }
   emailsRepo ??= new DdbEmailsRepo(tableName);
   sesSender ??= new SesV2Sender({ configurationSetName: process.env.SES_CONFIGURATION_SET });
-  objectStore ??= new S3OutboundAttachmentStore(mailBucket);
+  objectStore ??= new S3OutboundObjectStore(mailBucket);
   tokensRepo ??= new DdbDownloadTokensRepo(downloadTokensTable);
   return new EmailService({
     ses: sesSender,

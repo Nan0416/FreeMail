@@ -114,11 +114,11 @@ class FakeRawMime implements RawMimeSource {
 
 function fakeParse(result: Partial<ParsedInbound>): {
   fn: ParseInbound;
-  calls: Array<{ sink: unknown; limits: unknown }>;
+  calls: Array<{ sink: unknown; limits: unknown; options: unknown }>;
 } {
-  const calls: Array<{ sink: unknown; limits: unknown }> = [];
-  const fn: ParseInbound = (_source, sink, limits) => {
-    calls.push({ sink, limits });
+  const calls: Array<{ sink: unknown; limits: unknown; options: unknown }> = [];
+  const fn: ParseInbound = (_source, sink, limits, options) => {
+    calls.push({ sink, limits, options });
     return Promise.resolve({
       parseStatus: 'ok',
       from: '',
@@ -153,19 +153,101 @@ function service(
 }
 
 describe('EmailReadService.getEmail', () => {
-  it('sent → envelope-only, no body, no attachments, bcc present', async () => {
+  it('legacy sent row (no archive) → envelope-only, no body, no re-parse, bcc present', async () => {
     const repo = new FakeRepo();
     const rawMime = new FakeRawMime();
+    // A pre-#29 sent row has no rawS3Key/status.
     const handle = repo.put(SENT_PARTITION, sentRow());
     const detail = await service(repo, new FakePresigner(), rawMime).getEmail(handle);
 
     expect(detail.direction).toBe('sent');
     expect(detail.text).toBeUndefined();
     expect(detail.html).toBeUndefined();
+    expect(detail.status).toBeUndefined();
     expect(detail.attachments).toEqual([]);
     expect(detail.bcc).toEqual(['secret@e.com']);
-    // Never re-parses a sent message (no raw source).
+    // No archive → never re-parses.
     expect(rawMime.getStreamCalls).toEqual([]);
+  });
+
+  it('sent with archive (#29) → materializes body via assumeExposed, skips the verdict gate, surfaces status', async () => {
+    const repo = new FakeRepo();
+    const rawMime = new FakeRawMime();
+    const { fn, calls } = fakeParse({ textBody: 'my sent body', htmlBody: '<p>sent</p>' });
+    const handle = repo.put(
+      SENT_PARTITION,
+      sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<StoredEmailRow>),
+    );
+
+    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail(handle);
+
+    expect(detail.text).toBe('my sent body');
+    expect(detail.html).toBe('<p>sent</p>');
+    expect(detail.status).toBe('sent');
+    expect(detail.attachments).toEqual([]);
+    // Re-parses the sent archive, forcing exposure (no verdict headers on our own MIME).
+    expect(rawMime.getStreamCalls).toEqual(['sent/s1']);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].options).toEqual({ assumeExposed: true });
+    expect((calls[0].limits as { maxSnippetSourceBytes: number }).maxSnippetSourceBytes).toBe(
+      MAX_READ_BODY_BYTES,
+    );
+  });
+
+  it('sent archive that fails to re-parse (exposed:false) → envelope-only, no throw', async () => {
+    const repo = new FakeRepo();
+    const rawMime = new FakeRawMime();
+    // A corrupt archive → parseInbound resolves with exposed:false; the reader falls back.
+    const { fn } = fakeParse({ parseStatus: 'parse_failed', exposed: false });
+    const handle = repo.put(
+      SENT_PARTITION,
+      sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<StoredEmailRow>),
+    );
+
+    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail(handle);
+    expect(detail.text).toBeUndefined();
+    expect(detail.html).toBeUndefined();
+    expect(detail.status).toBe('sent');
+  });
+
+  it('send_failed sent row → status surfaced, body materialized from the archive', async () => {
+    const repo = new FakeRepo();
+    const rawMime = new FakeRawMime();
+    const { fn } = fakeParse({ textBody: 'the message we tried to send' });
+    const handle = repo.put(
+      SENT_PARTITION,
+      sentRow({ rawS3Key: 'sent/s1', status: 'send_failed' } as Partial<StoredEmailRow>),
+    );
+
+    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail(handle);
+    expect(detail.status).toBe('send_failed');
+    expect(detail.text).toBe('the message we tried to send');
+  });
+
+  it('materializes a real SENT body end-to-end through parseInbound despite NO verdict headers', async () => {
+    const repo = new FakeRepo();
+    const rawMime = new FakeRawMime();
+    // Our own composed MIME has no X-SES-*-Verdict headers — assumeExposed must still yield a body.
+    rawMime.streams.set(
+      'sent/s1',
+      [
+        'From: me@mydomain.com',
+        'To: a@b.com',
+        'Subject: My sent message',
+        'Content-Type: text/html; charset=utf-8',
+        '',
+        '<p>This is what I sent</p>',
+        '',
+      ].join('\r\n'),
+    );
+    const handle = repo.put(
+      SENT_PARTITION,
+      sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<StoredEmailRow>),
+    );
+
+    // No injected parse → uses the real parseInbound with the sent (assumeExposed) branch.
+    const detail = await service(repo, new FakePresigner(), rawMime).getEmail(handle);
+    expect(detail.html).toContain('This is what I sent');
   });
 
   it('inbound exposable → materializes body; attachments exposed WITHOUT the S3 key', async () => {
@@ -390,5 +472,31 @@ describe('EmailReadService.listEmails', () => {
     // Inbound list item surfaces verdicts + quarantined for the UI.
     expect(page.emails[0].quarantined).toBe(false);
     expect(page.emails[0].virusVerdict).toBe('PASS');
+  });
+
+  it('surfaces sent status on the list item; a legacy sent row omits it', async () => {
+    const repo = new FakeRepo();
+    repo.queryImpl = (direction) =>
+      Promise.resolve(
+        direction === 'sent'
+          ? [
+              sentRow({ status: 'send_failed' } as Partial<StoredEmailRow>),
+              sentRow({
+                sk: '2026-07-17T08:00:00.000Z#s0',
+                sentAt: '2026-07-17T08:00:00.000Z',
+                id: 's0',
+              } as Partial<StoredEmailRow>),
+            ]
+          : [],
+      );
+
+    const page = await service(repo, new FakePresigner(), new FakeRawMime()).listEmails({
+      limit: 25,
+      direction: 'sent',
+    });
+
+    expect(page.emails[0].status).toBe('send_failed');
+    // Legacy row (no status attribute) omits the field rather than inventing one.
+    expect(page.emails[1].status).toBeUndefined();
   });
 });
