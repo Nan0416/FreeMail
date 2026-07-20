@@ -43,6 +43,18 @@ export default tseslint.config(
           selector: 'TSInterfaceBody > TSIndexSignature[readonly!=true]',
           message: 'Interface index signatures must be readonly (immutable by default).',
         },
+        // Object-literal type aliases (DTO shapes declared with `type X = { ... }`)
+        // are held to the same bar. Scoped under TSTypeAliasDeclaration so it does
+        // NOT flag inline object types in function params / locals / SDK options,
+        // which are implementation detail, not interface fields.
+        {
+          selector: 'TSTypeAliasDeclaration TSTypeLiteral > TSPropertySignature[readonly!=true]',
+          message: 'Type-alias object properties must be readonly (immutable by default).',
+        },
+        {
+          selector: 'TSTypeAliasDeclaration TSTypeLiteral > TSIndexSignature[readonly!=true]',
+          message: 'Type-alias object index signatures must be readonly (immutable by default).',
+        },
       ],
     },
   },
