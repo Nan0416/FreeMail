@@ -1,18 +1,15 @@
-import {
-  App,
-  Stack,
-  aws_dynamodb as dynamodb,
-  aws_route53 as route53,
-  aws_s3 as s3,
-} from 'aws-cdk-lib';
+import { App, Stack } from 'aws-cdk-lib';
+import { AttributeType, Table } from 'aws-cdk-lib/aws-dynamodb';
+import { HostedZone } from 'aws-cdk-lib/aws-route53';
+import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import { InboundConstruct } from '../../src/constructs/inbound.js';
 
-function emailsTable(stack: Stack): dynamodb.Table {
-  return new dynamodb.Table(stack, 'EmailsTable', {
-    partitionKey: { name: 'pk', type: dynamodb.AttributeType.STRING },
-    sortKey: { name: 'sk', type: dynamodb.AttributeType.STRING },
+function emailsTable(stack: Stack): Table {
+  return new Table(stack, 'EmailsTable', {
+    partitionKey: { name: 'pk', type: AttributeType.STRING },
+    sortKey: { name: 'sk', type: AttributeType.STRING },
   });
 }
 
@@ -20,8 +17,8 @@ function synth(emailDomain = 'mail.example.com', zoneName = 'example.com'): Temp
   const stack = new Stack(new App(), 'TestStack', {
     env: { region: 'us-east-1', account: '111111111111' },
   });
-  const hostedZone = new route53.HostedZone(stack, 'Zone', { zoneName });
-  const mailBucket = new s3.Bucket(stack, 'MailBucket');
+  const hostedZone = new HostedZone(stack, 'Zone', { zoneName });
+  const mailBucket = new Bucket(stack, 'MailBucket');
   new InboundConstruct(stack, 'Inbound', {
     hostedZone,
     emailDomain,
@@ -112,8 +109,8 @@ describe('InboundConstruct', () => {
     const stack = new Stack(new App(), 'TestStack', {
       env: { region: 'us-east-1', account: '111111111111' },
     });
-    const hostedZone = new route53.HostedZone(stack, 'Zone', { zoneName: 'example.com' });
-    const mailBucket = new s3.Bucket(stack, 'MailBucket');
+    const hostedZone = new HostedZone(stack, 'Zone', { zoneName: 'example.com' });
+    const mailBucket = new Bucket(stack, 'MailBucket');
     const inbound = new InboundConstruct(stack, 'Inbound', {
       hostedZone,
       emailDomain: 'mail.example.com',
