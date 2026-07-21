@@ -5,7 +5,6 @@ import type { FreeMailConfig } from '@freemail/shared';
 import { ApiConstruct } from './constructs/api.js';
 import { DataConstruct } from './constructs/data.js';
 import { DnsConstruct } from './constructs/dns.js';
-import { InboundConstruct } from './constructs/inbound.js';
 import { SesConstruct } from './constructs/ses.js';
 import { WebConstruct, resolveWebAssetPath } from './constructs/web.js';
 
@@ -33,6 +32,12 @@ export class FreeMailStack extends Stack {
       hostedZone: dns.hostedZone,
       emailDomain: config.emailDomain,
       region: config.region,
+      // SES owns inbound too: pass the mail stores only when inbound is enabled, and
+      // the construct instantiates the receipt pipeline as a child. The confirmInboundMx
+      // acknowledgement gate (assertInboundAcknowledged, above) still fires first.
+      ...(config.inbound.enabled
+        ? { inbound: { mailBucket: data.mailBucket, emailsTable: data.emailsTable } }
+        : {}),
     });
 
     const api = new ApiConstruct(this, 'Api', {
@@ -60,18 +65,6 @@ export class FreeMailStack extends Stack {
         ? { customDomain: { domainName: config.appDomain, hostedZone: dns.hostedZone } }
         : {}),
     });
-
-    // Optional inbound: SES receipt rule set → S3 + the inbound MX record. Gated on
-    // config; the warn/throw acknowledgement above fires first.
-    if (config.inbound.enabled) {
-      new InboundConstruct(this, 'Inbound', {
-        hostedZone: dns.hostedZone,
-        emailDomain: config.emailDomain,
-        region: config.region,
-        mailBucket: data.mailBucket,
-        emailsTable: data.emailsTable,
-      });
-    }
 
     new CfnOutput(this, 'HostedZoneId', { value: dns.hostedZone.hostedZoneId });
     if (config.hostedZone.mode === 'create' && dns.nameServers) {
