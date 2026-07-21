@@ -354,6 +354,36 @@ describe('get_email', () => {
     expect(textOf(result)).not.toContain('UNTRUSTED-EMAIL');
   });
 
+  it('surfaces sent status and the materialized body (#29), self-authored and unframed', async () => {
+    const email: EmailDetail = {
+      id: 'ref-sent-2',
+      direction: 'sent',
+      from: 'me@example.com',
+      to: ['you@elsewhere.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Draft that failed',
+      date: '2026-07-17T00:00:00.000Z',
+      status: 'send_failed',
+      text: 'the body we archived',
+      attachments: [],
+      hasAttachments: false,
+      attachmentCount: 0,
+      sizeBytes: 60,
+    };
+    const client = await connectRead(
+      fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }),
+    );
+
+    const result = await client.callTool({ name: 'get_email', arguments: { id: 'ref-sent-2' } });
+
+    expect((result.structuredContent as { trust: string }).trust).toBe('self_authored_content');
+    const text = textOf(result);
+    expect(text).toContain('Status: send_failed');
+    expect(text).toContain('the body we archived');
+    expect(text).not.toContain('UNTRUSTED-EMAIL');
+  });
+
   it('surfaces a not-found EmailError as an isError result', async () => {
     const getEmail = vi.fn().mockRejectedValue(emailErrors.notFound('No such message.'));
     const client = await connectRead(fakeReadService({ getEmail }));

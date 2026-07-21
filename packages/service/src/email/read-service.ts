@@ -5,13 +5,15 @@
  * MCP read tools can reuse this exact service — the REST routes are thin adapters, mirroring
  * how #6's send route and #7's MCP tool share one {@link EmailService}.
  *
- * Bodies: the DDB index stores only a snippet, so a received message's full body is
- * materialized on demand by re-parsing its raw MIME through #10's `parseInbound` (with a
- * no-op attachment sink) — inheriting ALL of #10's untrusted-MIME hardening (node/body/size
- * caps). We only re-parse rows the stored verdicts already mark exposable (fail-closed via
- * the same `decideExposure` gate), so a quarantined message never re-parses and never
- * yields a body. Sent messages have no stored body source, so their detail is envelope-only.
- * HTML is returned RAW as data — the client owns safe rendering (#12).
+ * Bodies: the DDB index stores only a snippet, so a message's full body is materialized on
+ * demand by re-parsing its raw MIME through #10's `parseInbound` (with a no-op attachment
+ * sink) — inheriting ALL of #10's untrusted-MIME hardening (node/body/size caps). For INBOUND
+ * mail we only re-parse rows the stored verdicts already mark exposable (fail-closed via the
+ * same `decideExposure` gate), so a quarantined message never re-parses and never yields a
+ * body. For SENT mail (#29) the archived MIME is our OWN outgoing message (no spam/virus
+ * verdict, always exposable), so the sent branch re-parses with `assumeExposed` and skips the
+ * verdict gate; a legacy sent row lacking the archive stays envelope-only. HTML is returned
+ * RAW as data — the client owns safe rendering (#12).
  */
 import type { Readable } from 'node:stream';
 import {
@@ -46,6 +48,7 @@ import {
   type AttachmentSink,
   type ParsedInbound,
   type ParseLimits,
+  type ParseOptions,
   parseInbound,
 } from '../inbound/parse.js';
 import { decideExposure } from '../inbound/verdicts.js';
@@ -65,6 +68,7 @@ export type ParseInbound = (
   source: Readable,
   sink: AttachmentSink,
   limits?: ParseLimits,
+  options?: ParseOptions,
 ) => Promise<ParsedInbound>;
 
 export interface EmailReadServiceDeps {
@@ -195,15 +199,20 @@ export class EmailReadService {
     return row;
   }
 
-  /** Re-parse the raw MIME for a received, exposable message's body; `{}` otherwise. */
+  /** Materialize a message's body from its raw MIME; `{}` when not exposable / no archive. */
   private async materializeBody(
     row: StoredEmailRow,
     envelopeBytes: number,
   ): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
-    if (row.direction !== 'inbound') {
-      return {};
+    if (row.direction === 'sent') {
+      // Our own outgoing MIME — always exposable, so skip the inbound verdict gate. A legacy
+      // sent row (pre-#29) has no archive → envelope-only, exactly as before.
+      if (!row.rawS3Key) {
+        return {};
+      }
+      return this.parseBody(row.rawS3Key, envelopeBytes, { assumeExposed: true });
     }
-    // Gate on the STORED verdicts first — a non-exposable row is never re-parsed.
+    // Inbound: gate on the STORED verdicts first — a non-exposable row is never re-parsed.
     const exposure = decideExposure(
       { spamVerdict: row.spamVerdict, virusVerdict: row.virusVerdict },
       row.parseStatus,
@@ -211,9 +220,21 @@ export class EmailReadService {
     if (!exposure.exposeContent) {
       return {};
     }
-    const stream = await this.rawMime.getStream(row.rawS3Key);
-    const parsed = await this.parse(stream, NOOP_SINK, READ_PARSE_LIMITS);
-    // Defense in depth: if the re-parse disagrees (shouldn't), fail closed to no body.
+    return this.parseBody(row.rawS3Key, envelopeBytes, {});
+  }
+
+  /**
+   * Re-parse a raw MIME object into a body fitted to the response budget. Shared by the inbound
+   * (verdict-gated) and sent (`assumeExposed`) paths; `parsed.exposed` is the defense-in-depth
+   * fail-closed — a corrupt/parse-failed archive yields no body rather than throwing.
+   */
+  private async parseBody(
+    rawS3Key: string,
+    envelopeBytes: number,
+    options: ParseOptions,
+  ): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
+    const stream = await this.rawMime.getStream(rawS3Key);
+    const parsed = await this.parse(stream, NOOP_SINK, READ_PARSE_LIMITS, options);
     if (!parsed.exposed) {
       return {};
     }
@@ -242,6 +263,7 @@ export class EmailReadService {
         cc: row.cc,
         subject: row.subject,
         date: row.sentAt,
+        ...(row.status !== undefined ? { status: row.status } : {}),
         hasAttachments: row.attachmentCount > 0,
         attachmentCount: row.attachmentCount,
       };
@@ -279,6 +301,8 @@ export class EmailReadService {
         bcc: row.bcc,
         subject: row.subject,
         date: row.sentAt,
+        ...(row.status !== undefined ? { status: row.status } : {}),
+        ...body,
         attachments: [],
         hasAttachments: row.attachmentCount > 0,
         attachmentCount: row.attachmentCount,

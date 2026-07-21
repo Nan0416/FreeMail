@@ -111,6 +111,16 @@ export interface ParseLimits {
   readonly maxSnippetSourceBytes: number;
 }
 
+/**
+ * Non-limit parse options. `assumeExposed` forces the body/attachments to be retained
+ * regardless of the SES virus verdict — used ONLY by the read path when re-parsing our OWN
+ * archived sent MIME (#29), which carries no `X-SES-*-Verdict` header (so the verdict-based
+ * gate would otherwise drop the body). Never set for inbound (attacker-controlled) mail.
+ */
+export interface ParseOptions {
+  readonly assumeExposed?: boolean;
+}
+
 const DEFAULT_LIMITS: ParseLimits = {
   maxRawBytes: MAX_RAW_MESSAGE_BYTES,
   maxChildNodes: MAX_MIME_PARTS,
@@ -133,6 +143,7 @@ export function parseInbound(
   source: Readable,
   sink: AttachmentSink,
   limits: ParseLimits = DEFAULT_LIMITS,
+  options: ParseOptions = {},
 ): Promise<ParsedInbound> {
   return new Promise<ParsedInbound>((resolve, reject) => {
     const rawLimiter = new RawByteLimiter(limits.maxRawBytes);
@@ -181,7 +192,9 @@ export function parseInbound(
       }
       const lines: HeaderLine[] = parseHeaderLines(bodyLimiter.rootHeaderBlock);
       verdicts = extractVerdicts(lines);
-      exposed = verdicts.virusVerdict === 'PASS';
+      // Own archived sent MIME has no verdict header → assumeExposed retains the body;
+      // inbound mail is gated on an affirmative virus PASS.
+      exposed = (options.assumeExposed ?? false) || verdicts.virusVerdict === 'PASS';
     };
 
     const teardown = (): void => {

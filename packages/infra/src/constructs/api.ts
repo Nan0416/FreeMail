@@ -150,6 +150,9 @@ export class ApiConstruct extends Construct {
     mailBucket.grantRead(this.restHandler, 'attachments/inbound/*');
     // Outbound large attachments: the send route writes them, GET /d/{token} presigns them.
     mailBucket.grantReadWrite(this.restHandler, 'attachments/outbound/*');
+    // Sent raw MIME archive (#29): the send route writes it; the always-available
+    // GET /emails/{id} re-parses it for the sent body.
+    mailBucket.grantReadWrite(this.restHandler, 'sent/*');
     this.signingKey.grantRead(this.restHandler);
 
     // The REST `/emails` route sends.
@@ -178,14 +181,19 @@ export class ApiConstruct extends Construct {
     // Send-only: mint tokens + upload the bytes; the MCP handler never serves downloads.
     downloadTokensTable.grantWriteData(this.mcpHandler);
     mailBucket.grantWrite(this.mcpHandler, 'attachments/outbound/*');
+    // Sent raw MIME archive (#29): send_email writes it. Write-only here — reading it back is
+    // the get_email path, granted below only when inbound (and thus the read tools) is enabled.
+    mailBucket.grantWrite(this.mcpHandler, 'sent/*');
     this.grantSesSend(this.mcpHandler, emailDomain);
     // #13 read tools: read-only access scoped to exactly what EmailReadService touches —
-    // the emails table (list/get) and the inbound raw MIME + extracted-attachment prefixes
-    // (body re-parse + attachment presign). Added only when inbound is enabled.
+    // the emails table (list/get), the inbound raw MIME + extracted-attachment prefixes
+    // (body re-parse + attachment presign), and the sent raw MIME archive (#29, sent body
+    // re-parse). Added only when inbound is enabled (fail-closed, gates get_email too).
     if (inboundEnabled) {
       emailsTable.grantReadData(this.mcpHandler);
       mailBucket.grantRead(this.mcpHandler, 'inbound/*');
       mailBucket.grantRead(this.mcpHandler, 'attachments/inbound/*');
+      mailBucket.grantRead(this.mcpHandler, 'sent/*');
     }
 
     this.authorizerHandler = this.nodeFunction('AuthorizerHandler', 'authorizer.ts', {
