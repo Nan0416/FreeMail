@@ -1,5 +1,7 @@
 import { App, Stack } from 'aws-cdk-lib';
+import { AttributeType, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { HostedZone } from 'aws-cdk-lib/aws-route53';
+import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import { SesConstruct } from '../../src/constructs/ses.js';
@@ -10,6 +12,25 @@ function synth(emailDomain = 'mail.example.com', zoneName = 'example.com'): Temp
   });
   const hostedZone = new HostedZone(stack, 'Zone', { zoneName });
   new SesConstruct(stack, 'Ses', { hostedZone, emailDomain, region: 'us-east-1' });
+  return Template.fromStack(stack);
+}
+
+function synthWithInbound(emailDomain = 'mail.example.com', zoneName = 'example.com'): Template {
+  const stack = new Stack(new App(), 'TestStack', {
+    env: { region: 'us-east-1', account: '111111111111' },
+  });
+  const hostedZone = new HostedZone(stack, 'Zone', { zoneName });
+  const mailBucket = new Bucket(stack, 'MailBucket');
+  const emailsTable = new Table(stack, 'EmailsTable', {
+    partitionKey: { name: 'pk', type: AttributeType.STRING },
+    sortKey: { name: 'sk', type: AttributeType.STRING },
+  });
+  new SesConstruct(stack, 'Ses', {
+    hostedZone,
+    emailDomain,
+    region: 'us-east-1',
+    inbound: { mailBucket, emailsTable },
+  });
   return Template.fromStack(stack);
 }
 
@@ -115,5 +136,30 @@ describe('SesConstruct', () => {
     for (const record of Object.values(template.findResources('AWS::Route53::RecordSet'))) {
       expect(record.Properties.HostedZoneId).toBeDefined();
     }
+  });
+});
+
+describe('SesConstruct inbound ownership', () => {
+  it('creates no inbound receipt pipeline when the inbound prop is absent (send-only)', () => {
+    const template = synth();
+    template.resourceCountIs('AWS::SES::ReceiptRuleSet', 0);
+    template.resourceCountIs('AWS::SES::ReceiptRule', 0);
+  });
+
+  it('instantiates the inbound pipeline as a child when the inbound prop is provided', () => {
+    const template = synthWithInbound();
+    // Receipt rule set + its catch-all rule scoped to the email domain (spam/virus scan on).
+    template.resourceCountIs('AWS::SES::ReceiptRuleSet', 1);
+    template.hasResourceProperties('AWS::SES::ReceiptRule', {
+      Rule: { Recipients: ['mail.example.com'], ScanEnabled: true },
+    });
+    // The inbound MX record points the domain at SES's inbound SMTP endpoint.
+    template.hasResourceProperties('AWS::Route53::RecordSet', {
+      Name: 'mail.example.com',
+      Type: 'MX',
+      ResourceRecords: ['10 inbound-smtp.us-east-1.amazonaws.com'],
+    });
+    // The fail-safe set-active-rule-set activation custom resource.
+    template.resourceCountIs('AWS::CloudFormation::CustomResource', 1);
   });
 });

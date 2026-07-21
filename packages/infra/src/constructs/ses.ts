@@ -1,7 +1,9 @@
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
+import type { Table } from 'aws-cdk-lib/aws-dynamodb';
 import { Code, Function as LambdaFunction, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { CfnRecordSet, type IHostedZone } from 'aws-cdk-lib/aws-route53';
+import type { Bucket } from 'aws-cdk-lib/aws-s3';
 import {
   ConfigurationSet,
   EmailIdentity,
@@ -13,6 +15,7 @@ import {
 import { Topic } from 'aws-cdk-lib/aws-sns';
 import { LambdaSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
+import { InboundConstruct } from './inbound.js';
 
 export interface SesConstructProps {
   /** The Route53 zone that owns the email domain — all auth records are written here. */
@@ -21,6 +24,17 @@ export interface SesConstructProps {
   readonly emailDomain: string;
   /** Deploy region — the custom MAIL FROM MX target (feedback-smtp.<region>.amazonses.com) is region-specific. */
   readonly region: string;
+  /**
+   * The mail stores the inbound pipeline needs, present ONLY when inbound email is
+   * enabled (the stack passes this iff `config.inbound.enabled`). When present, SES
+   * instantiates the inbound receipt pipeline as a child; absent → SES is send-only.
+   */
+  readonly inbound?: {
+    /** Raw inbound MIME is delivered under `inbound/` of this bucket; parsed attachments under `attachments/`. */
+    readonly mailBucket: Bucket;
+    /** The parser writes each received message's metadata row here (`pk='INBOUND'`). */
+    readonly emailsTable: Table;
+  };
 }
 
 const RECORD_TTL = '1800';
@@ -93,6 +107,20 @@ export class SesConstruct extends Construct {
     });
 
     this.writeAuthRecords(hostedZone, emailDomain, region);
+
+    // SES owns its inbound receipt setup too: when inbound is enabled the stack passes
+    // the mail bucket + emails table, and this construct instantiates the inbound
+    // pipeline (receipt rule set → S3 + MX + parser) as a child. Absent → send-only.
+    // The stack's `confirmInboundMx` acknowledgement gate still fires first, at synth.
+    if (props.inbound) {
+      new InboundConstruct(this, 'Inbound', {
+        hostedZone,
+        emailDomain,
+        region,
+        mailBucket: props.inbound.mailBucket,
+        emailsTable: props.inbound.emailsTable,
+      });
+    }
   }
 
   /**
