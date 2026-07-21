@@ -25,8 +25,6 @@ export class DataConstruct extends Construct {
   readonly downloadTokensTable: Table;
   /** Inbound raw MIME, parsed attachments, and outbound large attachments. */
   readonly mailBucket: Bucket;
-  /** Static hosting origin for the React SPA (served via CloudFront in the web slice). */
-  readonly webBucket: Bucket;
 
   constructor(scope: Construct, id: string) {
     super(scope, id);
@@ -60,7 +58,6 @@ export class DataConstruct extends Construct {
     });
 
     this.mailBucket = this.privateBucket('MailBucket');
-    this.webBucket = this.privateBucket('WebBucket');
   }
 
   private privateBucket(id: string): Bucket {

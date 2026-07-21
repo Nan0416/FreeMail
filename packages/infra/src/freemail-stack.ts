@@ -52,7 +52,6 @@ export class FreeMailStack extends Stack {
 
     // The React SPA on CloudFront + S3, learning the API endpoint at runtime.
     const web = new WebConstruct(this, 'Web', {
-      webBucket: data.webBucket,
       apiEndpoint: api.httpApi.apiEndpoint,
       assetPath: resolveWebAssetPath(),
       inboundEnabled: config.inbound.enabled,
@@ -83,7 +82,7 @@ export class FreeMailStack extends Stack {
       });
     }
     new CfnOutput(this, 'MailBucketName', { value: data.mailBucket.bucketName });
-    new CfnOutput(this, 'WebBucketName', { value: data.webBucket.bucketName });
+    new CfnOutput(this, 'WebBucketName', { value: web.webBucket.bucketName });
 
     new CfnOutput(this, 'ApiEndpoint', {
       description:
