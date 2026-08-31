@@ -8,10 +8,11 @@ export interface AuthContextValue {
   /** The authenticated subject (single-tenant owner), or null when signed out. */
   readonly subject: string | null;
   readonly client: FreeMailClient;
-  /** Sign in with the account password. */
+  /**
+   * Sign in with the account password. On a fresh deployment this also enrolls it as
+   * the account password (#42 trust-on-first-use) — there is no separate first-run step.
+   */
   readonly login: (password: string) => Promise<void>;
-  /** First-run: set the password, then sign in with it. */
-  readonly setPasswordAndLogin: (password: string) => Promise<void>;
   readonly logout: () => Promise<void>;
 }
 
@@ -72,12 +73,6 @@ export function AuthProvider({
       subject,
       client,
       login: async (password) => {
-        const session = await client.login(password);
-        setSubject(session.subject);
-        setStatus('authenticated');
-      },
-      setPasswordAndLogin: async (password) => {
-        await client.setPassword(password);
         const session = await client.login(password);
         setSubject(session.subject);
         setStatus('authenticated');

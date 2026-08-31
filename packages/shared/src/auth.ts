@@ -17,8 +17,6 @@ export const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 export type AuthErrorCode =
   | 'invalid_request'
   | 'weak_password'
-  | 'password_already_set'
-  | 'password_not_set'
   | 'invalid_credentials'
   | 'account_locked'
   | 'invalid_token'

@@ -1,9 +1,10 @@
 /**
  * DynamoDB-backed {@link AuthRepo} over #2's single-table `authTable` (pk/sk,
  * `ttl` attribute). Layout:
- *   - password  → pk `auth`, sk `password`   { hash }
- *   - lockout   → pk `auth`, sk `lockout`     { failedCount, windowStartedAt, lockedUntil?, version }
- *   - refresh   → pk `refresh`, sk `<hash>`   { ttl }
+ *   - password → pk `auth`, sk `password`     { hash }
+ *   - signing  → pk `auth`, sk `signing-key`  { key, createdAt }
+ *   - lockout  → pk `auth`, sk `lockout`      { failedCount, windowStartedAt, lockedUntil?, version }
+ *   - refresh  → pk `refresh`, sk `<hash>`    { ttl }
  *
  * The single lockout row carries a monotonic `version`: failed-attempt increments
  * are a versioned compare-and-swap, and the success reset ADVANCES the version too
@@ -25,6 +26,7 @@ import { optimisticUpdate, type VersionedValue } from './optimistic.js';
 import type { AuthRepo } from './auth-repo.js';
 
 const PASSWORD_KEY = { pk: 'auth', sk: 'password' } as const;
+const SIGNING_KEY_KEY = { pk: 'auth', sk: 'signing-key' } as const;
 const LOCKOUT_KEY = { pk: 'auth', sk: 'lockout' } as const;
 const REFRESH_PK = 'refresh';
 
@@ -78,6 +80,34 @@ export class DdbAuthRepo implements AuthRepo {
     );
     const hash = result.Item?.hash;
     return typeof hash === 'string' ? hash : null;
+  }
+
+  async getSigningKey(): Promise<string | null> {
+    const result = await this.doc.send(
+      new GetCommand({ TableName: this.tableName, Key: SIGNING_KEY_KEY }),
+    );
+    const key = result.Item?.key;
+    return typeof key === 'string' ? key : null;
+  }
+
+  async createSigningKey(key: string): Promise<boolean> {
+    // Same atomic first-writer-wins idiom as createPasswordHash: the condition is
+    // evaluated against THIS item (pk+sk), so it cannot collide with the password row.
+    try {
+      await this.doc.send(
+        new PutCommand({
+          TableName: this.tableName,
+          Item: { ...SIGNING_KEY_KEY, key, createdAt: Math.floor(Date.now() / 1000) },
+          ConditionExpression: 'attribute_not_exists(pk)',
+        }),
+      );
+      return true;
+    } catch (error) {
+      if (isConditionalCheckFailed(error)) {
+        return false;
+      }
+      throw error;
+    }
   }
 
   async getLockout(): Promise<LockoutState | null> {

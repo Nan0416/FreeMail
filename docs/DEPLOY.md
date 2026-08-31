@@ -21,7 +21,7 @@ FreeMail is **single-tenant and single-region**: one deployment is one owner, in
 
 ## 1. Prerequisites
 
-- **AWS account + credentials.** Configure a profile (`aws configure` / SSO) with permission to deploy the stack (CloudFormation, IAM, Lambda, API Gateway, S3, CloudFront, DynamoDB, SES, Route53, ACM, Secrets Manager, SNS).
+- **AWS account + credentials.** Configure a profile (`aws configure` / SSO) with permission to deploy the stack (CloudFormation, IAM, Lambda, API Gateway, S3, CloudFront, DynamoDB, SES, Route53, ACM, SNS).
 - **Region `us-east-1`.** The only supported region. Make sure your CLI/CDK default region is `us-east-1` (or pass it explicitly).
 - **Node.js 22** (see [`.nvmrc`](../.nvmrc); Node ≥ 20.19 works).
 - **A domain you control.** You'll either import an existing Route53 hosted zone or have FreeMail create a new one — but if FreeMail creates it, you must be able to **set the zone's name servers at your domain registrar** (see [§5](#5-dns-and-email-authentication)).
@@ -89,7 +89,7 @@ The Lambda handlers are bundled from source at synth (esbuild), so no separate h
 
 | Output                                                    | Use                                                                                                                                                |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`WebAppUrl`**                                           | Open this to set your password and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                         |
+| **`WebAppUrl`**                                           | Open this to sign in and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                                   |
 | **`ApiEndpoint`**                                         | The HTTP API base URL. Also the target of the CloudFront `/api` proxy and the MCP endpoint (`{ApiEndpoint}/mcp`).                                  |
 | **`ApiCustomDomainUrl`**                                  | Present only if you set `apiDomain` — a branded host for direct agent/`x-api-key` access.                                                          |
 | **`HostedZoneNameServers`**                               | Present only when FreeMail **created** the zone. **Set these at your registrar** to activate the zone (see [§5](#5-dns-and-email-authentication)). |
@@ -99,7 +99,10 @@ The Lambda handlers are bundled from source at synth (esbuild), so no separate h
 
 ### After deploying
 
-1. Open **`WebAppUrl`** and **set your password** on first visit. There is no username — FreeMail is single-tenant. The password is stored hashed; you can set it exactly once (re-setting requires clearing the auth record).
+1. Open **`WebAppUrl`** and **sign in**. There is no username — FreeMail is single-tenant. There is also no separate set-password step: on a fresh deployment the **first password submitted becomes the account password** (trust-on-first-use) and signs you in.
+
+   > **Do this immediately after deploying.** Until the first sign-in the account is unclaimed, and the app is reachable by anyone who has the URL — whoever signs in first owns the deployment. The password is enrolled exactly once and stored hashed (scrypt); there is no re-set flow, so a typo on that first sign-in means clearing the password item from the auth DynamoDB table (`pk=auth`, `sk=password`) and signing in again.
+
 2. **Request SES production access** ([§4](#4-ses-production-access-sandbox-exit)) before sending to arbitrary recipients.
 3. If FreeMail created your zone, **delegate its name servers** ([§5](#5-dns-and-email-authentication)) so email auth and (if enabled) inbound actually work.
 

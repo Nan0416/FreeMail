@@ -119,6 +119,33 @@ describe('DdbAuthRepo — password', () => {
   });
 });
 
+describe('DdbAuthRepo — signing key', () => {
+  it('creates the key only once; a second writer loses and reads the winner', async () => {
+    const doc = new FakeDoc();
+    const repo = new DdbAuthRepo('t', doc);
+    expect(await repo.createSigningKey('key-1')).toBe(true);
+    expect(await repo.createSigningKey('key-2')).toBe(false);
+    expect(await repo.getSigningKey()).toBe('key-1');
+  });
+
+  it('returns null before any key is generated', async () => {
+    expect(await new DdbAuthRepo('t', new FakeDoc()).getSigningKey()).toBeNull();
+  });
+
+  it('lives in its own row — the password guard and the key guard do not collide', async () => {
+    const doc = new FakeDoc();
+    const repo = new DdbAuthRepo('t', doc);
+    // Both rows use `attribute_not_exists(pk)`, which DynamoDB evaluates against the
+    // addressed item, so enrolling a password must not block generating a key.
+    expect(await repo.createPasswordHash('hash')).toBe(true);
+    expect(await repo.createSigningKey('key')).toBe(true);
+    expect(await repo.getPasswordHash()).toBe('hash');
+    expect(await repo.getSigningKey()).toBe('key');
+    expect(doc.store.has('auth|password')).toBe(true);
+    expect(doc.store.has('auth|signing-key')).toBe(true);
+  });
+});
+
 describe('DdbAuthRepo — lockout CAS', () => {
   it('creates the row with the create guard on the first failure', async () => {
     const doc = new FakeDoc();

@@ -9,13 +9,18 @@ import {
 } from '../../src/auth/lockout.js';
 import type { LockoutState } from '../../src/auth/lockout.js';
 import { AuthService, OWNER_SUBJECT } from '../../src/auth/service.js';
+import { hashPassword } from '../../src/auth/password.js';
 
 class FakeAuthRepo implements AuthRepo {
   passwordHash: string | null = null;
   lockout: LockoutState | null = null;
   refreshTokens = new Set<string>();
+  signingKeyRow: string | null = null;
+  /** Runs immediately before the conditional create — models a concurrent enroller. */
+  onBeforeCreatePasswordHash?: () => void;
 
   createPasswordHash(hash: string): Promise<boolean> {
+    this.onBeforeCreatePasswordHash?.();
     if (this.passwordHash !== null) {
       return Promise.resolve(false);
     }
@@ -24,6 +29,16 @@ class FakeAuthRepo implements AuthRepo {
   }
   getPasswordHash(): Promise<string | null> {
     return Promise.resolve(this.passwordHash);
+  }
+  getSigningKey(): Promise<string | null> {
+    return Promise.resolve(this.signingKeyRow);
+  }
+  createSigningKey(key: string): Promise<boolean> {
+    if (this.signingKeyRow !== null) {
+      return Promise.resolve(false);
+    }
+    this.signingKeyRow = key;
+    return Promise.resolve(true);
   }
   getLockout(): Promise<LockoutState | null> {
     return Promise.resolve(this.lockout);
@@ -69,16 +84,46 @@ async function expectAuthError(promise: Promise<unknown>, code: string): Promise
   return error as AuthError;
 }
 
-describe('AuthService.setPassword', () => {
-  it('rejects a weak password', async () => {
-    await expectAuthError(service.setPassword('short'), 'weak_password');
+describe('AuthService.login — trust-on-first-use enrollment', () => {
+  const PASSWORD = 'a-strong-enough-password';
+
+  it('enrolls the password and signs in on the first ever login', async () => {
+    expect(repo.passwordHash).toBeNull();
+    const tokens = await service.login(PASSWORD);
+    expect(repo.passwordHash).not.toBeNull();
+    const verified = await verifyAccessToken(tokens.accessToken, KEY, NOW);
+    expect(verified.valid && verified.claims.sub).toBe(OWNER_SUBJECT);
+  });
+
+  it('enrolls exactly once — a later different password is rejected, not re-enrolled', async () => {
+    await service.login(PASSWORD);
+    const enrolled = repo.passwordHash;
+    await expectAuthError(service.login('a-different-password'), 'invalid_credentials');
+    expect(repo.passwordHash).toBe(enrolled);
+  });
+
+  it('rejects a weak password at enrollment without claiming the account', async () => {
+    await expectAuthError(service.login('short'), 'weak_password');
     expect(repo.passwordHash).toBeNull();
   });
 
-  it('sets the password on first run and rejects a second set', async () => {
-    await service.setPassword('a-strong-enough-password');
-    expect(repo.passwordHash).not.toBeNull();
-    await expectAuthError(service.setPassword('another-strong-password'), 'password_already_set');
+  it('still admits an existing password shorter than a later-raised minimum', async () => {
+    // Policy is checked only at enrollment, so raising MIN_PASSWORD_LENGTH must not
+    // lock an already-enrolled owner out of their own deployment.
+    repo.passwordHash = hashPassword('legacy');
+    await expect(service.login('legacy')).resolves.toMatchObject({ tokenType: 'Bearer' });
+  });
+
+  it('verifies against the winner when a concurrent first login claims the account', async () => {
+    // Model the lost race: another caller enrolls between this login's read and write.
+    repo.onBeforeCreatePasswordHash = () => {
+      repo.passwordHash = hashPassword('winner-password');
+    };
+    // The loser's own password must not be adopted...
+    await expectAuthError(service.login(PASSWORD), 'invalid_credentials');
+    // ...and the winner's still works.
+    repo.onBeforeCreatePasswordHash = undefined;
+    await expect(service.login('winner-password')).resolves.toMatchObject({ tokenType: 'Bearer' });
   });
 });
 
@@ -86,12 +131,10 @@ describe('AuthService.login', () => {
   const PASSWORD = 'a-strong-enough-password';
 
   beforeEach(async () => {
-    await service.setPassword(PASSWORD);
-  });
-
-  it('rejects login before a password is set', async () => {
-    const fresh = new AuthService({ repo: new FakeAuthRepo(), signingKey: KEY, now: () => NOW });
-    await expectAuthError(fresh.login(PASSWORD), 'password_not_set');
+    // The enrolling first login signs in too, so drop its token pair — these tests are
+    // about the steady state, where a password is already enrolled.
+    await service.login(PASSWORD);
+    repo.refreshTokens.clear();
   });
 
   it('issues a valid token pair on correct credentials', async () => {
@@ -127,7 +170,7 @@ describe('AuthService.refresh', () => {
   const PASSWORD = 'a-strong-enough-password';
 
   beforeEach(async () => {
-    await service.setPassword(PASSWORD);
+    await service.login(PASSWORD);
   });
 
   it('rotates the refresh token and rejects reuse of the old one', async () => {
@@ -149,7 +192,6 @@ describe('AuthService.refresh', () => {
 
 describe('AuthService.logout', () => {
   it('revokes the refresh token and is idempotent', async () => {
-    await service.setPassword('a-strong-enough-password');
     const tokens = await service.login('a-strong-enough-password');
 
     await service.logout(tokens.refreshToken);

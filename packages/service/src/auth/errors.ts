@@ -26,9 +26,6 @@ export const authErrors = {
   invalidRequest: (message = 'Invalid request.') => new AuthError('invalid_request', 400, message),
   weakPassword: () =>
     new AuthError('weak_password', 400, 'Password does not meet the minimum length requirement.'),
-  passwordAlreadySet: () =>
-    new AuthError('password_already_set', 409, 'A password has already been set.'),
-  passwordNotSet: () => new AuthError('password_not_set', 409, 'No password has been set yet.'),
   invalidCredentials: () => new AuthError('invalid_credentials', 401, 'Incorrect password.'),
   accountLocked: (retryAfterSeconds: number) =>
     new AuthError(

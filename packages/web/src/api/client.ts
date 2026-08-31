@@ -74,12 +74,11 @@ export class FreeMailClient {
 
   // --- unauthenticated ---
 
-  /** First-run only: set the single account password. 409 `password_already_set` if one exists. */
-  async setPassword(password: string): Promise<void> {
-    await this.request('POST', '/auth/set-password', { body: { password }, auth: false });
-  }
-
-  /** Verify the password; on success the server sets the session cookies. Returns the subject. */
+  /**
+   * Verify the password; on success the server sets the session cookies. Returns the
+   * subject. On a deployment with no password yet this ENROLLS (#42 trust-on-first-use):
+   * the submitted password becomes the account password and the caller is signed in.
+   */
   async login(password: string): Promise<SessionResponse> {
     return this.request<SessionResponse>('POST', '/auth/login', {
       body: { password },

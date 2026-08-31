@@ -21,15 +21,15 @@ TypeScript · npm workspaces monorepo · Node.js (Lambda) · React (SPA) · AWS 
 - **S3** — inbound raw emails + parsed attachments; outbound large attachments.
 
 ## Auth ✅
-- **Single-tenant password.** On first open the user sets a password → stored **hashed** (argon2/bcrypt, Lambda-safe) in DDB. No username.
-- **Login** issues **access + refresh** tokens (JWT; signing key in SSM/Secrets Manager). Refresh rotation. Login endpoint **rate-limited / lockout** (single-password brute-force protection).
+- **Single-tenant password, trust-on-first-use** (#42). There is no separate set-password step: the **first login on an unclaimed deployment enrolls** the submitted password — hashed (scrypt, Lambda-safe) into DDB under an atomic `attribute_not_exists` write, so exactly one concurrent caller can win — and signs that caller in. Every later login verifies normally. No username. Whoever reaches the login route first owns the deployment, so claim it immediately after deploying.
+- **Login** issues **access + refresh** tokens (JWT; HS256 signing key generated on first use and persisted as a singleton row in the auth DDB table — no Secrets Manager dependency, #42). Refresh rotation. Login endpoint **rate-limited / lockout** (single-password brute-force protection).
 - **Web session = httpOnly cookies** (#31). Both tokens ride in `HttpOnly; Secure; SameSite=Strict; Path=/` cookies (`__Host-fm_access` / `__Host-fm_refresh`) the browser stores but page JS cannot read — no token in any web storage, so XSS cannot exfiltrate the session. The SPA holds no token and sends `credentials: 'include'` with no `Authorization` header; refresh/logout read the refresh token **only** from the cookie (never a body/query), and every refresh failure clears both cookies. Auth responses are `Cache-Control: no-store`.
 - **CSRF = `SameSite=Strict`.** To make Strict cookies work (they are dropped on cross-site requests), the SPA is served **same-origin** with the API: CloudFront proxies `/api/*` to the HTTP API, so the browser only ever talks to one origin and there is **no CORS**. A double-submit CSRF token is **deferred** behind Strict.
 - **API keys** for agents → the MCP server. Registered via the React app; stored **hashed**, shown raw once. **One key = full agent access over MCP: send AND (when inbound is enabled) read the mailbox** — but **not** key management and **not** the REST mailbox-read routes, which stay cookie-session only (no per-key scopes for v1). Validated by a **Lambda authorizer** (the agent `x-api-key` path is unchanged by the cookie work).
 - **API Gateway itself is unauthenticated; auth lives in the backend** (a Lambda authorizer covers both the web access-token cookie and MCP API-keys).
 
 ## APIs
-1. **REST API** (React app): set-password/login, send email, manage API keys; (with inbound) list/read emails + attachment download.
+1. **REST API** (React app): login (enrolls on first use), refresh/logout, send email, manage API keys; (with inbound) list/read emails + attachment download.
 2. **MCP server** (agents): `send_email`, plus `list_emails` / `get_email` / `get_email_attachment_url` (read tools, registered only when inbound is enabled). Built with the official **`@modelcontextprotocol/sdk`** Streamable HTTP transport in **stateless mode** behind API GW + Lambda (request/response tool-calling; no server-push needed). API-key auth via the Lambda authorizer.
 
 ## Sending ✅

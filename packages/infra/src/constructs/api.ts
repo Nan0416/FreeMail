@@ -10,7 +10,6 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { AaaaRecord, ARecord, RecordTarget } from 'aws-cdk-lib/aws-route53';
 import { ApiGatewayv2DomainProperties } from 'aws-cdk-lib/aws-route53-targets';
 import type { IBucket } from 'aws-cdk-lib/aws-s3';
-import { Secret } from 'aws-cdk-lib/aws-secretsmanager';
 import {
   HttpLambdaAuthorizer,
   HttpLambdaResponseType,
@@ -80,8 +79,6 @@ export class ApiConstruct extends Construct {
   readonly authorizerHandler: NodejsFunction;
   /** MCP server (agent-facing `send_email` tool) — its own handler behind the shared authorizer. */
   readonly mcpHandler: NodejsFunction;
-  /** Auto-generated HS256 signing key (no manual bootstrap step). */
-  readonly signingKey: Secret;
   /** The configured custom API domain, if any (from `FreeMailConfig.apiDomain`). */
   readonly customDomainName?: string;
   private readonly restIntegration: HttpLambdaIntegration;
@@ -99,12 +96,6 @@ export class ApiConstruct extends Construct {
       inboundEnabled,
       customDomain,
     } = props;
-
-    this.signingKey = new Secret(this, 'JwtSigningKey', {
-      description: 'HS256 signing key for FreeMail access tokens.',
-      // Generated at deploy → the "one cdk deploy" UX needs no out-of-band secret.
-      generateSecretString: { passwordLength: 64, excludePunctuation: true },
-    });
 
     // Created before the handlers so its endpoint can be baked into their env as the
     // public base for `/d/{token}` download links (DOWNLOAD_BASE_URL). The Api resource
@@ -132,7 +123,6 @@ export class ApiConstruct extends Construct {
         MAIL_BUCKET: mailBucket.bucketName,
         EMAIL_DOMAIN: emailDomain,
         SES_CONFIGURATION_SET: sesConfigurationSetName,
-        SIGNING_KEY_SECRET_ID: this.signingKey.secretName,
         // Public base for `/d/{token}` links — the API's own endpoint (no bucket exposure).
         DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
       },
@@ -153,7 +143,6 @@ export class ApiConstruct extends Construct {
     // Sent raw MIME archive (#29): the send route writes it; the always-available
     // GET /emails/{id} re-parses it for the sent body.
     mailBucket.grantReadWrite(this.restHandler, 'sent/*');
-    this.signingKey.grantRead(this.restHandler);
 
     // The REST `/emails` route sends.
     this.grantSesSend(this.restHandler, emailDomain);
@@ -200,12 +189,15 @@ export class ApiConstruct extends Construct {
       description: 'FreeMail Lambda authorizer (access tokens + API keys).',
       environment: {
         API_KEYS_TABLE: apiKeysTable.tableName,
-        SIGNING_KEY_SECRET_ID: this.signingKey.secretName,
+        AUTH_TABLE: authTable.tableName,
       },
     });
-    this.signingKey.grantRead(this.authorizerHandler);
     // The authorizer only reads hashed keys to validate a presented one.
     apiKeysTable.grantReadData(this.authorizerHandler);
+    // Read-only on the auth table for the HS256 signing key (#42 item 1b). The REST
+    // handler generates and persists it; the authorizer never writes and fails closed
+    // when the row is absent.
+    authTable.grantReadData(this.authorizerHandler);
 
     this.authorizer = new HttpLambdaAuthorizer('Authorizer', this.authorizerHandler, {
       authorizerName: 'FreeMailAuthorizer',
@@ -218,8 +210,7 @@ export class ApiConstruct extends Construct {
 
     this.restIntegration = new HttpLambdaIntegration('RestIntegration', this.restHandler);
 
-    // Public (no token yet): set-password, login, refresh, logout.
-    this.addRestRoute('/auth/set-password', HttpMethod.POST);
+    // Public (no token yet): login (which enrolls on first use, #42), refresh, logout.
     this.addRestRoute('/auth/login', HttpMethod.POST);
     this.addRestRoute('/auth/refresh', HttpMethod.POST);
     this.addRestRoute('/auth/logout', HttpMethod.POST);

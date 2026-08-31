@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { AuthProvider } from '../../src/auth/auth-context.js';
 import { AuthGate } from '../../src/components/AuthGate.js';
@@ -97,7 +97,9 @@ describe('AuthGate', () => {
     expect(screen.queryByRole('form', { name: 'Sign in' })).not.toBeInTheDocument();
   });
 
-  it('flips to first-run set-password when the server reports password_not_set', async () => {
+  it('signs straight in on a fresh deployment — one login call, no set-password step', async () => {
+    // #42 trust-on-first-use: the server enrolls the submitted password and returns a
+    // session, so the SPA needs no first-run screen and no second request.
     const fetchMock = vi.fn<typeof fetch>(async (url) => {
       const res = noSession(url);
       if (res) {
@@ -105,19 +107,38 @@ describe('AuthGate', () => {
       }
       const path = new URL(String(url)).pathname;
       if (path === '/auth/login') {
-        return json(400, { error: 'password_not_set', message: 'no password yet' });
+        return json(200, { subject: 'owner' });
       }
       throw new Error(`unexpected ${path}`);
     });
     renderGate(fetchMock);
 
     fireEvent.change(await screen.findByLabelText('Password'), {
-      target: { value: 'whatever-value' },
+      target: { value: 'a-strong-enough-password' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    expect(await screen.findByRole('form', { name: 'Set password' })).toBeInTheDocument();
-    expect(screen.getByLabelText('New password')).toBeInTheDocument();
+    await screen.findByRole('heading', { name: 'Compose' });
+    expect(screen.queryByRole('form', { name: 'Set password' })).not.toBeInTheDocument();
+    const loginCalls = fetchMock.mock.calls.filter(
+      ([url]) => new URL(String(url)).pathname === '/auth/login',
+    );
+    expect(loginCalls).toHaveLength(1);
+  });
+
+  it('warns that the first password entered claims the account', async () => {
+    // The SPA cannot detect first run (no unauthenticated "is a password set?" probe),
+    // so the consequence is stated up front rather than discovered by mistyping it.
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      const res = noSession(url);
+      if (res) {
+        return res;
+      }
+      throw new Error(`unexpected ${new URL(String(url)).pathname}`);
+    });
+    renderGate(fetchMock);
+    await screen.findByRole('form', { name: 'Sign in' });
+    expect(screen.getByText(/becomes your account password/i)).toBeInTheDocument();
   });
 
   it('shows an error on invalid credentials', async () => {
@@ -132,44 +153,5 @@ describe('AuthGate', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('wrong password');
-  });
-
-  it('validates matching passwords before first-run set-password', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async (url) => {
-      const res = noSession(url);
-      if (res) {
-        return res;
-      }
-      const path = new URL(String(url)).pathname;
-      if (path === '/auth/login') {
-        return json(400, { error: 'password_not_set', message: 'no password yet' });
-      }
-      throw new Error(`unexpected ${path}`);
-    });
-    renderGate(fetchMock);
-
-    fireEvent.change(await screen.findByLabelText('Password'), {
-      target: { value: 'first-attempt-pw' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    await screen.findByRole('form', { name: 'Set password' });
-
-    fireEvent.change(screen.getByLabelText('New password'), {
-      target: { value: 'a-long-enough-password' },
-    });
-    fireEvent.change(screen.getByLabelText('Confirm password'), {
-      target: { value: 'does-not-match-this' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: 'Set password & sign in' }));
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('do not match');
-    // only the login call happened; the mismatch was caught client-side
-    await waitFor(() =>
-      expect(
-        fetchMock.mock.calls.filter(
-          ([url]) => new URL(String(url)).pathname === '/auth/set-password',
-        ),
-      ).toHaveLength(0),
-    );
   });
 });
