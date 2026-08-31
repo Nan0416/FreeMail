@@ -9,7 +9,6 @@ import { handler } from '../../src/handlers/rest.js';
 // plumbing without DDB. OWNER_SUBJECT is re-exported because the handler imports it.
 const { authMocks } = vi.hoisted(() => ({
   authMocks: {
-    setPassword: vi.fn(),
     login: vi.fn(),
     refresh: vi.fn(),
     logout: vi.fn(),
@@ -18,7 +17,6 @@ const { authMocks } = vi.hoisted(() => ({
 vi.mock('../../src/auth/service.js', () => ({
   OWNER_SUBJECT: 'owner',
   AuthService: class {
-    setPassword = authMocks.setPassword;
     login = authMocks.login;
     refresh = authMocks.refresh;
     logout = authMocks.logout;
@@ -37,6 +35,7 @@ const TOKEN_PAIR = {
 // routes reject the api-key scheme BEFORE any table access, so no DDB is touched.
 vi.mock('../../src/config/signing-key.js', () => ({
   getSigningKey: () => Promise.resolve('test-signing-key'),
+  getOrCreateSigningKey: () => Promise.resolve('test-signing-key'),
   resetSigningKeyCache: () => {},
 }));
 
@@ -95,7 +94,6 @@ beforeEach(() => {
     messageId: 'ses-1',
     sentAt: '2026-07-17T00:00:00.000Z',
   });
-  authMocks.setPassword.mockReset().mockResolvedValue(undefined);
   authMocks.login.mockReset().mockResolvedValue(TOKEN_PAIR);
   authMocks.refresh.mockReset();
   authMocks.logout.mockReset().mockResolvedValue(undefined);
@@ -267,14 +265,6 @@ describe('rest handler — session cookies (login)', () => {
     expect(res.cookies?.[0]).toContain(`${ACCESS_COOKIE}=AT`);
     expect(res.cookies?.[1]).toContain(`${REFRESH_COOKIE}=RT`);
     expect(authMocks.login).toHaveBeenCalledWith('a-password');
-  });
-
-  it('set-password returns 204 no-store and sets NO cookies', async () => {
-    const res = await handler(authEvent('POST /auth/set-password', { body: { password: 'a-pw' } }));
-    expect(res.statusCode).toBe(204);
-    expect(res.headers?.['cache-control']).toBe('no-store');
-    expect(res.cookies).toBeUndefined();
-    expect(authMocks.setPassword).toHaveBeenCalledWith('a-pw');
   });
 });
 

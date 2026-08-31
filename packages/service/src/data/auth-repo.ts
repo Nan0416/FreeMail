@@ -13,8 +13,22 @@ export interface AuthRepo {
    */
   createPasswordHash(hash: string): Promise<boolean>;
 
-  /** The stored password hash, or null when set-password has not run. */
+  /** The stored password hash, or null when no password has been enrolled yet. */
   getPasswordHash(): Promise<string | null>;
+
+  /**
+   * The persisted HS256 access-token signing key, or null when none has been
+   * generated yet. Read by both the token writer and the authorizer, which fails
+   * closed on null (no key can have signed a token that does not exist yet).
+   */
+  getSigningKey(): Promise<string | null>;
+
+  /**
+   * Store the signing key only if none exists yet. Returns false when a concurrent
+   * cold start won the race, so the caller adopts the winner's key rather than
+   * signing tokens with one no other instance will accept.
+   */
+  createSigningKey(key: string): Promise<boolean>;
 
   /**
    * Current lockout counters (or null when there have been no recent failures),

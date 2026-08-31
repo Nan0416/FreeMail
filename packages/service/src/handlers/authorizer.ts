@@ -19,6 +19,7 @@ import { verifyAccessToken } from '../auth/jwt.js';
 import { OWNER_SUBJECT } from '../auth/service.js';
 import { ACCESS_COOKIE, DUPLICATE_COOKIE, readCookie } from '../auth/cookies.js';
 import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
+import { DdbAuthRepo } from '../data/ddb-auth-repo.js';
 import { ApiKeyService } from '../keys/service.js';
 
 interface AuthorizerContext {
@@ -26,8 +27,9 @@ interface AuthorizerContext {
   readonly scheme: 'access' | 'apiKey';
 }
 
-// Reused across warm invocations. Verification is a table read; no signing key needed.
+// Reused across warm invocations. API-key verification is a table read; no signing key needed.
 let apiKeyService: ApiKeyService | undefined;
+let authRepo: DdbAuthRepo | undefined;
 
 function getApiKeyService(): ApiKeyService {
   const tableName = process.env.API_KEYS_TABLE;
@@ -36,6 +38,16 @@ function getApiKeyService(): ApiKeyService {
   }
   apiKeyService ??= new ApiKeyService({ repo: new DdbApiKeysRepo(tableName) });
   return apiKeyService;
+}
+
+/** Read-only view of the auth table — the authorizer holds no write grant on it. */
+function getAuthRepo(): DdbAuthRepo {
+  const tableName = process.env.AUTH_TABLE;
+  if (!tableName) {
+    throw new Error('AUTH_TABLE is not set.');
+  }
+  authRepo ??= new DdbAuthRepo(tableName);
+  return authRepo;
 }
 
 type Result = APIGatewaySimpleAuthorizerWithContextResult<AuthorizerContext>;
@@ -57,11 +69,14 @@ export const handler = async (
     return DENY;
   }
   if (typeof access === 'string') {
-    const result = await verifyAccessToken(
-      access,
-      await getSigningKey(),
-      Math.floor(Date.now() / 1000),
-    );
+    // Fail closed when no key has been generated yet: the login route mints the key
+    // before it can issue a token, so a cookie presented against an empty table was
+    // never signed by this deployment.
+    const signingKey = await getSigningKey(getAuthRepo());
+    if (signingKey === null) {
+      return DENY;
+    }
+    const result = await verifyAccessToken(access, signingKey, Math.floor(Date.now() / 1000));
     if (result.valid) {
       return { isAuthorized: true, context: { sub: result.claims.sub, scheme: 'access' } };
     }

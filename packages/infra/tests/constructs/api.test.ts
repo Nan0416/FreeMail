@@ -48,13 +48,10 @@ function roleActions(template: Template, description: string): string[] {
 }
 
 describe('ApiConstruct', () => {
-  it('stands up one HTTP API with an auto-generated signing key', () => {
+  it('stands up one HTTP API and no Secrets Manager secret (#42 — the signing key lives in authTable)', () => {
     const template = synth();
     template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
-    template.resourceCountIs('AWS::SecretsManager::Secret', 1);
-    template.hasResourceProperties('AWS::SecretsManager::Secret', {
-      GenerateSecretString: { PasswordLength: 64 },
-    });
+    template.resourceCountIs('AWS::SecretsManager::Secret', 0);
     template.hasOutput('ApiEndpoint', {});
   });
 
@@ -86,14 +83,15 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('exposes 14 routes: 5 public (4 auth + download) + 9 protected (me + 3 keys + send + 3 reads + mcp)', () => {
+  it('exposes 13 routes: 4 public (3 auth + download) + 9 protected (me + 3 keys + send + 3 reads + mcp)', () => {
     const template = synth();
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 14);
+    // 3 auth routes, not 4: #42 folded enrollment into login and dropped /auth/set-password.
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 13);
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const authorizationTypes = routes.map((r) => r.Properties.AuthorizationType);
     // The public GET /d/{token} download is unauthenticated (the token is the capability).
     expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(9);
-    expect(authorizationTypes.filter((t) => t !== 'CUSTOM')).toHaveLength(5);
+    expect(authorizationTypes.filter((t) => t !== 'CUSTOM')).toHaveLength(4);
   });
 
   it('registers GET /d/{token} as a PUBLIC route (no authorizer)', () => {
@@ -131,7 +129,6 @@ describe('ApiConstruct', () => {
           API_KEYS_TABLE: Match.anyValue(),
           // The read routes need the mail bucket (raw MIME re-parse + attachment presign).
           MAIL_BUCKET: Match.anyValue(),
-          SIGNING_KEY_SECRET_ID: Match.anyValue(),
           // Large-attachment (#14): token store + the public base for /d/{token} links.
           DOWNLOAD_TOKENS_TABLE: Match.anyValue(),
           DOWNLOAD_BASE_URL: Match.anyValue(),
@@ -170,7 +167,6 @@ describe('ApiConstruct', () => {
           // Authentication is the shared authorizer's job — the MCP handler needs none of these.
           AUTH_TABLE: Match.absent(),
           API_KEYS_TABLE: Match.absent(),
-          SIGNING_KEY_SECRET_ID: Match.absent(),
         }),
       },
     });
@@ -211,17 +207,22 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('grants the handlers read access to the signing key secret', () => {
+  it('gives the authorizer the auth table (signing-key read) but never write access to it', () => {
     const template = synth();
-    template.hasResourceProperties('AWS::IAM::Policy', {
-      PolicyDocument: {
-        Statement: Match.arrayWith([
-          Match.objectLike({
-            Action: Match.arrayWith(['secretsmanager:GetSecretValue']),
-          }),
-        ]),
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Description: Match.stringLikeRegexp('authorizer'),
+      Environment: {
+        Variables: Match.objectLike({ AUTH_TABLE: Match.anyValue() }),
       },
     });
+
+    const actions = roleActions(template, 'FreeMail Lambda authorizer (access tokens + API keys).');
+    expect(actions).toContain('dynamodb:GetItem');
+    // Read-only: the REST handler generates and persists the key; the authorizer
+    // verifies with it and fails closed when the row is absent.
+    expect(actions).not.toContain('dynamodb:PutItem');
+    expect(actions).not.toContain('dynamodb:UpdateItem');
+    expect(actions).not.toContain('dynamodb:DeleteItem');
   });
 });
 

@@ -32,7 +32,7 @@ import { createDownloadServiceFromEnv } from '../email/create-download-service.j
 import { parseListEmailsQuery } from '../email/list-query.js';
 import type { ListEmailsQuery } from '../email/read-service.js';
 import { EmailError, emailErrors } from '../email/errors.js';
-import { getSigningKey } from '../config/signing-key.js';
+import { getOrCreateSigningKey } from '../config/signing-key.js';
 import { requireAccessScheme, subjectFromContext } from './request-context.js';
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
@@ -40,7 +40,7 @@ const JSON_HEADERS = { 'content-type': 'application/json' };
 // (a cached session cookie served to another viewer is the nightmare case).
 const NO_STORE_HEADERS = { 'cache-control': 'no-store' };
 
-// Reused across warm invocations; the signing key is cached inside getSigningKey.
+// Reused across warm invocations; the signing key is cached inside getOrCreateSigningKey.
 let repo: DdbAuthRepo | undefined;
 let keysRepo: DdbApiKeysRepo | undefined;
 
@@ -66,11 +66,14 @@ export const handler = async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   try {
-    const service = new AuthService({ repo: getRepo(), signingKey: await getSigningKey() });
+    const authRepo = getRepo();
+    // The REST handler owns key generation (it is the only holder of authTable write),
+    // and it runs before any token can exist because login is served from here.
+    const service = new AuthService({
+      repo: authRepo,
+      signingKey: await getOrCreateSigningKey(authRepo),
+    });
     switch (event.routeKey) {
-      case 'POST /auth/set-password':
-        await service.setPassword(requireString(parseBody(event), 'password'));
-        return authNoContent();
       case 'POST /auth/login': {
         const pair = await service.login(requireString(parseBody(event), 'password'));
         // Tokens ride in httpOnly cookies; the body only echoes the session subject.

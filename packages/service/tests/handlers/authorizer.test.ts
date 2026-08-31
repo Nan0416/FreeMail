@@ -5,6 +5,7 @@ import { handler } from '../../src/handlers/authorizer.js';
 
 vi.mock('../../src/config/signing-key.js', () => ({
   getSigningKey: () => Promise.resolve('test-key'),
+  getOrCreateSigningKey: () => Promise.resolve('test-key'),
 }));
 
 const { verifyMock } = vi.hoisted(() => ({ verifyMock: vi.fn() }));
@@ -17,6 +18,7 @@ vi.mock('../../src/keys/service.js', () => ({
   },
 }));
 vi.mock('../../src/data/ddb-keys-repo.js', () => ({ DdbApiKeysRepo: class {} }));
+vi.mock('../../src/data/ddb-auth-repo.js', () => ({ DdbAuthRepo: class {} }));
 
 function event(opts: {
   cookies?: string[];
@@ -30,12 +32,14 @@ function event(opts: {
 
 beforeEach(() => {
   process.env.API_KEYS_TABLE = 'keys-test';
+  process.env.AUTH_TABLE = 'auth-test';
   verifyMock.mockReset();
   verifyKeyMock.mockReset();
 });
 
 afterEach(() => {
   delete process.env.API_KEYS_TABLE;
+  delete process.env.AUTH_TABLE;
 });
 
 describe('authorizer — access via httpOnly cookie', () => {

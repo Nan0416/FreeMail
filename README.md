@@ -98,7 +98,7 @@ npx cdk deploy           # deploys FreeMailStack, reads ../../freemail.config.js
 
 After the deploy:
 
-1. Open the **`WebAppUrl`** from the stack outputs and **set your password** on first visit.
+1. Open the **`WebAppUrl`** from the stack outputs and **sign in**. On a fresh deployment the first password you enter **becomes** the account password (trust-on-first-use), so type it carefully and do it promptly — until you do, the account is unclaimed.
 2. **Request [SES production access](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html)** — SES starts every account in _sandbox_ mode (verified recipients only). This is a one-time, **manual, per-AWS-account** step that cannot be automated.
 3. To let agents send, create an **API key** in the web app (shown once) and hand it to your agent as `x-api-key`.
 

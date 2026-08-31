@@ -1,7 +1,7 @@
 /**
- * Single-tenant auth orchestration: set-password (first run), login, refresh,
- * logout. All I/O goes through the injected `AuthRepo`, and time through the
- * injected clock, so every branch here is unit-testable without AWS.
+ * Single-tenant auth orchestration: login (which also enrolls on first use),
+ * refresh, logout. All I/O goes through the injected `AuthRepo`, and time through
+ * the injected clock, so every branch here is unit-testable without AWS.
  */
 import {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -21,7 +21,7 @@ export const OWNER_SUBJECT = 'owner';
 
 export interface AuthServiceDeps {
   readonly repo: AuthRepo;
-  /** HS256 signing key for access tokens (resolved from Secrets Manager by the caller). */
+  /** HS256 signing key for access tokens (resolved from the auth table by the caller). */
   readonly signingKey: string;
   /** Epoch-seconds clock; injectable for tests. */
   readonly now?: () => number;
@@ -38,18 +38,15 @@ export class AuthService {
     this.now = deps.now ?? (() => Math.floor(Date.now() / 1000));
   }
 
-  /** First-run only: set the account password. Rejects if one is already set. */
-  async setPassword(password: string): Promise<void> {
-    if (passwordPolicyError(password) !== null) {
-      throw authErrors.weakPassword();
-    }
-    const created = await this.repo.createPasswordHash(hashPassword(password));
-    if (!created) {
-      throw authErrors.passwordAlreadySet();
-    }
-  }
-
-  /** Verify the password (subject to lockout) and issue a fresh token pair. */
+  /**
+   * Verify the password (subject to lockout) and issue a fresh token pair.
+   *
+   * On a deployment with no password yet this ENROLLS instead (#42 item 1a,
+   * trust-on-first-use): the submitted password is hashed and claimed atomically, and
+   * the caller is signed in as the owner. There is no separate set-password step, so
+   * whoever reaches this route first owns the account — the same trust boundary the
+   * public `POST /auth/set-password` route had, with one fewer step.
+   */
   async login(password: string): Promise<TokenPair> {
     const now = this.now();
 
@@ -58,9 +55,20 @@ export class AuthService {
       throw authErrors.accountLocked(retryAfterSeconds(lockout, now));
     }
 
-    const storedHash = await this.repo.getPasswordHash();
+    let storedHash = await this.repo.getPasswordHash();
     if (storedHash === null) {
-      throw authErrors.passwordNotSet();
+      if (await this.enroll(password)) {
+        // Won enrollment. No lockout can have accrued yet — a failed attempt is only
+        // recorded below, which requires a stored hash — so there is nothing to clear.
+        return this.issueTokens(now);
+      }
+      // A concurrent first login claimed the account between the read and the write.
+      // Fall through and verify against the winner's hash, exactly as a normal login:
+      // matching password → signed in, otherwise invalid_credentials.
+      storedHash = await this.repo.getPasswordHash();
+      if (storedHash === null) {
+        throw new Error('Password hash is absent immediately after a lost enrollment race.');
+      }
     }
 
     if (!verifyPassword(password, storedHash)) {
@@ -75,6 +83,20 @@ export class AuthService {
 
     await this.repo.clearLockout();
     return this.issueTokens(now);
+  }
+
+  /**
+   * Trust-on-first-use enrollment: claim the account for this password. The atomic
+   * conditional write means exactly one concurrent caller can win; the return value
+   * tells `login` whether this one did.
+   */
+  private async enroll(password: string): Promise<boolean> {
+    // Policy is enforced here rather than on every login so an existing account with a
+    // legacy-length password can still sign in if the minimum is ever raised.
+    if (passwordPolicyError(password) !== null) {
+      throw authErrors.weakPassword();
+    }
+    return this.repo.createPasswordHash(hashPassword(password));
   }
 
   /**

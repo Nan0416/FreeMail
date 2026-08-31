@@ -266,7 +266,7 @@ describe('FreeMailClient (cookie auth)', () => {
       .fn<typeof fetch>()
       .mockResolvedValue(json(400, { error: 'weak_password', message: 'too short' }));
     const client = makeClient(fetchMock);
-    const rejection = client.setPassword('short');
+    const rejection = client.login('short');
     await expect(rejection).rejects.toBeInstanceOf(ApiError);
     await expect(rejection).rejects.toMatchObject({
       status: 400,
