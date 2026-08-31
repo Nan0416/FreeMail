@@ -39,6 +39,8 @@ TypeScript · npm workspaces monorepo · Node.js (Lambda) · React (SPA) · AWS 
 2. **MCP server** (agents): `send_email`, plus `list_emails` / `get_email` / `get_email_attachment_url` (read tools, registered only when inbound is enabled). Built with the official **`@modelcontextprotocol/sdk`** Streamable HTTP transport in **stateless mode** behind API GW + Lambda (request/response tool-calling; no server-push needed). API-key auth via the Lambda authorizer.
 
 ## Sending ✅
+The SES domain identity is normally **created** by FreeMail together with its DKIM/SPF/MAIL-FROM/DMARC records; `sesIdentity.mode: "import"` adopts a domain that is **already** set up for SES, creating neither (both would fail the deploy as "already exists"). Import mode keeps FreeMail's configuration set, because the sender names it on every call rather than relying on the identity's default association — so suppression and bounce/complaint handling are unaffected.
+
 `SES SendRawEmail` — send from **any address under the domain**. Requires **SES production access** (sandbox exit) per AWS account — a documented required manual step. Bounces/complaints via SNS → suppression + logging (reputation).
 
 ## Inbound (optional) ✅

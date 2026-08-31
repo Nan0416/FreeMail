@@ -27,6 +27,21 @@ export interface HostedZoneConfig {
   readonly hostedZoneId?: string;
 }
 
+/** How the SES domain identity is managed. */
+export type SesIdentityMode = 'create' | 'import';
+
+export interface SesIdentityConfig {
+  /**
+   * `create` (default) — FreeMail creates the SES domain identity for `emailDomain` and
+   * writes its DKIM / SPF / custom-MAIL-FROM / DMARC records into the hosted zone.
+   *
+   * `import` — the identity already exists and is verified, and you manage its auth
+   * records yourself. FreeMail creates neither the identity nor any of those records, so
+   * a domain that is already set up for SES does not collide on deploy.
+   */
+  readonly mode: SesIdentityMode;
+}
+
 export interface InboundConfig {
   /** Receive email (SES receipt → S3). Off by default. */
   readonly enabled: boolean;
@@ -56,6 +71,8 @@ export interface FreeMailConfig {
    * to it.
    */
   readonly apiDomain: string;
+  /** How the SES identity for `emailDomain` is managed. Omit for `create`. */
+  readonly sesIdentity: SesIdentityConfig;
   readonly inbound: InboundConfig;
 }
 
@@ -89,6 +106,14 @@ const hostedZoneSchema = z
     }
   });
 
+const sesIdentitySchema = z
+  .object({
+    mode: z.enum(['create', 'import'], { error: 'must be "create" or "import"' }),
+  })
+  // Defaults to the original behavior, so a config written before this option existed
+  // keeps deploying exactly as it did.
+  .default({ mode: 'create' });
+
 const inboundSchema = z.object({
   enabled: z.boolean({ error: 'must be a boolean' }),
   confirmInboundMx: z.boolean({ error: 'must be a boolean' }),
@@ -106,6 +131,7 @@ const freeMailConfigSchema = z
     emailDomain: domainSchema,
     appDomain: domainSchema,
     apiDomain: domainSchema,
+    sesIdentity: sesIdentitySchema,
     inbound: inboundSchema,
   })
   .superRefine((config, ctx) => {
@@ -177,7 +203,8 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
     throw new Error(formatIssues(result.error));
   }
 
-  const { region, hostedZone, emailDomain, appDomain, apiDomain, inbound } = result.data;
+  const { region, hostedZone, emailDomain, appDomain, apiDomain, sesIdentity, inbound } =
+    result.data;
   return {
     region,
     hostedZone: {
@@ -188,6 +215,7 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
     emailDomain,
     appDomain,
     apiDomain,
+    sesIdentity: { mode: sesIdentity.mode },
     inbound: { enabled: inbound.enabled, confirmInboundMx: inbound.confirmInboundMx },
   };
 }

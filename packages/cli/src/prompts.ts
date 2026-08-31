@@ -122,6 +122,13 @@ export async function promptAnswers(): Promise<InitAnswers> {
     `api.${hostedZone.zoneName}`,
   );
 
+  // Import mode exists for a domain already set up for SES: creating the identity or its
+  // auth records again would fail the deploy outright ("already exists").
+  const sesIdentityExists = await confirm({
+    message: `Is there already a VERIFIED SES identity for "${emailDomain}" (DKIM/SPF/DMARC set up)?`,
+    default: false,
+  });
+
   const inboundEnabled = await confirm({
     message: 'Enable inbound email (receiving)? Off by default.',
     default: false,
@@ -140,7 +147,15 @@ export async function promptAnswers(): Promise<InitAnswers> {
     });
   }
 
-  return { hostedZone, emailDomain, appDomain, apiDomain, inboundEnabled, inboundConfirmed };
+  return {
+    hostedZone,
+    emailDomain,
+    appDomain,
+    apiDomain,
+    sesIdentityExists,
+    inboundEnabled,
+    inboundConfirmed,
+  };
 }
 
 export function confirmOverwrite(path: string): Promise<boolean> {

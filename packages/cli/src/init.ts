@@ -20,6 +20,8 @@ export interface InitAnswers {
   readonly appDomain: string;
   /** Domain the API is served at. Required as of #47 (no execute-api default). */
   readonly apiDomain: string;
+  /** True when a verified SES identity for `emailDomain` already exists → import mode. */
+  readonly sesIdentityExists: boolean;
   readonly inboundEnabled: boolean;
   /** Whether the deployer acknowledged the MX-override warning. */
   readonly inboundConfirmed: boolean;
@@ -34,6 +36,7 @@ export function buildConfig(answers: InitAnswers): FreeMailConfig {
     emailDomain: answers.emailDomain,
     appDomain: answers.appDomain,
     apiDomain: answers.apiDomain,
+    sesIdentity: { mode: answers.sesIdentityExists ? 'import' : 'create' },
     inbound: { enabled: inboundEnabled, confirmInboundMx: inboundEnabled },
   });
 }

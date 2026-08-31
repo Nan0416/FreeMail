@@ -32,6 +32,7 @@ export class FreeMailStack extends Stack {
       hostedZone: dns.hostedZone,
       emailDomain: config.emailDomain,
       region: config.region,
+      sesIdentityMode: config.sesIdentity.mode,
       // SES owns inbound too: pass the mail stores only when inbound is enabled, and
       // the construct instantiates the receipt pipeline as a child. The confirmInboundMx
       // acknowledgement gate (assertInboundAcknowledged, above) still fires first.
@@ -110,8 +111,18 @@ export class FreeMailStack extends Stack {
       value: 'DNS-validated ACM (us-east-1) via Route53',
     });
 
-    new CfnOutput(this, 'SesIdentityName', { value: ses.emailIdentity.emailIdentityName });
-    new CfnOutput(this, 'SesMailFromDomain', { value: ses.mailFromDomain });
+    // The identity name IS the domain in both modes, so this reads from config rather
+    // than the construct — in import mode there is no construct to read from.
+    new CfnOutput(this, 'SesIdentityName', {
+      description:
+        config.sesIdentity.mode === 'import'
+          ? 'SES domain identity (IMPORTED — FreeMail did not create it or its auth records).'
+          : 'SES domain identity created by FreeMail.',
+      value: config.emailDomain,
+    });
+    if (ses.mailFromDomain) {
+      new CfnOutput(this, 'SesMailFromDomain', { value: ses.mailFromDomain });
+    }
     new CfnOutput(this, 'SesBounceComplaintTopicArn', {
       value: ses.bounceComplaintTopic.topicArn,
     });
@@ -144,6 +155,16 @@ export class FreeMailStack extends Stack {
         'already active in this account/region, the deploy FAILS rather than overriding it — deactivate that ' +
         'set, or deploy FreeMail to a dedicated account/region, before enabling inbound.',
     );
+    // Import mode means the domain is ALREADY set up for SES outside FreeMail, which
+    // makes it the likeliest case to already have working mail delivery to clobber.
+    if (config.sesIdentity.mode === 'import') {
+      Annotations.of(this).addWarning(
+        `The SES identity for "${config.emailDomain}" is IMPORTED, so this domain already has an ` +
+          'email setup FreeMail does not own — and enabling inbound will still repoint its MX ' +
+          'record at SES, overriding however that domain receives mail today. If anything ' +
+          'currently delivers to it, receive on a dedicated subdomain instead.',
+      );
+    }
     if (!config.inbound.confirmInboundMx) {
       throw new Error(
         'Inbound email is enabled but the MX override has not been acknowledged. ' +

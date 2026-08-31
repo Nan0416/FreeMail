@@ -15,6 +15,7 @@ import {
 import { Topic } from 'aws-cdk-lib/aws-sns';
 import { LambdaSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
+import type { SesIdentityMode } from '@freemail/shared/config';
 import { InboundConstruct } from './inbound.js';
 
 export interface SesConstructProps {
@@ -22,6 +23,12 @@ export interface SesConstructProps {
   readonly hostedZone: IHostedZone;
   /** Domain SES sends from (any address under it). The zone apex or a subdomain of it. */
   readonly emailDomain: string;
+  /**
+   * `create` — FreeMail owns the SES identity and its auth records.
+   * `import` — the identity already exists and is verified; FreeMail creates neither it
+   * nor any DNS auth record, because both would collide with what is already there.
+   */
+  readonly sesIdentityMode: SesIdentityMode;
   /** Deploy region — the custom MAIL FROM MX target (feedback-smtp.<region>.amazonses.com) is region-specific. */
   readonly region: string;
   /**
@@ -58,21 +65,34 @@ function txt(value: string): string {
  * whether `emailDomain` is the zone apex or a subdomain, and so every DNS record
  * is created explicitly — the auto-created L2 `CnameRecord` double-suffixes the
  * already-fully-qualified DKIM token host, so raw `CfnRecordSet`s are used instead.
+ *
+ * IMPORT MODE (`sesIdentityMode: 'import'`) skips BOTH the identity and every auth
+ * record, for a domain already set up for SES outside FreeMail. Both would otherwise
+ * fail the deploy: `AWS::SES::EmailIdentity` has a fixed physical ID and errors with
+ * "already exists", and a `CfnRecordSet` cannot create a record that is already in the
+ * zone. Everything else is unchanged — notably the configuration set is still created
+ * and still applies, because the sender passes `ConfigurationSetName` explicitly on
+ * every call rather than relying on the identity's default association. So bounce and
+ * complaint handling, suppression, and reputation metrics all work in import mode.
  */
 export class SesConstruct extends Construct {
-  readonly emailIdentity: EmailIdentity;
+  /** The created identity — undefined in import mode, where SES owns it already. */
+  readonly emailIdentity?: EmailIdentity;
   readonly configurationSet: ConfigurationSet;
   /** Bounce & complaint notifications, consumed by the audit logger below (add richer consumers later). */
   readonly bounceComplaintTopic: Topic;
   /** Logs every bounce/complaint SNS notification to CloudWatch for audit. */
   readonly bounceComplaintLogger: LambdaFunction;
-  /** Custom MAIL FROM subdomain (`bounce.<emailDomain>`) — keeps SPF/DMARC aligned with the From domain. */
-  readonly mailFromDomain: string;
+  /**
+   * Custom MAIL FROM subdomain (`bounce.<emailDomain>`) — keeps SPF/DMARC aligned with
+   * the From domain. Undefined in import mode: whatever MAIL FROM the existing identity
+   * carries is the deployer's, and FreeMail neither sets nor asserts it.
+   */
+  readonly mailFromDomain?: string;
 
   constructor(scope: Construct, id: string, props: SesConstructProps) {
     super(scope, id);
-    const { hostedZone, emailDomain, region } = props;
-    this.mailFromDomain = `bounce.${emailDomain}`;
+    const { hostedZone, emailDomain, region, sesIdentityMode } = props;
 
     this.bounceComplaintTopic = new Topic(this, 'BounceComplaintTopic', {
       displayName: `FreeMail SES bounces & complaints (${emailDomain})`,
@@ -96,17 +116,23 @@ export class SesConstruct extends Construct {
     });
     this.bounceComplaintLogger = this.addBounceComplaintLogger();
 
-    this.emailIdentity = new EmailIdentity(this, 'Identity', {
-      identity: Identity.domain(emailDomain),
-      configurationSet: this.configurationSet,
-      dkimSigning: true,
-      mailFromDomain: this.mailFromDomain,
-      // We track bounces/complaints via the SNS event destination above, and the
-      // MAIL FROM subdomain has no inbox, so email feedback forwarding is off.
-      feedbackForwarding: false,
-    });
+    // Import mode: the identity exists and is verified, and its DKIM/SPF/MAIL-FROM/DMARC
+    // records are already in the zone. Creating either here would fail the deploy, so we
+    // create neither and leave that surface entirely to the deployer.
+    if (sesIdentityMode === 'create') {
+      this.mailFromDomain = `bounce.${emailDomain}`;
+      this.emailIdentity = new EmailIdentity(this, 'Identity', {
+        identity: Identity.domain(emailDomain),
+        configurationSet: this.configurationSet,
+        dkimSigning: true,
+        mailFromDomain: this.mailFromDomain,
+        // We track bounces/complaints via the SNS event destination above, and the
+        // MAIL FROM subdomain has no inbox, so email feedback forwarding is off.
+        feedbackForwarding: false,
+      });
 
-    this.writeAuthRecords(hostedZone, emailDomain, region);
+      this.writeAuthRecords(this.emailIdentity, hostedZone, emailDomain, region);
+    }
 
     // SES owns its inbound receipt setup too: when inbound is enabled the stack passes
     // the mail bucket + emails table, and this construct instantiates the inbound
@@ -155,11 +181,16 @@ export class SesConstruct extends Construct {
     return logger;
   }
 
-  private writeAuthRecords(hostedZone: IHostedZone, emailDomain: string, region: string): void {
+  private writeAuthRecords(
+    emailIdentity: EmailIdentity,
+    hostedZone: IHostedZone,
+    emailDomain: string,
+    region: string,
+  ): void {
     // Easy DKIM: 3 CNAMEs. `record.name` is already the fully-qualified host, so a
     // raw CfnRecordSet (which does no FQDN munging) is required — the L2
     // CnameRecord would append the zone name a second time and break DKIM.
-    this.emailIdentity.dkimRecords.forEach((record, index) => {
+    emailIdentity.dkimRecords.forEach((record, index) => {
       this.record(`Dkim${index + 1}`, hostedZone, {
         name: record.name,
         type: 'CNAME',
@@ -175,13 +206,14 @@ export class SesConstruct extends Construct {
     });
 
     // Custom MAIL FROM: MX → the region's feedback SMTP endpoint, plus its own SPF.
+    const mailFromDomain = `bounce.${emailDomain}`;
     this.record('MailFromMx', hostedZone, {
-      name: this.mailFromDomain,
+      name: mailFromDomain,
       type: 'MX',
       resourceRecords: [`10 feedback-smtp.${region}.amazonses.com`],
     });
     this.record('MailFromSpf', hostedZone, {
-      name: this.mailFromDomain,
+      name: mailFromDomain,
       type: 'TXT',
       resourceRecords: [txt(SPF_VALUE)],
     });
