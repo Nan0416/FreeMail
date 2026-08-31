@@ -48,13 +48,14 @@ npx freemail init
 
 It asks:
 
-| Prompt                            | What it sets                             | Notes                                                                                                                                                           |
-| --------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Existing Route53 hosted zone?** | `hostedZone.mode` = `import` or `create` | On `import` it lists your zones (needs AWS creds; falls back to manual entry). On `create`, FreeMail provisions a new zone you must delegate at your registrar. |
-| **Email domain**                  | `emailDomain`                            | The zone apex **or a subdomain of it** — e.g. `example.com` or `mail.example.com`. Must be equal-to or under the hosted zone.                                   |
-| **Web-app domain** (required)     | `appDomain`                              | Where the SPA is served, e.g. `app.example.com`. See [§6](#6-custom-domains-required).                                                                          |
-| **API domain** (required)         | `apiDomain`                              | Where the API is served, e.g. `api.example.com`. Must differ from `appDomain`.                                                                                  |
-| **Enable inbound email?**         | `inbound.enabled`                        | Off by default. If yes, a second prompt makes you **explicitly acknowledge the MX override** (`inbound.confirmInboundMx`). See [§7](#7-inbound-email-optional). |
+| Prompt                              | What it sets                              | Notes                                                                                                                                                                                                             |
+| ----------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Existing Route53 hosted zone?**   | `hostedZone.mode` = `import` or `create`  | On `import` it lists your zones (needs AWS creds; falls back to manual entry). On `create`, FreeMail provisions a new zone you must delegate at your registrar.                                                   |
+| **Email domain**                    | `emailDomain`                             | The zone apex **or a subdomain of it** — e.g. `example.com` or `mail.example.com`. Must be equal-to or under the hosted zone.                                                                                     |
+| **Web-app domain** (required)       | `appDomain`                               | Where the SPA is served, e.g. `app.example.com`. See [§6](#6-custom-domains-required).                                                                                                                            |
+| **API domain** (required)           | `apiDomain`                               | Where the API is served, e.g. `api.example.com`. Must differ from `appDomain`.                                                                                                                                    |
+| **Existing verified SES identity?** | `sesIdentity.mode` = `import` or `create` | Say yes if the domain is **already** set up for SES (verified, with DKIM/SPF/DMARC). FreeMail then creates neither the identity nor those DNS records. See [§6b](#6b-using-an-existing-ses-identity-import-mode). |
+| **Enable inbound email?**           | `inbound.enabled`                         | Off by default. If yes, a second prompt makes you **explicitly acknowledge the MX override** (`inbound.confirmInboundMx`). See [§7](#7-inbound-email-optional).                                                   |
 
 The result looks like:
 
@@ -65,6 +66,7 @@ The result looks like:
   "emailDomain": "mail.example.com",
   "appDomain": "app.example.com", // required
   "apiDomain": "api.example.com", // required
+  "sesIdentity": { "mode": "create" }, // "import" if the domain is already set up for SES
   "inbound": { "enabled": false, "confirmInboundMx": false },
 }
 ```
@@ -179,6 +181,26 @@ Because both domains are now required, **every** deploy provisions certificates 
 - If FreeMail creates the zone, take the `HostedZoneNameServers` from the created zone and set them at your registrar **promptly during** the hanging deploy, so validation completes before CloudFormation gives up. Delegating first, then deploying, is easier if you can.
 
 FreeMail warns about this at synth time (a CDK annotation) whenever the zone is newly created, and emits a `CustomDomainValidationNote` output as a reminder.
+
+## 6b. Using an existing SES identity (import mode)
+
+If the domain is **already** a verified SES identity — you set up DKIM, SPF, a custom MAIL FROM, and DMARC yourself — set:
+
+```json
+"sesIdentity": { "mode": "import" }
+```
+
+FreeMail then creates **neither the SES identity nor any of its DNS auth records**. This is not a nicety: with `mode: "create"` against an already-configured domain the deploy **fails**, because `AWS::SES::EmailIdentity` has a fixed physical ID and errors with _"already exists"_, and a `CfnRecordSet` cannot create a DKIM/SPF/DMARC record that is already in the zone.
+
+**What import mode does not change.** FreeMail still creates its own SES **configuration set**, SNS topic, and bounce/complaint logger, and the sender passes `ConfigurationSetName` explicitly on every send — so suppression, bounce/complaint events, and reputation metrics all work exactly as in create mode. Sending IAM is scoped to `arn:aws:ses:<region>:<account>:identity/<emailDomain>`, which is the same ARN whether FreeMail created the identity or not.
+
+**What becomes your responsibility.** DKIM signing, SPF, DMARC, custom MAIL FROM, and keeping the identity verified. FreeMail does not check any of it at deploy — if the identity is not verified, sends fail at runtime, not at `cdk deploy`.
+
+> ### ⚠️ Import mode does **not** protect your MX record
+>
+> Import mode only skips the identity and its _auth_ records. If you also enable **inbound**, FreeMail still points that domain's **MX** at SES ([§7](#7-inbound-email-optional)) — overriding however the domain receives mail today. Import mode is precisely the case where a working mail setup is likely to exist, so FreeMail emits an extra synth warning for this combination.
+>
+> If anything currently delivers mail to the domain, **receive on a dedicated subdomain** (`emailDomain: "mail.example.com"`) instead.
 
 ### Verifying the cross-origin setup
 

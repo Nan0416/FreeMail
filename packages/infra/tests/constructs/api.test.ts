@@ -10,6 +10,7 @@ const config: FreeMailConfig = {
   emailDomain: 'example.com',
   appDomain: 'app.example.com',
   apiDomain: 'api.example.com',
+  sesIdentity: { mode: 'create' },
   inbound: { enabled: false, confirmInboundMx: false },
 };
 

@@ -12,6 +12,7 @@ const validConfig = {
   // Both required as of #47 — the SPA calls the API cross-origin.
   appDomain: 'app.example.com',
   apiDomain: 'api.example.com',
+  sesIdentity: { mode: 'create' },
   inbound: { enabled: false, confirmInboundMx: false },
 };
 

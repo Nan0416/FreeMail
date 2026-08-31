@@ -17,6 +17,7 @@ const answers = (overrides: Partial<InitAnswers> = {}): InitAnswers => ({
   emailDomain: 'example.com',
   appDomain: 'app.example.com',
   apiDomain: 'api.example.com',
+  sesIdentityExists: false,
   inboundEnabled: false,
   inboundConfirmed: false,
   ...overrides,
@@ -36,6 +37,13 @@ describe('buildConfig', () => {
     const withoutApp: Record<string, unknown> = { ...answers() };
     delete withoutApp.appDomain;
     expect(() => buildConfig(withoutApp as never)).toThrow(/appDomain/);
+  });
+
+  it('maps an existing SES identity to import mode', () => {
+    expect(buildConfig(answers()).sesIdentity).toEqual({ mode: 'create' });
+    expect(buildConfig(answers({ sesIdentityExists: true })).sesIdentity).toEqual({
+      mode: 'import',
+    });
   });
 
   it('enables inbound only when acknowledged', () => {

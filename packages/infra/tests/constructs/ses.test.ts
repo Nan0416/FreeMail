@@ -5,13 +5,24 @@ import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import { SesConstruct } from '../../src/constructs/ses.js';
+import type { SesIdentityMode } from '@freemail/shared/config';
 
-function synth(emailDomain = 'mail.example.com', zoneName = 'example.com'): Template {
+function synth(
+  emailDomain = 'mail.example.com',
+  zoneName = 'example.com',
+  sesIdentityMode: SesIdentityMode = 'create',
+): Template {
   const stack = new Stack(new App(), 'TestStack', {
     env: { region: 'us-east-1', account: '111111111111' },
   });
   const hostedZone = new HostedZone(stack, 'Zone', { zoneName });
-  new SesConstruct(stack, 'Ses', { hostedZone, emailDomain, region: 'us-east-1' });
+  new SesConstruct(stack, 'Ses', {
+    hostedZone,
+    emailDomain,
+    sesIdentityMode: 'create',
+    region: 'us-east-1',
+    sesIdentityMode,
+  });
   return Template.fromStack(stack);
 }
 
@@ -33,6 +44,37 @@ function synthWithInbound(emailDomain = 'mail.example.com', zoneName = 'example.
   });
   return Template.fromStack(stack);
 }
+
+describe('SesConstruct — imported identity', () => {
+  it('creates NEITHER the identity NOR any auth record', () => {
+    // Both would fail the deploy against a domain already set up for SES:
+    // AWS::SES::EmailIdentity has a fixed physical ID ("already exists"), and a
+    // CfnRecordSet cannot create a record that is already in the zone.
+    const template = synth('mail.example.com', 'example.com', 'import');
+    template.resourceCountIs('AWS::SES::EmailIdentity', 0);
+    template.resourceCountIs('AWS::Route53::RecordSet', 0);
+  });
+
+  it('still creates the configuration set, topic, and bounce logger', () => {
+    // The sender passes ConfigurationSetName explicitly on every call, so suppression
+    // and bounce/complaint events keep working WITHOUT the identity association that
+    // create mode relies on. Import mode must not silently lose reputation handling.
+    const template = synth('mail.example.com', 'example.com', 'import');
+    template.resourceCountIs('AWS::SES::ConfigurationSet', 1);
+    template.resourceCountIs('AWS::SES::ConfigurationSetEventDestination', 1);
+    template.resourceCountIs('AWS::SNS::Topic', 1);
+    template.hasResourceProperties('AWS::SES::ConfigurationSet', {
+      SuppressionOptions: { SuppressedReasons: Match.arrayWith(['BOUNCE', 'COMPLAINT']) },
+    });
+  });
+
+  it('create mode is unchanged — identity plus the full record set', () => {
+    const template = synth('mail.example.com', 'example.com', 'create');
+    template.resourceCountIs('AWS::SES::EmailIdentity', 1);
+    // 3 DKIM CNAMEs + SPF + MAIL FROM MX + MAIL FROM SPF + DMARC.
+    template.resourceCountIs('AWS::Route53::RecordSet', 7);
+  });
+});
 
 describe('SesConstruct', () => {
   it('creates a domain identity with DKIM signing, a custom MAIL FROM, and no email forwarding', () => {

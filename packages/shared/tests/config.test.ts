@@ -83,6 +83,22 @@ describe('parseFreeMailConfig', () => {
     expect(message).toContain('apiDomain');
   });
 
+  it('defaults sesIdentity to create when omitted', () => {
+    // A config written before this option existed must keep deploying identically.
+    expect(parseFreeMailConfig(base).sesIdentity).toEqual({ mode: 'create' });
+  });
+
+  it('accepts sesIdentity import for a domain already set up for SES', () => {
+    const config = parseFreeMailConfig({ ...base, sesIdentity: { mode: 'import' } });
+    expect(config.sesIdentity.mode).toBe('import');
+  });
+
+  it('rejects an unknown sesIdentity mode', () => {
+    expect(() => parseFreeMailConfig({ ...base, sesIdentity: { mode: 'adopt' } })).toThrow(
+      /"create" or "import"/,
+    );
+  });
+
   it('requires a hostedZoneId when importing', () => {
     expect(() =>
       parseFreeMailConfig({ ...base, hostedZone: { mode: 'import', zoneName: 'example.com' } }),

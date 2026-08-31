@@ -12,6 +12,7 @@ function makeConfig(overrides: Partial<FreeMailConfig> = {}): FreeMailConfig {
     // Both required as of #47 — the SPA calls the API cross-origin.
     appDomain: 'app.example.com',
     apiDomain: 'api.example.com',
+    sesIdentity: { mode: 'create' },
     inbound: { enabled: false, confirmInboundMx: false },
     ...overrides,
   };
@@ -155,6 +156,25 @@ describe('FreeMailStack', () => {
     );
     annotations.hasWarning('*', Match.stringLikeRegexp('HANG on certificate validation'));
     annotations.hasWarning('*', Match.stringLikeRegexp('name servers'));
+  });
+
+  it('warns that inbound still repoints the MX even when the SES identity is imported', () => {
+    // Import mode means the domain already has an email setup FreeMail does not own —
+    // the likeliest case to have working mail delivery that the MX change would clobber.
+    const stack = new FreeMailStack(new App(), 'TestStack', {
+      config: makeConfig({
+        sesIdentity: { mode: 'import' },
+        inbound: { enabled: true, confirmInboundMx: true },
+      }),
+    });
+    const annotations = Annotations.fromStack(stack);
+    annotations.hasWarning('*', Match.stringLikeRegexp('IMPORTED'));
+    annotations.hasWarning('*', Match.stringLikeRegexp('dedicated subdomain'));
+  });
+
+  it('does NOT warn about the imported identity when it is created by FreeMail', () => {
+    const stack = new FreeMailStack(new App(), 'TestStack', { config: makeConfig() });
+    Annotations.fromStack(stack).hasNoWarning('*', Match.stringLikeRegexp('is IMPORTED'));
   });
 
   it('does NOT warn about custom domains on an IMPORTED (already-delegated) zone', () => {
