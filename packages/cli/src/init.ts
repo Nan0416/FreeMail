@@ -16,8 +16,10 @@ export const DEFAULT_CONFIG_FILENAME = 'freemail.config.json';
 export interface InitAnswers {
   readonly hostedZone: HostedZoneConfig;
   readonly emailDomain: string;
-  readonly appDomain?: string;
-  readonly apiDomain?: string;
+  /** Domain the web app is served at. Required as of #47 (no CloudFront default). */
+  readonly appDomain: string;
+  /** Domain the API is served at. Required as of #47 (no execute-api default). */
+  readonly apiDomain: string;
   readonly inboundEnabled: boolean;
   /** Whether the deployer acknowledged the MX-override warning. */
   readonly inboundConfirmed: boolean;
@@ -30,8 +32,8 @@ export function buildConfig(answers: InitAnswers): FreeMailConfig {
     region: DEFAULT_REGION,
     hostedZone: answers.hostedZone,
     emailDomain: answers.emailDomain,
-    ...(answers.appDomain ? { appDomain: answers.appDomain } : {}),
-    ...(answers.apiDomain ? { apiDomain: answers.apiDomain } : {}),
+    appDomain: answers.appDomain,
+    apiDomain: answers.apiDomain,
     inbound: { enabled: inboundEnabled, confirmInboundMx: inboundEnabled },
   });
 }

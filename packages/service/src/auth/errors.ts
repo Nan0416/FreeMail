@@ -35,5 +35,11 @@ export const authErrors = {
       retryAfterSeconds,
     ),
   invalidToken: () => new AuthError('invalid_token', 401, 'Invalid or expired token.'),
+  unsupportedMediaType: () =>
+    new AuthError(
+      'unsupported_media_type',
+      415,
+      'Content-Type must be application/json for this request.',
+    ),
   forbidden: (message = 'Forbidden.') => new AuthError('forbidden', 403, message),
 };

@@ -8,11 +8,18 @@ const config: FreeMailConfig = {
   region: 'us-east-1',
   hostedZone: { mode: 'create', zoneName: 'example.com' },
   emailDomain: 'example.com',
+  appDomain: 'app.example.com',
+  apiDomain: 'api.example.com',
   inbound: { enabled: false, confirmInboundMx: false },
 };
 
 function synth(): Template {
   return Template.fromStack(new FreeMailStack(new App(), 'TestStack', { config }));
+}
+
+/** Alias for readability where a test inspects raw resources rather than matching. */
+function template(): Template {
+  return synth();
 }
 
 /** Synth with inbound enabled (and its MX acknowledgement) so the #13 read grants are added. */
@@ -55,13 +62,33 @@ describe('ApiConstruct', () => {
     template.hasOutput('ApiEndpoint', {});
   });
 
-  it('configures NO CORS (the web app is same-origin via the CloudFront /api proxy)', () => {
+  it('locks credentialed CORS to the ONE canonical app origin (#47)', () => {
     const template = synth();
-    // The wildcard was removed, not replaced — a same-origin API grants the browser
-    // no cross-origin access, and ambient SameSite=Strict cookies never reach this host.
     template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
-      CorsConfiguration: Match.absent(),
+      CorsConfiguration: {
+        AllowOrigins: ['https://app.example.com'],
+        AllowCredentials: true,
+        AllowHeaders: ['content-type'],
+        AllowMethods: Match.arrayWith(['GET', 'POST', 'DELETE', 'OPTIONS']),
+      },
     });
+  });
+
+  it('never allows a wildcard origin or wildcard headers alongside credentials', () => {
+    // `Access-Control-Allow-Credentials: true` with `*` is the classic footgun — the
+    // browser rejects it outright, and any reflection here would defeat the whole
+    // same-site-sibling defense.
+    const api = Object.values(template().findResources('AWS::ApiGatewayV2::Api'))[0];
+    const cors = api?.Properties?.CorsConfiguration as {
+      AllowOrigins?: string[];
+      AllowHeaders?: string[];
+      AllowMethods?: string[];
+    };
+    expect(cors.AllowOrigins).not.toContain('*');
+    expect(cors.AllowHeaders).not.toContain('*');
+    expect(cors.AllowMethods).not.toContain('*');
+    // Exactly one origin — never a list that could drift into reflection.
+    expect(cors.AllowOrigins).toHaveLength(1);
   });
 
   it('enables NO API-Gateway access logging (so the Cookie header can never be logged)', () => {
@@ -233,14 +260,13 @@ describe('ApiConstruct custom domain (apiDomain)', () => {
     );
   }
 
-  it('uses the generated execute-api URL by default — no cert / custom domain / mapping', () => {
+  it('always wires the custom domain — there is no generated-execute-api fallback (#47)', () => {
     const template = synth();
-    template.resourceCountIs('AWS::CertificateManager::Certificate', 0);
-    template.resourceCountIs('AWS::ApiGatewayV2::DomainName', 0);
-    template.resourceCountIs('AWS::ApiGatewayV2::ApiMapping', 0);
+    template.resourceCountIs('AWS::ApiGatewayV2::DomainName', 1);
+    template.resourceCountIs('AWS::ApiGatewayV2::ApiMapping', 1);
   });
 
-  it('wires a REGIONAL custom domain (cert + domain + mapping + A/AAAA) when apiDomain is set', () => {
+  it('wires a REGIONAL custom domain (cert + domain + mapping + A/AAAA) for apiDomain', () => {
     const template = synthWith({ apiDomain: 'api.example.com' });
     // DNS-validated ACM cert — same-region as the regional HTTP-API domain (us-east-1).
     template.hasResourceProperties('AWS::CertificateManager::Certificate', {

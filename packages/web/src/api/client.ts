@@ -35,7 +35,11 @@ export class ApiError extends Error {
 type Method = 'GET' | 'POST' | 'DELETE';
 
 export interface FreeMailClientOptions {
-  /** API base URL from the runtime `config.json` — the same-origin `/api` proxy path. */
+  /**
+   * Absolute API base URL from the runtime `config.json` (#47) — e.g.
+   * `https://api.example.com`. The SPA is served on its own origin and calls the API
+   * cross-origin, so this is no longer a relative same-origin path.
+   */
   readonly baseUrl: string;
   /** Injectable for tests; defaults to a `fetch` that keeps the global binding. */
   readonly fetchImpl?: typeof fetch;
@@ -47,7 +51,10 @@ export interface FreeMailClientOptions {
  * Thin typed client over the FreeMail REST API. Auth is entirely httpOnly cookies
  * (#31): every request sends `credentials: 'include'` and NO `Authorization` header,
  * and the SPA never reads, stores, or rotates a token — the browser attaches the
- * `__Host-fm_access` / `__Host-fm_refresh` cookies and the server rotates them.
+ * `__Host-fm_access` / `__Host-fm_refresh` cookies and the server rotates them. As of
+ * #47 those requests are CROSS-ORIGIN to the api domain, so `credentials: 'include'` is
+ * what makes the browser attach the cookies at all, and the API answers with an
+ * exact-origin credentialed CORS policy.
  *
  * On a 401/403 for an authenticated request (an expired access cookie surfaces as a
  * 403 from the authorizer) it transparently refreshes once and retries:
@@ -179,10 +186,12 @@ export class FreeMailClient {
   }
 
   private async rawRequest(method: Method, path: string, body: unknown): Promise<Response> {
-    const headers: Record<string, string> = {};
-    if (body !== undefined) {
-      headers['content-type'] = 'application/json';
-    }
+    // ALWAYS sent, even with no body (#47). The server requires `application/json` on
+    // every state-changing route including the bodyless `/auth/refresh` and
+    // `/auth/logout`: it is what makes those requests non-simple, so a same-site sibling
+    // must preflight them and the API's origin allowlist can refuse it. Omitting the
+    // header on the bodyless routes would get them rejected with 415.
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
     return this.fetchImpl(`${this.baseUrl}${path}`, {
       method,
       headers,

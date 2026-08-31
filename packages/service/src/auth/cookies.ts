@@ -2,11 +2,21 @@
  * httpOnly session cookies for the human/web surface (#31). Both the access JWT and
  * the rotating refresh token are delivered as cookies the browser stores but page
  * JavaScript cannot read (`HttpOnly`) — so an XSS payload can neither exfiltrate a
- * token nor find one in `localStorage`/`sessionStorage`. `SameSite=Strict` is the
- * CSRF defense: a cross-site request cannot ride the cookies, which is why the SPA
- * is served SAME-ORIGIN with the API (the CloudFront `/api/*` proxy) — a
- * double-submit token is deferred behind that. The `__Host-` name prefix pins each
- * cookie to `Secure` + `Path=/` + no `Domain`, so a sibling host cannot shadow it.
+ * token nor find one in `localStorage`/`sessionStorage`.
+ *
+ * CSRF (#47, superseding #31's same-origin-proxy model — the SPA is now served on its
+ * own origin and calls the API cross-origin) is defended in layers, because no single
+ * one covers every case:
+ *   - `SameSite=Strict` stops a FOREIGN site from making these cookies ride at all;
+ *   - it does NOT help against a SAME-SITE SIBLING (`evil.example.com`), whose requests
+ *     are same-site and so DO carry the cookies — that case is covered by the handlers'
+ *     `application/json` requirement on every mutation (which forces a preflight) plus
+ *     the API's exact-single-origin CORS policy (which then refuses it). See
+ *     `handlers/content-type.ts`.
+ * A double-submit token stays deferred behind those.
+ *
+ * The `__Host-` name prefix pins each cookie to `Secure` + `Path=/` + no `Domain`, so it
+ * is host-locked to the api domain: a sibling host can neither shadow nor receive it.
  *
  * These are pure serializers/parsers (no AWS), shared by the REST handler (which
  * sets/clears them) and the Lambda authorizer (which reads the access cookie).

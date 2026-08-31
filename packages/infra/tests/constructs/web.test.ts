@@ -3,17 +3,14 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import type { FreeMailConfig } from '@freemail/shared';
 import { FreeMailStack } from '../../src/freemail-stack.js';
-import {
-  APP_CONTENT_SECURITY_POLICY,
-  rewriteApiPath,
-  rewriteSpaPath,
-  webRuntimeConfigJson,
-} from '../../src/constructs/web.js';
+import { appContentSecurityPolicy, webRuntimeConfigJson } from '../../src/constructs/web.js';
 
 const config: FreeMailConfig = {
   region: 'us-east-1',
   hostedZone: { mode: 'create', zoneName: 'example.com' },
   emailDomain: 'example.com',
+  appDomain: 'app.example.com',
+  apiDomain: 'api.example.com',
   inbound: { enabled: false, confirmInboundMx: false },
 };
 
@@ -32,21 +29,27 @@ describe('WebConstruct', () => {
     });
   });
 
-  it('routes SPA client paths via a CloudFront Function, NOT distribution-wide error responses', () => {
+  it('routes SPA client paths via distribution-wide error responses, with NO CloudFront Functions', () => {
     const template = synth();
-    // Two functions: SPA routing (default behavior) + /api prefix strip (proxy behavior).
-    template.resourceCountIs('AWS::CloudFront::Function', 2);
-    // The default (S3) behavior serves index.html via a viewer-request function.
+    // Both Functions are gone with the proxy (#47): SPA routing and the /api prefix strip.
+    template.resourceCountIs('AWS::CloudFront::Function', 0);
     template.hasResourceProperties('AWS::CloudFront::Distribution', {
       DistributionConfig: {
-        DefaultCacheBehavior: {
-          FunctionAssociations: Match.arrayWith([
-            Match.objectLike({ EventType: 'viewer-request' }),
-          ]),
-        },
-        // Custom error responses would be distribution-wide and mask real API 403/404s
-        // coming back through the /api proxy — they must be gone.
-        CustomErrorResponses: Match.absent(),
+        DefaultCacheBehavior: Match.objectLike({ FunctionAssociations: Match.absent() }),
+        // Safe again now that only S3 is behind this distribution — there is no API
+        // whose real 403/404 responses a distribution-wide rule could mask.
+        CustomErrorResponses: Match.arrayWith([
+          Match.objectLike({
+            ErrorCode: 403,
+            ResponseCode: 200,
+            ResponsePagePath: '/index.html',
+          }),
+          Match.objectLike({
+            ErrorCode: 404,
+            ResponseCode: 200,
+            ResponsePagePath: '/index.html',
+          }),
+        ]),
       },
     });
   });
@@ -78,36 +81,23 @@ describe('WebConstruct', () => {
     template.resourceCountIs('Custom::S3AutoDeleteObjects', 1);
   });
 
-  it('proxies /api/* same-origin to the HTTPS API: no caching, all methods, prefix stripped', () => {
+  it('is SPA-ONLY: no /api behavior and no non-S3 origin (#47)', () => {
     const template = synth();
     template.hasResourceProperties('AWS::CloudFront::Distribution', {
       DistributionConfig: {
-        CacheBehaviors: Match.arrayWith([
-          Match.objectLike({
-            PathPattern: '/api/*',
-            // ALLOW_ALL includes the write methods the API needs.
-            AllowedMethods: Match.arrayWith(['POST', 'DELETE']),
-            // Managed CACHING_DISABLED + an origin-request policy (forward cookies/headers).
-            CachePolicyId: Match.anyValue(),
-            OriginRequestPolicyId: Match.anyValue(),
-            // /api is stripped by a viewer-request function before origin routing.
-            FunctionAssociations: Match.arrayWith([
-              Match.objectLike({ EventType: 'viewer-request' }),
-            ]),
-          }),
-        ]),
+        // The `/api/*` proxy behavior is gone entirely — the browser now reaches the
+        // API cross-origin at the api domain under a locked CORS policy.
+        CacheBehaviors: Match.absent(),
       },
     });
-    // The proxy origin is a custom HTTPS-only origin (the HTTP API), not S3.
-    template.hasResourceProperties('AWS::CloudFront::Distribution', {
-      DistributionConfig: {
-        Origins: Match.arrayWith([
-          Match.objectLike({
-            CustomOriginConfig: Match.objectLike({ OriginProtocolPolicy: 'https-only' }),
-          }),
-        ]),
-      },
-    });
+    // Exactly one origin, and it is S3 (OAC) — no custom HTTP origin remains.
+    const distribution = Object.values(template.findResources('AWS::CloudFront::Distribution'))[0];
+    const origins = distribution?.Properties?.DistributionConfig?.Origins as Record<
+      string,
+      unknown
+    >[];
+    expect(origins).toHaveLength(1);
+    expect(origins[0]?.CustomOriginConfig).toBeUndefined();
   });
 
   it('deploys the SPA in two cache tiers: immutable assets + no-cache root/config', () => {
@@ -160,11 +150,10 @@ describe('WebConstruct', () => {
 });
 
 describe('WebConstruct custom domain (appDomain)', () => {
-  it('uses the generated CloudFront domain by default — no cert, no aliases', () => {
+  it('always aliases the distribution — there is no generated-CloudFront-domain fallback (#47)', () => {
     const template = synth();
-    template.resourceCountIs('AWS::CertificateManager::Certificate', 0);
     template.hasResourceProperties('AWS::CloudFront::Distribution', {
-      DistributionConfig: { Aliases: Match.absent() },
+      DistributionConfig: { Aliases: ['app.example.com'] },
     });
   });
 
@@ -192,65 +181,71 @@ describe('WebConstruct custom domain (appDomain)', () => {
     expect(aliasRecords.every((r) => r.Properties?.AliasTarget !== undefined)).toBe(true);
   });
 
-  it('keeps the SPA same-origin (#31): the deployed config.json still points at relative /api', () => {
-    // A custom domain must NOT turn the SPA cross-origin — the app still calls the
-    // same-origin /api proxy, so the __Host- / SameSite=Strict cookie auth is unaffected.
-    expect(webRuntimeConfigJson(false)).toEqual({ apiBaseUrl: '/api', inboundEnabled: false });
-    // And the /api proxy behavior survives unchanged alongside a custom domain.
-    const template = synth({ appDomain: 'mail.example.com' });
-    template.hasResourceProperties('AWS::CloudFront::Distribution', {
-      DistributionConfig: {
-        CacheBehaviors: Match.arrayWith([Match.objectLike({ PathPattern: '/api/*' })]),
+  it('permits the cross-origin API in the deployed CSP (#47, supersedes #31)', () => {
+    // The SPA is now cross-origin with the API, so the app CSP must name the api origin
+    // in connect-src or every call is blocked before CORS is even consulted. (config.json
+    // itself is bundled into an S3 asset, so its content is asserted directly against
+    // `webRuntimeConfigJson` below — the repo's deployed-===-tested pattern.)
+    synth().hasResourceProperties('AWS::CloudFront::ResponseHeadersPolicy', {
+      ResponseHeadersPolicyConfig: {
+        SecurityHeadersConfig: {
+          ContentSecurityPolicy: {
+            ContentSecurityPolicy: Match.stringLikeRegexp(
+              "connect-src 'self' https://api\\.example\\.com",
+            ),
+          },
+        },
       },
     });
   });
 });
 
 describe('webRuntimeConfigJson (deployed config.json content)', () => {
-  it('points the SPA at the same-origin /api proxy and carries the inbound flag', () => {
-    expect(webRuntimeConfigJson(false)).toEqual({ apiBaseUrl: '/api', inboundEnabled: false });
-    expect(webRuntimeConfigJson(true)).toEqual({ apiBaseUrl: '/api', inboundEnabled: true });
+  it('carries the absolute api origin and the inbound flag', () => {
+    expect(webRuntimeConfigJson('https://api.example.com', false)).toEqual({
+      apiBaseUrl: 'https://api.example.com',
+      inboundEnabled: false,
+    });
+    expect(webRuntimeConfigJson('https://api.example.com', true)).toEqual({
+      apiBaseUrl: 'https://api.example.com',
+      inboundEnabled: true,
+    });
+  });
+
+  it('refuses a non-https api base URL', () => {
+    // The deployed SPA sends credentialed cross-origin requests; an http origin would
+    // both break `__Host-`/Secure cookies and expose the session in transit.
+    expect(() => webRuntimeConfigJson('http://api.example.com', false)).toThrow(/https/);
+    expect(() => webRuntimeConfigJson('/api', false)).toThrow(/https/);
   });
 });
 
-describe('APP_CONTENT_SECURITY_POLICY', () => {
+describe('appContentSecurityPolicy', () => {
+  const policy = appContentSecurityPolicy('https://api.example.com');
+
   it('is a strict deny-by-default policy that still permits the reader srcdoc frame', () => {
-    expect(APP_CONTENT_SECURITY_POLICY).toContain("default-src 'self'");
-    expect(APP_CONTENT_SECURITY_POLICY).toContain("object-src 'none'");
-    expect(APP_CONTENT_SECURITY_POLICY).toContain("base-uri 'none'");
-    expect(APP_CONTENT_SECURITY_POLICY).toContain("frame-ancestors 'none'");
+    expect(policy).toContain("default-src 'self'");
+    expect(policy).toContain("object-src 'none'");
+    expect(policy).toContain("base-uri 'none'");
+    expect(policy).toContain("frame-ancestors 'none'");
     // The reader iframe is a same-URL srcdoc → 'self'; the email doc is independently
     // locked by its own injected <meta> CSP.
-    expect(APP_CONTENT_SECURITY_POLICY).toContain("frame-src 'self'");
+    expect(policy).toContain("frame-src 'self'");
     // No wildcard sources anywhere.
-    expect(APP_CONTENT_SECURITY_POLICY).not.toContain('*');
-  });
-});
-
-describe('rewriteApiPath (proxy prefix strip — boundary)', () => {
-  it('strips exactly the /api prefix for real API routes', () => {
-    expect(rewriteApiPath('/api/auth/login')).toBe('/auth/login');
-    expect(rewriteApiPath('/api/emails/abc/attachments/0')).toBe('/emails/abc/attachments/0');
-    expect(rewriteApiPath('/api/')).toBe('/');
-    expect(rewriteApiPath('/api')).toBe('/');
+    expect(policy).not.toContain('*');
   });
 
-  it('does NOT match a lookalike prefix like /apiary', () => {
-    expect(rewriteApiPath('/apiary')).toBe('/apiary');
-    expect(rewriteApiPath('/apiary/keys')).toBe('/apiary/keys');
-  });
-});
-
-describe('rewriteSpaPath (client-route fallback)', () => {
-  it('serves index.html for extensionless client routes', () => {
-    expect(rewriteSpaPath('/')).toBe('/index.html');
-    expect(rewriteSpaPath('/inbox')).toBe('/index.html');
-    expect(rewriteSpaPath('/keys/new')).toBe('/index.html');
+  it('names the api origin in connect-src so the cross-origin API calls are permitted', () => {
+    // CSP and CORS are independent gates: without this the app CSP would block every
+    // API call even though the API's CORS policy allows it.
+    expect(policy).toContain("connect-src 'self' https://api.example.com");
   });
 
-  it('leaves real files (with an extension) untouched', () => {
-    expect(rewriteSpaPath('/assets/app-abc123.js')).toBe('/assets/app-abc123.js');
-    expect(rewriteSpaPath('/config.json')).toBe('/config.json');
-    expect(rewriteSpaPath('/index.html')).toBe('/index.html');
+  it('adds exactly ONE extra origin, and only to connect-src', () => {
+    const api = 'https://api.example.com';
+    const directivesNamingApi = policy.split('; ').filter((directive) => directive.includes(api));
+    expect(directivesNamingApi).toEqual([`connect-src 'self' ${api}`]);
+    // script-src is never widened — the api origin must not become a script source.
+    expect(policy).toContain("script-src 'self'");
   });
 });

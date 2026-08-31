@@ -20,7 +20,9 @@ export type AuthErrorCode =
   | 'invalid_credentials'
   | 'account_locked'
   | 'invalid_token'
-  | 'forbidden';
+  | 'forbidden'
+  /** Request shape rejected before any side effect: a mutation must be `application/json` (#47). */
+  | 'unsupported_media_type';
 
 export interface SetPasswordRequest {
   readonly password: string;

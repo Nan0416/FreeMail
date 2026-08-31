@@ -9,6 +9,9 @@ import {
 const base = {
   hostedZone: { mode: 'create', zoneName: 'example.com' },
   emailDomain: 'example.com',
+  // Both custom domains are REQUIRED as of #47 — the browser calls the API cross-origin.
+  appDomain: 'app.example.com',
+  apiDomain: 'api.example.com',
   inbound: { enabled: false, confirmInboundMx: false },
 };
 
@@ -32,6 +35,7 @@ describe('parseFreeMailConfig', () => {
       hostedZone: { mode: 'import', zoneName: 'example.com', hostedZoneId: 'Z123' },
       emailDomain: 'mail.example.com',
       appDomain: 'app.example.com',
+      apiDomain: 'api.example.com',
       inbound: { enabled: true, confirmInboundMx: true },
     });
     expect(config.hostedZone).toEqual({
@@ -41,8 +45,36 @@ describe('parseFreeMailConfig', () => {
     });
     expect(config.emailDomain).toBe('mail.example.com');
     expect(config.appDomain).toBe('app.example.com');
-    expect(config.apiDomain).toBeUndefined();
+    expect(config.apiDomain).toBe('api.example.com');
     expect(config.inbound).toEqual({ enabled: true, confirmInboundMx: true });
+  });
+
+  /** `base` minus one key — the shapes a pre-#47 config file would have. */
+  function without(key: 'appDomain' | 'apiDomain'): Record<string, unknown> {
+    const copy: Record<string, unknown> = { ...base };
+    delete copy[key];
+    return copy;
+  }
+
+  it('requires appDomain — a deploy without it has no working web app (#47)', () => {
+    expect(() => parseFreeMailConfig(without('appDomain'))).toThrow(/appDomain/);
+  });
+
+  it('requires apiDomain — the browser and agents both reach the API there (#47)', () => {
+    expect(() => parseFreeMailConfig(without('apiDomain'))).toThrow(/apiDomain/);
+  });
+
+  it('rejects one domain without the other', () => {
+    expect(() => parseFreeMailConfig(without('apiDomain'))).toThrow(/apiDomain/);
+    expect(() => parseFreeMailConfig(without('appDomain'))).toThrow(/appDomain/);
+  });
+
+  it('still rejects an app and api domain that are the same host', () => {
+    // They would collide as alias records, and it would collapse the cross-origin
+    // boundary the #47 CORS model depends on.
+    expect(() =>
+      parseFreeMailConfig({ ...base, appDomain: 'x.example.com', apiDomain: 'x.example.com' }),
+    ).toThrow(/must be different domains/);
   });
 
   it('requires a hostedZoneId when importing', () => {

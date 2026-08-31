@@ -34,8 +34,32 @@ import type { ListEmailsQuery } from '../email/read-service.js';
 import { EmailError, emailErrors } from '../email/errors.js';
 import { getOrCreateSigningKey } from '../config/signing-key.js';
 import { requireAccessScheme, subjectFromContext } from './request-context.js';
+import { hasJsonContentType } from './content-type.js';
 
 const JSON_HEADERS = { 'content-type': 'application/json' };
+
+/**
+ * Routes that mutate state and must therefore be NON-SIMPLE requests (#47 Layer 3).
+ * Requiring `application/json` forces a browser to preflight them, which the API's
+ * exact-origin CORS policy then refuses for a same-site sibling — and it rejects the
+ * plain `<form>`-POST path, which never preflights, outright.
+ *
+ * `POST /auth/refresh` and `POST /auth/logout` are on this list even though they are
+ * BODYLESS: they are cookie-authenticated state changes (rotation / revocation) and are
+ * otherwise "simple" requests, so a sibling form-POST could ride the session cookie to
+ * force a logout. The SPA client deliberately sends the header on them.
+ *
+ * `DELETE /keys/{id}` is deliberately ABSENT: DELETE is already non-simple by method, so
+ * a content-type requirement on a bodyless DELETE would be pure theater. Reads are absent
+ * for the same reason — they change nothing.
+ */
+const JSON_REQUIRED_ROUTES = new Set([
+  'POST /auth/login',
+  'POST /auth/refresh',
+  'POST /auth/logout',
+  'POST /keys',
+  'POST /emails',
+]);
 // Auth responses carry Set-Cookie, so they must never be cached by any layer
 // (a cached session cookie served to another viewer is the nightmare case).
 const NO_STORE_HEADERS = { 'cache-control': 'no-store' };
@@ -66,6 +90,12 @@ export const handler = async (
   event: APIGatewayProxyEventV2,
 ): Promise<APIGatewayProxyStructuredResultV2> => {
   try {
+    // #47 Layer 3, FIRST: reject a wrong media type before any table read, any write,
+    // and — critically for refresh/logout — before any cookie rotation or revocation.
+    // Nothing above this line touches state.
+    if (JSON_REQUIRED_ROUTES.has(event.routeKey) && !hasJsonContentType(event.headers)) {
+      throw authErrors.unsupportedMediaType();
+    }
     const authRepo = getRepo();
     // The REST handler owns key generation (it is the only holder of authTable write),
     // and it runs before any token can exist because login is served from here.

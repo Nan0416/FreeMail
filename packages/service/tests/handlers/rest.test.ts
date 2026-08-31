@@ -56,6 +56,20 @@ vi.mock('../../src/email/create-read-service.js', () => ({
   createEmailReadServiceFromEnv: () => readMocks,
 }));
 
+// Stub the API-key service so routes that pass the auth/media-type gates exercise the
+// router without DDB (the access-scheme tests below never reach it either way).
+const { keysMocks } = vi.hoisted(() => ({
+  keysMocks: { create: vi.fn(), list: vi.fn(), revoke: vi.fn() },
+}));
+vi.mock('../../src/keys/service.js', () => ({
+  ApiKeyService: class {
+    create = keysMocks.create;
+    list = keysMocks.list;
+    revoke = keysMocks.revoke;
+  },
+}));
+vi.mock('../../src/data/ddb-keys-repo.js', () => ({ DdbApiKeysRepo: class {} }));
+
 // Stub the download service so the public GET /d/{token} route exercises the
 // redirect/uniform-404 plumbing without DDB or S3.
 const { downloadMock } = vi.hoisted(() => ({ downloadMock: { resolve: vi.fn() } }));
@@ -63,10 +77,13 @@ vi.mock('../../src/email/create-download-service.js', () => ({
   createDownloadServiceFromEnv: () => downloadMock,
 }));
 
+const JSON_CONTENT_TYPE = { 'content-type': 'application/json' };
+
 function keysEvent(routeKey: string, scheme: string | undefined): APIGatewayProxyEventV2 {
   const lambda = scheme === undefined ? { sub: 'owner' } : { sub: 'owner', scheme };
   return {
     routeKey,
+    headers: JSON_CONTENT_TYPE,
     requestContext: { authorizer: { lambda } },
   } as unknown as APIGatewayProxyEventV2;
 }
@@ -75,6 +92,7 @@ function sendEvent(scheme: string | undefined): APIGatewayProxyEventV2 {
   const lambda = scheme === undefined ? { sub: 'owner' } : { sub: 'owner', scheme };
   return {
     routeKey: 'POST /emails',
+    headers: JSON_CONTENT_TYPE,
     body: JSON.stringify({ from: 'me@example.com', to: ['x@y.com'], text: 'hi' }),
     requestContext: { authorizer: { lambda } },
   } as unknown as APIGatewayProxyEventV2;
@@ -235,12 +253,94 @@ describe('rest handler — reads are access-token-only', () => {
   });
 });
 
-function authEvent(
-  routeKey: string,
-  opts: { body?: unknown; cookies?: string[] } = {},
-): APIGatewayProxyEventV2 {
+describe('rest handler — #47 Layer 3: state-changing routes require application/json', () => {
+  it.each([
+    ['POST /auth/login'],
+    ['POST /auth/refresh'],
+    ['POST /auth/logout'],
+    ['POST /keys'],
+    ['POST /emails'],
+  ])('rejects %s with 415 when the content type is a simple-request type', async (routeKey) => {
+    const res = await handler(
+      authEvent(routeKey, { contentType: 'application/x-www-form-urlencoded' }),
+    );
+    expect(res.statusCode).toBe(415);
+    expect(JSON.parse(res.body ?? '{}').error).toBe('unsupported_media_type');
+  });
+
+  it.each([['POST /auth/refresh'], ['POST /auth/logout'], ['POST /emails']])(
+    'rejects %s with 415 when the content-type header is absent entirely',
+    async (routeKey) => {
+      const res = await handler(authEvent(routeKey, { contentType: null }));
+      expect(res.statusCode).toBe(415);
+    },
+  );
+
+  it('rejects refresh BEFORE rotating or clearing any cookie', async () => {
+    // The whole point of gating a bodyless cookie-only POST: a same-site sibling
+    // form-POST must not be able to touch the session at all. A 415 that still cleared
+    // the cookies would be a forced-logout DoS wearing an error code.
+    const res = await handler(authEvent('POST /auth/refresh', { contentType: 'text/plain' }));
+    expect(res.statusCode).toBe(415);
+    expect(res.cookies).toBeUndefined();
+    expect(authMocks.refresh).not.toHaveBeenCalled();
+  });
+
+  it('rejects logout BEFORE revoking the refresh token', async () => {
+    const res = await handler(
+      authEvent('POST /auth/logout', {
+        contentType: 'text/plain',
+        cookies: [`${REFRESH_COOKIE}=RT`],
+      }),
+    );
+    expect(res.statusCode).toBe(415);
+    expect(res.cookies).toBeUndefined();
+    expect(authMocks.logout).not.toHaveBeenCalled();
+  });
+
+  it('accepts a charset parameter on a gated route', async () => {
+    authMocks.login.mockResolvedValue(TOKEN_PAIR);
+    const res = await handler(
+      authEvent('POST /auth/login', {
+        body: { password: 'a-password' },
+        contentType: 'application/json; charset=utf-8',
+      }),
+    );
+    expect(res.statusCode).toBe(200);
+  });
+
+  it('does NOT gate DELETE — already non-simple by method, so a content-type rule is theater', async () => {
+    keysMocks.revoke.mockResolvedValue(undefined);
+    const res = await handler(keysEventWithoutContentType('DELETE /keys/{id}'));
+    expect(res.statusCode).toBe(204);
+    expect(keysMocks.revoke).toHaveBeenCalledWith('key-1');
+  });
+
+  it('does NOT gate reads', async () => {
+    readMocks.listEmails.mockResolvedValue({ emails: [] });
+    const res = await handler(readEvent('GET /emails', 'access'));
+    expect(res.statusCode).toBe(200);
+  });
+});
+
+function keysEventWithoutContentType(routeKey: string): APIGatewayProxyEventV2 {
   return {
     routeKey,
+    pathParameters: { id: 'key-1' },
+    requestContext: { authorizer: { lambda: { sub: 'owner', scheme: 'access' } } },
+  } as unknown as APIGatewayProxyEventV2;
+}
+
+function authEvent(
+  routeKey: string,
+  opts: { body?: unknown; cookies?: string[]; contentType?: string | null } = {},
+): APIGatewayProxyEventV2 {
+  // `contentType: null` omits the header entirely, to exercise the #47 Layer 3 gate.
+  const headers =
+    opts.contentType === null ? {} : { 'content-type': opts.contentType ?? 'application/json' };
+  return {
+    routeKey,
+    headers,
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     cookies: opts.cookies,
     requestContext: {},

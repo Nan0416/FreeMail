@@ -261,6 +261,27 @@ describe('FreeMailClient (cookie auth)', () => {
     expect(fetchMock.mock.calls[0][1]?.credentials).toBe('include');
   });
 
+  it('ALWAYS sends content-type: application/json, including on bodyless requests (#47)', async () => {
+    // The server requires it on the bodyless /auth/refresh and /auth/logout: it is what
+    // makes those non-simple, so a same-site sibling must preflight and the API's origin
+    // allowlist can refuse. Omitting it would get them 415'd.
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
+    const client = makeClient(fetchMock);
+
+    await client.logout();
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init?.body).toBeUndefined();
+    expect((init?.headers as Record<string, string>)['content-type']).toBe('application/json');
+  });
+
+  it('sends credentials on every request so the cross-origin session cookie rides', async () => {
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 204 }));
+    const client = makeClient(fetchMock);
+    await client.logout();
+    expect(fetchMock.mock.calls[0][1]?.credentials).toBe('include');
+  });
+
   it('surfaces the server error body as a typed ApiError', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()
