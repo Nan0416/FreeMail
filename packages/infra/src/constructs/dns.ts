@@ -1,6 +1,6 @@
 import { HostedZone, type IHostedZone } from 'aws-cdk-lib/aws-route53';
 import { Construct } from 'constructs';
-import type { HostedZoneConfig } from '@freemail/shared';
+import type { HostedZoneConfig } from '@freemail/shared/config';
 
 export interface DnsConstructProps {
   readonly hostedZone: HostedZoneConfig;

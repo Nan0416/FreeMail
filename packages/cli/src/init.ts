@@ -8,10 +8,10 @@
  */
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { DEFAULT_REGION, parseFreeMailConfig } from '@freemail/shared';
-import type { FreeMailConfig, HostedZoneConfig } from '@freemail/shared';
+import { DEFAULT_REGION, parseFreeMailConfig } from '@freemail/shared/config';
+import type { FreeMailConfig, HostedZoneConfig } from '@freemail/shared/config';
 
-export const DEFAULT_CONFIG_FILENAME = 'freemail.config.json';
+export const CONFIG_FILENAME = 'freemail-config.json';
 
 export interface InitAnswers {
   readonly hostedZone: HostedZoneConfig;
@@ -42,20 +42,6 @@ export async function writeConfig(path: string, config: FreeMailConfig): Promise
   await writeFile(path, `${JSON.stringify(config, null, 2)}\n`, 'utf8');
 }
 
-/** Extract `--out <path>` / `--out=<path>` / `-o <path>` from the argv, if present. */
-export function parseOutArg(argv: string[]): string | undefined {
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if ((arg === '--out' || arg === '-o') && argv[i + 1]) {
-      return argv[i + 1];
-    }
-    if (arg.startsWith('--out=')) {
-      return arg.slice('--out='.length);
-    }
-  }
-  return undefined;
-}
-
 export interface InitIo {
   readonly prompt: () => Promise<InitAnswers>;
   readonly fileExists: (path: string) => boolean;
@@ -64,9 +50,14 @@ export interface InitIo {
   readonly log: (message: string) => void;
 }
 
-/** Orchestrate the init flow. Returns a process exit code. */
-export async function runInit(argv: string[], io: InitIo): Promise<number> {
-  const outPath = resolve(parseOutArg(argv) ?? DEFAULT_CONFIG_FILENAME);
+/**
+ * Orchestrate the init flow. Returns a process exit code.
+ *
+ * The output path is fixed: the CDK app reads exactly one file, so an `--out` override
+ * could only ever produce a config the deploy cannot find.
+ */
+export async function runInit(io: InitIo): Promise<number> {
+  const outPath = resolve(CONFIG_FILENAME);
   const answers = await io.prompt();
   const config = buildConfig(answers);
 

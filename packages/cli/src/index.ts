@@ -11,11 +11,8 @@ import { FREEMAIL_VERSION } from '@freemail/shared';
 const HELP = `freemail ${FREEMAIL_VERSION}
 Usage: freemail <command>
 
-  init      Configure FreeMail for deployment (writes freemail.config.json)
+  init      Configure FreeMail for deployment (writes freemail-config.json)
   version   Print the CLI version
-
-init options:
-  -o, --out <path>   Config output path (default: ./freemail.config.json)
 `;
 
 export function main(argv: string[] = process.argv.slice(2)): number {
@@ -30,13 +27,13 @@ export function main(argv: string[] = process.argv.slice(2)): number {
   }
 }
 
-async function runInitCommand(argv: string[]): Promise<void> {
+async function runInitCommand(): Promise<void> {
   try {
     const [{ runInit }, { createInitIo }] = await Promise.all([
       import('./init.js'),
       import('./prompts.js'),
     ]);
-    process.exit(await runInit(argv, createInitIo()));
+    process.exit(await runInit(createInitIo()));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);
@@ -47,7 +44,7 @@ async function runInitCommand(argv: string[]): Promise<void> {
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
   const argv = process.argv.slice(2);
   if (argv[0] === 'init') {
-    void runInitCommand(argv.slice(1));
+    void runInitCommand();
   } else {
     process.exit(main(argv));
   }

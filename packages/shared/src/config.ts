@@ -2,10 +2,16 @@
  * FreeMail deploy configuration — the single source of truth shared by the
  * `freemail init` CLI (which writes it) and the CDK app (which reads it at synth).
  *
- * `parseFreeMailConfig` is intentionally fail-loud: a malformed config is a
- * deploy-time footgun, so we reject it with a clear message rather than
- * silently defaulting.
+ * The shape is a zod schema so the structural rules are declarative and read as one
+ * piece; the cross-field rules that zod cannot express (every domain must sit inside
+ * the hosted zone, app and api must differ, inbound needs its acknowledgement) are
+ * `superRefine` checks below.
+ *
+ * `parseFreeMailConfig` is intentionally fail-loud: a malformed config is a deploy-time
+ * footgun, so we reject it with a clear message rather than silently defaulting.
  */
+import { z } from 'zod';
+import { isSubdomainOrEqual, normalizeDomain } from './domain.js';
 
 /** The only supported region — inbound SES + CloudFront ACM certs both require us-east-1. */
 export const DEFAULT_REGION = 'us-east-1';
@@ -53,136 +59,135 @@ export interface FreeMailConfig {
   readonly inbound: InboundConfig;
 }
 
-/** Canonicalize a domain: trim, lowercase, drop a trailing dot (DNS is case-insensitive). */
-export function normalizeDomain(domain: string): string {
-  return domain.trim().toLowerCase().replace(/\.$/, '');
-}
+/** Canonicalized domain: trimmed, lowercased, trailing dot dropped, non-empty. */
+const domainSchema = z
+  .string({ error: 'is required and must be a domain name' })
+  .transform(normalizeDomain)
+  .refine((value) => value.length > 0, { error: 'must be a valid domain' });
 
-/** True when `domain` equals `parent` or is a subdomain of it. Both should be normalized first. */
-export function isSubdomainOrEqual(domain: string, parent: string): boolean {
-  return domain === parent || domain.endsWith(`.${parent}`);
-}
+const hostedZoneSchema = z
+  .object({
+    mode: z.enum(['import', 'create'], { error: 'must be "import" or "create"' }),
+    zoneName: domainSchema,
+    // Zone IDs are case-sensitive — trim only, never normalize.
+    hostedZoneId: z.string().trim().min(1, { error: 'must be a non-empty string' }).optional(),
+  })
+  .superRefine((zone, ctx) => {
+    if (zone.mode === 'import' && zone.hostedZoneId === undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['hostedZoneId'],
+        message: '"hostedZone.hostedZoneId" is required when mode is "import".',
+      });
+    }
+    if (zone.mode === 'create' && zone.hostedZoneId !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['hostedZoneId'],
+        message: '"hostedZone.hostedZoneId" is only valid when mode is "import".',
+      });
+    }
+  });
 
-function requireNonEmptyString(value: unknown, field: string): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
-    throw new Error(`FreeMail config: "${field}" must be a non-empty string.`);
+const inboundSchema = z.object({
+  enabled: z.boolean({ error: 'must be a boolean' }),
+  confirmInboundMx: z.boolean({ error: 'must be a boolean' }),
+});
+
+const freeMailConfigSchema = z
+  .object({
+    // The only supported region: inbound SES and CloudFront ACM certs both require it.
+    region: z
+      .literal(DEFAULT_REGION, {
+        error: `must be ${DEFAULT_REGION} (the only supported region)`,
+      })
+      .default(DEFAULT_REGION),
+    hostedZone: hostedZoneSchema,
+    emailDomain: domainSchema,
+    appDomain: domainSchema,
+    apiDomain: domainSchema,
+    inbound: inboundSchema,
+  })
+  .superRefine((config, ctx) => {
+    // Every managed domain's ACM validation and alias records are written into the one
+    // hosted zone, so a domain outside it would silently fail to validate or resolve.
+    for (const field of ['emailDomain', 'appDomain', 'apiDomain'] as const) {
+      if (!isSubdomainOrEqual(config[field], config.hostedZone.zoneName)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [field],
+          message: `"${field}" (${config[field]}) must equal or be a subdomain of the hosted zone (${config.hostedZone.zoneName}).`,
+        });
+      }
+    }
+
+    // One host cannot alias both CloudFront and API Gateway — the records would collide
+    // — and it would collapse the cross-origin boundary the #47 CORS model rests on.
+    if (config.appDomain === config.apiDomain) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['apiDomain'],
+        message: `"appDomain" and "apiDomain" must be different domains (both are "${config.appDomain}").`,
+      });
+    }
+
+    // Enabling inbound repoints the email domain's MX at SES, clobbering existing mail
+    // routing — it requires an explicit acknowledgement, captured by `freemail init`.
+    if (config.inbound.enabled && !config.inbound.confirmInboundMx) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['inbound', 'confirmInboundMx'],
+        message:
+          '"inbound.confirmInboundMx" must be true when inbound is enabled — ' +
+          'acknowledge the MX override before enabling inbound.',
+      });
+    }
+  });
+
+/**
+ * Render zod issues as one `FreeMail config:` message. Unlike the hand-rolled parser this
+ * replaced, every problem is reported at once rather than only the first — so fixing a
+ * config is one pass, not a guess-and-retry loop.
+ */
+function formatIssues(error: z.ZodError): string {
+  const lines = error.issues.map((issue) => {
+    const path = issue.path.join('.');
+    const message = issue.message.replace(/\.$/, '');
+    // Messages that already name their field read better without a path prefix.
+    return path.length > 0 && !issue.message.startsWith('"') ? `"${path}" ${message}` : message;
+  });
+  if (lines.length === 1) {
+    return `FreeMail config: ${lines[0]}.`;
   }
-  return value;
-}
-
-function requireDomain(value: unknown, field: string): string {
-  const normalized = normalizeDomain(requireNonEmptyString(value, field));
-  if (normalized.length === 0) {
-    throw new Error(`FreeMail config: "${field}" must be a valid domain.`);
-  }
-  return normalized;
-}
-
-function requireBoolean(value: unknown, field: string): boolean {
-  if (typeof value !== 'boolean') {
-    throw new Error(`FreeMail config: "${field}" must be a boolean.`);
-  }
-  return value;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return `FreeMail config: ${lines.length} problems:\n${lines.map((line) => `  - ${line}`).join('\n')}`;
 }
 
 /**
- * Validate and normalize an unknown value into a `FreeMailConfig`, throwing on
- * any structural or semantic problem. Domains are canonicalized; `region`
- * defaults to (and must equal) us-east-1.
+ * Validate and normalize an unknown value into a {@link FreeMailConfig}, throwing on
+ * any structural or semantic problem. Domains are canonicalized; `region` defaults to
+ * (and must equal) us-east-1.
  */
 export function parseFreeMailConfig(input: unknown): FreeMailConfig {
-  if (!isRecord(input)) {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) {
     throw new Error('FreeMail config: expected a JSON object.');
   }
 
-  const region =
-    input.region === undefined ? DEFAULT_REGION : requireNonEmptyString(input.region, 'region');
-  if (region !== DEFAULT_REGION) {
-    throw new Error(
-      `FreeMail config: "region" must be ${DEFAULT_REGION} (the only supported region).`,
-    );
+  const result = freeMailConfigSchema.safeParse(input);
+  if (!result.success) {
+    throw new Error(formatIssues(result.error));
   }
 
-  if (!isRecord(input.hostedZone)) {
-    throw new Error('FreeMail config: "hostedZone" must be an object.');
-  }
-  const mode = input.hostedZone.mode;
-  if (mode !== 'import' && mode !== 'create') {
-    throw new Error('FreeMail config: "hostedZone.mode" must be "import" or "create".');
-  }
-  const zoneName = requireDomain(input.hostedZone.zoneName, 'hostedZone.zoneName');
-  let hostedZoneId: string | undefined;
-  if (mode === 'import') {
-    // Zone IDs are case-sensitive — do not normalize.
-    hostedZoneId = requireNonEmptyString(
-      input.hostedZone.hostedZoneId,
-      'hostedZone.hostedZoneId',
-    ).trim();
-  } else if (input.hostedZone.hostedZoneId !== undefined) {
-    throw new Error(
-      'FreeMail config: "hostedZone.hostedZoneId" is only valid when mode is "import".',
-    );
-  }
-
-  const emailDomain = requireDomain(input.emailDomain, 'emailDomain');
-  if (!isSubdomainOrEqual(emailDomain, zoneName)) {
-    throw new Error(
-      `FreeMail config: "emailDomain" (${emailDomain}) must equal or be a subdomain of the hosted zone (${zoneName}).`,
-    );
-  }
-
-  // Both custom domains are REQUIRED as of #47. The CloudFront `/api` proxy is gone, so
-  // the browser calls the API cross-origin: the API needs one canonical app origin to
-  // allowlist, and the SPA needs an absolute API URL. A deploy missing either has no
-  // working web app, so it is rejected here rather than shipped half-configured.
-  const appDomain = requireDomain(input.appDomain, 'appDomain');
-  const apiDomain = requireDomain(input.apiDomain, 'apiDomain');
-  // A custom domain's ACM validation records and CloudFront/API-GW alias records are
-  // created inside the single managed hosted zone, so a domain outside it would
-  // silently fail to validate/resolve — reject it at parse (same rule as emailDomain).
-  if (!isSubdomainOrEqual(appDomain, zoneName)) {
-    throw new Error(
-      `FreeMail config: "appDomain" (${appDomain}) must equal or be a subdomain of the hosted zone (${zoneName}).`,
-    );
-  }
-  if (!isSubdomainOrEqual(apiDomain, zoneName)) {
-    throw new Error(
-      `FreeMail config: "apiDomain" (${apiDomain}) must equal or be a subdomain of the hosted zone (${zoneName}).`,
-    );
-  }
-  // The same host cannot be an alias for both the web app (CloudFront) and the API
-  // (API Gateway) — the two alias records would collide. It would also collapse the
-  // cross-origin boundary the #47 CORS model is built on.
-  if (appDomain === apiDomain) {
-    throw new Error(
-      `FreeMail config: "appDomain" and "apiDomain" must be different domains (both are "${appDomain}").`,
-    );
-  }
-
-  if (!isRecord(input.inbound)) {
-    throw new Error('FreeMail config: "inbound" must be an object.');
-  }
-  const inbound: InboundConfig = {
-    enabled: requireBoolean(input.inbound.enabled, 'inbound.enabled'),
-    confirmInboundMx: requireBoolean(input.inbound.confirmInboundMx, 'inbound.confirmInboundMx'),
-  };
-  if (inbound.enabled && !inbound.confirmInboundMx) {
-    throw new Error(
-      'FreeMail config: inbound is enabled but "inbound.confirmInboundMx" is not true. ' +
-        'Acknowledge the MX override before enabling inbound.',
-    );
-  }
-
+  const { region, hostedZone, emailDomain, appDomain, apiDomain, inbound } = result.data;
   return {
     region,
-    hostedZone: { mode, zoneName, ...(hostedZoneId ? { hostedZoneId } : {}) },
+    hostedZone: {
+      mode: hostedZone.mode,
+      zoneName: hostedZone.zoneName,
+      ...(hostedZone.hostedZoneId ? { hostedZoneId: hostedZone.hostedZoneId } : {}),
+    },
     emailDomain,
     appDomain,
     apiDomain,
-    inbound,
+    inbound: { enabled: inbound.enabled, confirmInboundMx: inbound.confirmInboundMx },
   };
 }

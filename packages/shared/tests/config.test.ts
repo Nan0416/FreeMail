@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  DEFAULT_REGION,
-  isSubdomainOrEqual,
-  normalizeDomain,
-  parseFreeMailConfig,
-} from '../src/config.js';
+import { DEFAULT_REGION, parseFreeMailConfig } from '../src/config.js';
 
 const base = {
   hostedZone: { mode: 'create', zoneName: 'example.com' },
@@ -14,15 +9,6 @@ const base = {
   apiDomain: 'api.example.com',
   inbound: { enabled: false, confirmInboundMx: false },
 };
-
-describe('isSubdomainOrEqual', () => {
-  it('accepts equal and subdomains, rejects unrelated', () => {
-    expect(isSubdomainOrEqual('example.com', 'example.com')).toBe(true);
-    expect(isSubdomainOrEqual('mail.example.com', 'example.com')).toBe(true);
-    expect(isSubdomainOrEqual('notexample.com', 'example.com')).toBe(false);
-    expect(isSubdomainOrEqual('example.com.evil.com', 'example.com')).toBe(false);
-  });
-});
 
 describe('parseFreeMailConfig', () => {
   it('defaults the region to us-east-1', () => {
@@ -75,6 +61,26 @@ describe('parseFreeMailConfig', () => {
     expect(() =>
       parseFreeMailConfig({ ...base, appDomain: 'x.example.com', apiDomain: 'x.example.com' }),
     ).toThrow(/must be different domains/);
+  });
+
+  it('reports EVERY problem at once, not just the first', () => {
+    // The hand-rolled parser this replaced threw on the first bad field, so fixing a
+    // config was a guess-and-retry loop. zod collects them in one pass.
+    let message = '';
+    try {
+      parseFreeMailConfig({
+        ...base,
+        emailDomain: 'mail.other.com',
+        appDomain: 'app.other.com',
+        apiDomain: 'api.other.com',
+      });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('3 problems');
+    expect(message).toContain('emailDomain');
+    expect(message).toContain('appDomain');
+    expect(message).toContain('apiDomain');
   });
 
   it('requires a hostedZoneId when importing', () => {
@@ -173,12 +179,5 @@ describe('parseFreeMailConfig', () => {
   it('rejects non-object input', () => {
     expect(() => parseFreeMailConfig(null)).toThrow(/expected a JSON object/);
     expect(() => parseFreeMailConfig('nope')).toThrow(/expected a JSON object/);
-  });
-});
-
-describe('normalizeDomain', () => {
-  it('trims, lowercases, and drops a trailing dot', () => {
-    expect(normalizeDomain('  Example.COM.  ')).toBe('example.com');
-    expect(normalizeDomain('mail.example.com')).toBe('mail.example.com');
   });
 });

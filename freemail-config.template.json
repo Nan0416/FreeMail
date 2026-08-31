@@ -1,0 +1,15 @@
+{
+  "region": "us-east-1",
+  "hostedZone": {
+    "mode": "import",
+    "zoneName": "example.com",
+    "hostedZoneId": "Z0123456789ABCDEFGHIJ"
+  },
+  "emailDomain": "example.com",
+  "appDomain": "app.example.com",
+  "apiDomain": "api.example.com",
+  "inbound": {
+    "enabled": false,
+    "confirmInboundMx": false
+  }
+}

@@ -1,11 +1,11 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { parseFreeMailConfig } from '@freemail/shared';
+import { parseFreeMailConfig } from '@freemail/shared/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  CONFIG_FILENAME,
   buildConfig,
-  parseOutArg,
   runInit,
   writeConfig,
   type InitAnswers,
@@ -75,16 +75,6 @@ describe('buildConfig', () => {
   });
 });
 
-describe('parseOutArg', () => {
-  it('parses --out, --out=, and -o forms', () => {
-    expect(parseOutArg(['--out', 'a.json'])).toBe('a.json');
-    expect(parseOutArg(['--out=b.json'])).toBe('b.json');
-    expect(parseOutArg(['-o', 'c.json'])).toBe('c.json');
-    expect(parseOutArg([])).toBeUndefined();
-    expect(parseOutArg(['--out'])).toBeUndefined();
-  });
-});
-
 describe('writeConfig', () => {
   let dir: string;
   beforeEach(() => {
@@ -95,7 +85,7 @@ describe('writeConfig', () => {
   });
 
   it('writes pretty JSON that round-trips through the parser', async () => {
-    const file = join(dir, 'freemail.config.json');
+    const file = join(dir, 'freemail-config.json');
     const config = buildConfig(answers());
     await writeConfig(file, config);
     const raw = readFileSync(file, 'utf8');
@@ -116,12 +106,13 @@ describe('runInit', () => {
     };
   }
 
-  it('writes the config to the resolved path and reports success', async () => {
+  it('always writes to the one config path the CDK app reads', async () => {
     const io = fakeIo();
-    const code = await runInit(['--out', 'custom.json'], io);
+    const code = await runInit(io);
     expect(code).toBe(0);
+    // Fixed location, no --out override: anywhere else and `cdk deploy` would not find it.
     expect(io.write).toHaveBeenCalledWith(
-      resolve('custom.json'),
+      resolve(CONFIG_FILENAME),
       expect.objectContaining({ region: 'us-east-1' }),
     );
     expect(io.log).toHaveBeenCalledWith(expect.stringContaining('Next steps'));
@@ -132,7 +123,7 @@ describe('runInit', () => {
       fileExists: vi.fn(() => true),
       confirmOverwrite: vi.fn(async () => false),
     });
-    const code = await runInit([], io);
+    const code = await runInit(io);
     expect(code).toBe(1);
     expect(io.write).not.toHaveBeenCalled();
     expect(io.log).toHaveBeenCalledWith(expect.stringContaining('Aborted'));
@@ -140,7 +131,7 @@ describe('runInit', () => {
 
   it('overwrites when confirmed', async () => {
     const io = fakeIo({ fileExists: vi.fn(() => true), confirmOverwrite: vi.fn(async () => true) });
-    expect(await runInit([], io)).toBe(0);
+    expect(await runInit(io)).toBe(0);
     expect(io.write).toHaveBeenCalledTimes(1);
   });
 });
