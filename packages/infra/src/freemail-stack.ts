@@ -40,6 +40,12 @@ export class FreeMailStack extends Stack {
         : {}),
     });
 
+    // Both custom domains are required (#47), so these origins always exist. The app
+    // origin is what the API's CORS policy allowlists; the api origin is what the SPA
+    // calls and what the app CSP's connect-src names.
+    const appOrigin = `https://${config.appDomain}`;
+    const apiBaseUrl = `https://${config.apiDomain}`;
+
     const api = new ApiConstruct(this, 'Api', {
       authTable: data.authTable,
       apiKeysTable: data.apiKeysTable,
@@ -49,21 +55,18 @@ export class FreeMailStack extends Stack {
       emailDomain: config.emailDomain,
       sesConfigurationSetName: ses.configurationSet.configurationSetName,
       inboundEnabled: config.inbound.enabled,
-      // Optional custom API domain for direct agent/MCP access; omitted → generated URL.
-      ...(config.apiDomain
-        ? { customDomain: { domainName: config.apiDomain, hostedZone: dns.hostedZone } }
-        : {}),
+      customDomain: { domainName: config.apiDomain, hostedZone: dns.hostedZone },
+      appOrigin,
     });
 
-    // The React SPA on CloudFront + S3, learning the API endpoint at runtime.
+    // The React SPA on CloudFront + S3, learning the API origin at runtime. SPA-only
+    // as of #47 — the `/api/*` proxy behavior is gone and the browser calls the API
+    // cross-origin at `apiBaseUrl`.
     const web = new WebConstruct(this, 'Web', {
-      apiEndpoint: api.httpApi.apiEndpoint,
+      apiBaseUrl,
       assetPath: resolveWebAssetPath(),
       inboundEnabled: config.inbound.enabled,
-      // Optional custom app domain (CloudFront alias); omitted → generated CloudFront domain.
-      ...(config.appDomain
-        ? { customDomain: { domainName: config.appDomain, hostedZone: dns.hostedZone } }
-        : {}),
+      customDomain: { domainName: config.appDomain, hostedZone: dns.hostedZone },
     });
 
     new CfnOutput(this, 'HostedZoneId', { value: dns.hostedZone.hostedZoneId });
@@ -79,35 +82,33 @@ export class FreeMailStack extends Stack {
 
     new CfnOutput(this, 'ApiEndpoint', {
       description:
-        'Base URL of the FreeMail HTTP API (generated execute-api URL). Also the target of ' +
-        'the CloudFront /api proxy and the api custom domain, when configured.',
+        'Generated execute-api URL of the FreeMail HTTP API. Callers should use the api ' +
+        'custom domain (ApiCustomDomainUrl) instead — the session cookies are __Host- ' +
+        'prefixed and therefore host-locked to it.',
       value: api.httpApi.apiEndpoint,
     });
-    if (api.customDomainName) {
-      new CfnOutput(this, 'ApiCustomDomainUrl', {
-        description: 'Custom API domain for direct agent/MCP (x-api-key) access.',
-        value: `https://${api.customDomainName}`,
-      });
-    }
+    new CfnOutput(this, 'ApiCustomDomainUrl', {
+      description:
+        'The API domain. Used by BOTH the web app (cross-origin, credentialed CORS) and ' +
+        'agents/MCP (x-api-key).',
+      value: `https://${api.customDomainName}`,
+    });
 
     new CfnOutput(this, 'WebAppUrl', {
-      description:
-        'URL of the FreeMail web app (custom app domain if configured, else CloudFront).',
-      value: `https://${web.customDomainName ?? web.distribution.distributionDomainName}`,
+      description: 'URL of the FreeMail web app (the configured app domain).',
+      value: `https://${web.customDomainName}`,
     });
     // Always surface the raw CloudFront domain — the alias target + a DNS/debug fallback.
     new CfnOutput(this, 'WebDistributionDomainName', {
       description: 'Generated CloudFront domain of the web distribution.',
       value: web.distribution.distributionDomainName,
     });
-    if (config.appDomain !== undefined || config.apiDomain !== undefined) {
-      new CfnOutput(this, 'CustomDomainValidationNote', {
-        description:
-          'Custom-domain ACM certs are DNS-validated via the hosted zone. If the zone was just ' +
-          'CREATED, delegate its name servers at your registrar or the deploy hangs on validation.',
-        value: 'DNS-validated ACM (us-east-1) via Route53',
-      });
-    }
+    new CfnOutput(this, 'CustomDomainValidationNote', {
+      description:
+        'Custom-domain ACM certs are DNS-validated via the hosted zone. If the zone was just ' +
+        'CREATED, delegate its name servers at your registrar or the deploy hangs on validation.',
+      value: 'DNS-validated ACM (us-east-1) via Route53',
+    });
 
     new CfnOutput(this, 'SesIdentityName', { value: ses.emailIdentity.emailIdentityName });
     new CfnOutput(this, 'SesMailFromDomain', { value: ses.mailFromDomain });
@@ -160,12 +161,13 @@ export class FreeMailStack extends Stack {
    * deployer may delegate the name servers as part of the same flow.
    */
   private warnCustomDomainDelegation(config: FreeMailConfig): void {
-    const hasCustomDomain = config.appDomain !== undefined || config.apiDomain !== undefined;
-    if (!hasCustomDomain || config.hostedZone.mode !== 'create') {
+    // Custom domains are always configured (#47), so the only question is whether the
+    // zone is new and therefore not yet delegated.
+    if (config.hostedZone.mode !== 'create') {
       return;
     }
     Annotations.of(this).addWarning(
-      'A custom domain is configured on a CREATED hosted zone. Custom-domain ACM certificates are ' +
+      'Custom domains are configured on a CREATED hosted zone. Custom-domain ACM certificates are ' +
         'DNS-validated, and that validation BLOCKS the deploy until the records resolve publicly — so ' +
         'the FIRST deploy will HANG on certificate validation until you delegate the zone. Set the hosted ' +
         'zone name servers (the HostedZoneNameServers output) at your domain registrar before, or promptly ' +

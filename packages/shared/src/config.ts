@@ -38,10 +38,18 @@ export interface FreeMailConfig {
   readonly hostedZone: HostedZoneConfig;
   /** Domain email is sent from / received at — the zone apex or a subdomain of it. */
   readonly emailDomain: string;
-  /** Custom domain for the web app. Omit to use the CloudFront default domain. */
-  readonly appDomain?: string;
-  /** Custom domain for the API. Omit to use the API Gateway default domain. */
-  readonly apiDomain?: string;
+  /**
+   * Domain the web app is served at (CloudFront alias). REQUIRED (#47): the SPA calls
+   * the API cross-origin, so this is the single canonical origin the API's credentialed
+   * CORS allowlist is built from — there is no deployment shape without it.
+   */
+  readonly appDomain: string;
+  /**
+   * Domain the API is served at (API Gateway custom domain). REQUIRED (#47): the browser
+   * and agents both reach the API here directly, and the session cookies are host-locked
+   * to it.
+   */
+  readonly apiDomain: string;
   readonly inbound: InboundConfig;
 }
 
@@ -127,26 +135,29 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
     );
   }
 
-  const appDomain =
-    input.appDomain === undefined ? undefined : requireDomain(input.appDomain, 'appDomain');
-  const apiDomain =
-    input.apiDomain === undefined ? undefined : requireDomain(input.apiDomain, 'apiDomain');
+  // Both custom domains are REQUIRED as of #47. The CloudFront `/api` proxy is gone, so
+  // the browser calls the API cross-origin: the API needs one canonical app origin to
+  // allowlist, and the SPA needs an absolute API URL. A deploy missing either has no
+  // working web app, so it is rejected here rather than shipped half-configured.
+  const appDomain = requireDomain(input.appDomain, 'appDomain');
+  const apiDomain = requireDomain(input.apiDomain, 'apiDomain');
   // A custom domain's ACM validation records and CloudFront/API-GW alias records are
   // created inside the single managed hosted zone, so a domain outside it would
   // silently fail to validate/resolve — reject it at parse (same rule as emailDomain).
-  if (appDomain !== undefined && !isSubdomainOrEqual(appDomain, zoneName)) {
+  if (!isSubdomainOrEqual(appDomain, zoneName)) {
     throw new Error(
       `FreeMail config: "appDomain" (${appDomain}) must equal or be a subdomain of the hosted zone (${zoneName}).`,
     );
   }
-  if (apiDomain !== undefined && !isSubdomainOrEqual(apiDomain, zoneName)) {
+  if (!isSubdomainOrEqual(apiDomain, zoneName)) {
     throw new Error(
       `FreeMail config: "apiDomain" (${apiDomain}) must equal or be a subdomain of the hosted zone (${zoneName}).`,
     );
   }
   // The same host cannot be an alias for both the web app (CloudFront) and the API
-  // (API Gateway) — the two alias records would collide.
-  if (appDomain !== undefined && appDomain === apiDomain) {
+  // (API Gateway) — the two alias records would collide. It would also collapse the
+  // cross-origin boundary the #47 CORS model is built on.
+  if (appDomain === apiDomain) {
     throw new Error(
       `FreeMail config: "appDomain" and "apiDomain" must be different domains (both are "${appDomain}").`,
     );
@@ -170,8 +181,8 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
     region,
     hostedZone: { mode, zoneName, ...(hostedZoneId ? { hostedZoneId } : {}) },
     emailDomain,
-    ...(appDomain ? { appDomain } : {}),
-    ...(apiDomain ? { apiDomain } : {}),
+    appDomain,
+    apiDomain,
     inbound,
   };
 }

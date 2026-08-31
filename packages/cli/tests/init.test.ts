@@ -15,6 +15,8 @@ import {
 const answers = (overrides: Partial<InitAnswers> = {}): InitAnswers => ({
   hostedZone: { mode: 'create', zoneName: 'example.com' },
   emailDomain: 'example.com',
+  appDomain: 'app.example.com',
+  apiDomain: 'api.example.com',
   inboundEnabled: false,
   inboundConfirmed: false,
   ...overrides,
@@ -25,7 +27,15 @@ describe('buildConfig', () => {
     const config = buildConfig(answers());
     expect(config.region).toBe('us-east-1');
     expect(config.inbound).toEqual({ enabled: false, confirmInboundMx: false });
-    expect(config.appDomain).toBeUndefined();
+    // Both domains are required as of #47 and flow straight through.
+    expect(config.appDomain).toBe('app.example.com');
+    expect(config.apiDomain).toBe('api.example.com');
+  });
+
+  it('rejects answers missing a domain — the parser is the single gate (#47)', () => {
+    const withoutApp: Record<string, unknown> = { ...answers() };
+    delete withoutApp.appDomain;
+    expect(() => buildConfig(withoutApp as never)).toThrow(/appDomain/);
   });
 
   it('enables inbound only when acknowledged', () => {

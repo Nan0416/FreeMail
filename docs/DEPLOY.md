@@ -11,7 +11,7 @@ FreeMail is **single-tenant and single-region**: one deployment is one owner, in
 3. [Deploy](#3-deploy)
 4. [SES production access (sandbox exit)](#4-ses-production-access-sandbox-exit)
 5. [DNS and email authentication](#5-dns-and-email-authentication)
-6. [Custom domains (optional)](#6-custom-domains-optional)
+6. [Custom domains (required)](#6-custom-domains-required)
 7. [Inbound email (optional)](#7-inbound-email-optional)
 8. [Attachments](#8-attachments)
 9. [Connect an agent](#9-connect-an-agent)
@@ -48,13 +48,13 @@ npx freemail init
 
 It asks:
 
-| Prompt                               | What it sets                             | Notes                                                                                                                                                           |
-| ------------------------------------ | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Existing Route53 hosted zone?**    | `hostedZone.mode` = `import` or `create` | On `import` it lists your zones (needs AWS creds; falls back to manual entry). On `create`, FreeMail provisions a new zone you must delegate at your registrar. |
-| **Email domain**                     | `emailDomain`                            | The zone apex **or a subdomain of it** — e.g. `example.com` or `mail.example.com`. Must be equal-to or under the hosted zone.                                   |
-| **Custom web-app domain** (optional) | `appDomain`                              | Blank → the generated CloudFront domain. See [§6](#6-custom-domains-optional).                                                                                  |
-| **Custom API domain** (optional)     | `apiDomain`                              | Blank → the generated API Gateway domain. Must differ from `appDomain`.                                                                                         |
-| **Enable inbound email?**            | `inbound.enabled`                        | Off by default. If yes, a second prompt makes you **explicitly acknowledge the MX override** (`inbound.confirmInboundMx`). See [§7](#7-inbound-email-optional). |
+| Prompt                            | What it sets                             | Notes                                                                                                                                                           |
+| --------------------------------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Existing Route53 hosted zone?** | `hostedZone.mode` = `import` or `create` | On `import` it lists your zones (needs AWS creds; falls back to manual entry). On `create`, FreeMail provisions a new zone you must delegate at your registrar. |
+| **Email domain**                  | `emailDomain`                            | The zone apex **or a subdomain of it** — e.g. `example.com` or `mail.example.com`. Must be equal-to or under the hosted zone.                                   |
+| **Web-app domain** (required)     | `appDomain`                              | Where the SPA is served, e.g. `app.example.com`. See [§6](#6-custom-domains-required).                                                                          |
+| **API domain** (required)         | `apiDomain`                              | Where the API is served, e.g. `api.example.com`. Must differ from `appDomain`.                                                                                  |
+| **Enable inbound email?**         | `inbound.enabled`                        | Off by default. If yes, a second prompt makes you **explicitly acknowledge the MX override** (`inbound.confirmInboundMx`). See [§7](#7-inbound-email-optional). |
 
 The result looks like:
 
@@ -63,13 +63,13 @@ The result looks like:
   "region": "us-east-1",
   "hostedZone": { "mode": "import", "zoneName": "example.com", "hostedZoneId": "Z0123456ABCDEF" },
   "emailDomain": "mail.example.com",
-  "appDomain": "app.example.com", // optional
-  "apiDomain": "api.example.com", // optional
+  "appDomain": "app.example.com", // required
+  "apiDomain": "api.example.com", // required
   "inbound": { "enabled": false, "confirmInboundMx": false },
 }
 ```
 
-The config is **fail-loud**: a malformed value (wrong region, an email/app/api domain outside the zone, inbound enabled without acknowledgement, an `appDomain` equal to `apiDomain`) is rejected at synth with a clear message, not silently defaulted.
+The config is **fail-loud**: a malformed value (wrong region, an email/app/api domain outside the zone, a **missing** `appDomain` or `apiDomain`, inbound enabled without acknowledgement, an `appDomain` equal to `apiDomain`) is rejected at synth with a clear message, not silently defaulted.
 
 By default the file is written to `./freemail.config.json` (repo root), which is exactly where the CDK app looks. To write elsewhere, use `-o <path>` and point the CDK app at it with `-c configPath=<path>` or the `FREEMAIL_CONFIG` env var.
 
@@ -91,7 +91,7 @@ The Lambda handlers are bundled from source at synth (esbuild), so no separate h
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **`WebAppUrl`**                                           | Open this to sign in and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                                   |
 | **`ApiEndpoint`**                                         | The HTTP API base URL. Also the target of the CloudFront `/api` proxy and the MCP endpoint (`{ApiEndpoint}/mcp`).                                  |
-| **`ApiCustomDomainUrl`**                                  | Present only if you set `apiDomain` — a branded host for direct agent/`x-api-key` access.                                                          |
+| **`ApiCustomDomainUrl`**                                  | The API domain. Used by **both** the web app (cross-origin) and agents (`x-api-key`).                                                              |
 | **`HostedZoneNameServers`**                               | Present only when FreeMail **created** the zone. **Set these at your registrar** to activate the zone (see [§5](#5-dns-and-email-authentication)). |
 | **`SesProductionAccessNote`**                             | A link to the SES account dashboard to request production access (see [§4](#4-ses-production-access-sandbox-exit)).                                |
 | **`SesMailFromDomain`**, **`SesBounceComplaintTopicArn`** | The custom MAIL FROM subdomain and the SNS topic that receives bounce/complaint notifications.                                                     |
@@ -142,15 +142,17 @@ A newly **created** zone is not yet authoritative for your domain. Take the **`H
 
 - SES DKIM/domain verification won't complete (SES verifies asynchronously and keeps retrying — no deploy failure),
 - inbound MX (if enabled) won't route, and
-- **a custom-domain deploy will hang** — see the next section.
+- **the deploy will hang on certificate validation** — see the next section.
 
 > If you **imported** an existing, already-delegated zone, there's nothing to do here — the records just appear.
 
-## 6. Custom domains (optional)
+## 6. Custom domains (required)
 
-`appDomain` (web app, a CloudFront alias) and `apiDomain` (API, a regional API Gateway custom domain for direct agent/`x-api-key` access) are both optional and independent. Each must be equal-to or a subdomain of your hosted zone, and the two must differ from each other. When unset, FreeMail uses the generated CloudFront / API Gateway domains and creates no certificate.
+`appDomain` (web app, a CloudFront alias) and `apiDomain` (API, a regional API Gateway custom domain) are **both required**. Each must be equal-to or a subdomain of your hosted zone, and the two must differ from each other.
 
-When set, FreeMail requests a **DNS-validated ACM certificate** (in `us-east-1`) and writes the validation records + alias records into the hosted zone.
+They are not optional because the browser calls the API **cross-origin**: the API's CORS policy allowlists exactly one origin — your `appDomain` — and the SPA needs an absolute URL for `apiDomain`. There is no generated-CloudFront / generated-`execute-api` deployment shape, so a config missing either is rejected at parse.
+
+FreeMail requests a **DNS-validated ACM certificate** for each (in `us-east-1`) and writes the validation records + alias records into the hosted zone.
 
 ### ⚠️ The #1 deploy footgun: delegate a created zone _before_ the first custom-domain deploy
 
@@ -158,10 +160,16 @@ When set, FreeMail requests a **DNS-validated ACM certificate** (in `us-east-1`)
 
 Unlike SES DKIM (which verifies asynchronously _after_ the deploy and simply retries), **ACM validation gates the deploy**. So:
 
-- **Import an already-delegated zone**, or
-- If FreeMail creates the zone, run a **first deploy without custom domains** to obtain the `HostedZoneNameServers`, delegate them at your registrar, and _then_ add `appDomain`/`apiDomain` and deploy again; **or** set the name servers at your registrar _promptly during_ the hanging deploy so validation can complete.
+Because both domains are now required, **every** deploy provisions certificates — you cannot side-step this with a domain-less first deploy. So:
 
-FreeMail warns about this at synth time (a CDK annotation) whenever a custom domain is configured on a created zone, and emits a `CustomDomainValidationNote` output as a reminder.
+- **Import an already-delegated zone** (the smooth path), or
+- If FreeMail creates the zone, take the `HostedZoneNameServers` from the created zone and set them at your registrar **promptly during** the hanging deploy, so validation completes before CloudFormation gives up. Delegating first, then deploying, is easier if you can.
+
+FreeMail warns about this at synth time (a CDK annotation) whenever the zone is newly created, and emits a `CustomDomainValidationNote` output as a reminder.
+
+### Verifying the cross-origin setup
+
+The browser↔API security depends on API Gateway behavior that cannot be checked from a synth or a unit test. After your first deploy, run [`CORS-VERIFICATION.md`](./CORS-VERIFICATION.md) — it is a short set of `curl` probes with explicit pass/fail criteria.
 
 ## 7. Inbound email (optional)
 
@@ -202,7 +210,7 @@ SES receipt rule → writes raw MIME to the mail S3 bucket → a parser Lambda e
 Agents send email through the MCP server — no browser, no cookies:
 
 1. In the web app, open **API keys** and **create a key**. It's shown **once** (copy it then); it's stored hashed and can't be retrieved again. An API key authorizes an agent to **send and (when inbound is enabled) read the mailbox via the MCP server** — it does **not** grant key management or the REST mailbox-read routes, which require signing in to the web app with your password (the cookie session).
-2. Point your MCP client at **`POST {ApiEndpoint}/mcp`** (or `https://{apiDomain}/mcp` if you set a custom API domain) with header **`x-api-key: fm_<your-key>`**.
+2. Point your MCP client at **`POST https://{apiDomain}/mcp`** with header **`x-api-key: fm_<your-key>`**.
 3. Call the **`send_email`** tool. A valid call needs **`from`** (an address under your domain), **at least one recipient** across `to`/`cc`/`bcc`, and **at least one body** — `text` and/or `html`:
 
 ```jsonc

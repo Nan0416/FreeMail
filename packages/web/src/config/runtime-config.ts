@@ -1,9 +1,10 @@
 import { parseWebRuntimeConfig, type WebRuntimeConfig } from '@freemail/shared';
 
 /**
- * Load the deploy-time runtime config the CDK wrote to `/config.json`. The API
- * endpoint is a CloudFormation value baked in at deploy, not at build, so it is
- * fetched at boot rather than compiled into the bundle.
+ * Load the deploy-time runtime config the CDK wrote to `/config.json`. The API origin
+ * is a deploy-time value, not a build-time one, so it is fetched at boot rather than
+ * compiled into the bundle. As of #47 it is an ABSOLUTE cross-origin URL (the api
+ * domain), not the former same-origin `/api` proxy path.
  *
  * A present-but-malformed `config.json` fails loud (surfaces as a boot error). A
  * missing/unreachable one only happens in local `vite dev` (no deploy), where we

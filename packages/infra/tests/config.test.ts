@@ -8,6 +8,9 @@ const validConfig = {
   region: 'us-east-1',
   hostedZone: { mode: 'create', zoneName: 'example.com' },
   emailDomain: 'example.com',
+  // Both required as of #47 — the SPA calls the API cross-origin.
+  appDomain: 'app.example.com',
+  apiDomain: 'api.example.com',
   inbound: { enabled: false, confirmInboundMx: false },
 };
 

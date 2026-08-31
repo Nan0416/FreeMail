@@ -9,6 +9,9 @@ function makeConfig(overrides: Partial<FreeMailConfig> = {}): FreeMailConfig {
     region: 'us-east-1',
     hostedZone: { mode: 'create', zoneName: 'example.com' },
     emailDomain: 'example.com',
+    // Both required as of #47 — the SPA calls the API cross-origin.
+    appDomain: 'app.example.com',
+    apiDomain: 'api.example.com',
     inbound: { enabled: false, confirmInboundMx: false },
     ...overrides,
   };
@@ -142,13 +145,14 @@ describe('FreeMailStack', () => {
     ).toThrow(/MX override has not been acknowledged/);
   });
 
-  it('warns (does not block) when a custom domain is set on a CREATED zone', () => {
-    const stack = new FreeMailStack(new App(), 'TestStack', {
-      config: makeConfig({ appDomain: 'mail.example.com' }),
-    });
+  it('warns (does not block) on a CREATED zone — custom domains are now always present', () => {
+    const stack = new FreeMailStack(new App(), 'TestStack', { config: makeConfig() });
     const annotations = Annotations.fromStack(stack);
     // Actionable: names the hang and the fix (delegate the zone's name servers).
-    annotations.hasWarning('*', Match.stringLikeRegexp('custom domain is configured on a CREATED'));
+    annotations.hasWarning(
+      '*',
+      Match.stringLikeRegexp('Custom domains are configured on a CREATED'),
+    );
     annotations.hasWarning('*', Match.stringLikeRegexp('HANG on certificate validation'));
     annotations.hasWarning('*', Match.stringLikeRegexp('name servers'));
   });
@@ -157,12 +161,11 @@ describe('FreeMailStack', () => {
     const stack = new FreeMailStack(new App(), 'TestStack', {
       config: makeConfig({
         hostedZone: { mode: 'import', zoneName: 'example.com', hostedZoneId: 'Z123' },
-        appDomain: 'mail.example.com',
       }),
     });
     Annotations.fromStack(stack).hasNoWarning(
       '*',
-      Match.stringLikeRegexp('custom domain is configured'),
+      Match.stringLikeRegexp('Custom domains are configured'),
     );
   });
 
@@ -184,13 +187,13 @@ describe('FreeMailStack', () => {
     template.hasOutput('CustomDomainValidationNote', {});
   });
 
-  it('falls back to generated URLs with no custom-domain outputs when unset', () => {
+  it('always provisions BOTH custom domains — there is no generated-URL fallback (#47)', () => {
     const template = synth(makeConfig());
-    // WebAppUrl is present but carries the generated CloudFront domain (a token), not a custom host.
-    template.hasOutput('WebAppUrl', {});
-    expect(() => template.hasOutput('ApiCustomDomainUrl', {})).toThrow();
-    expect(() => template.hasOutput('CustomDomainValidationNote', {})).toThrow();
-    template.resourceCountIs('AWS::CertificateManager::Certificate', 0);
-    template.resourceCountIs('AWS::ApiGatewayV2::DomainName', 0);
+    template.hasOutput('WebAppUrl', { Value: 'https://app.example.com' });
+    template.hasOutput('ApiCustomDomainUrl', { Value: 'https://api.example.com' });
+    template.hasOutput('CustomDomainValidationNote', {});
+    // One cert for CloudFront (app) + one for the regional API domain.
+    template.resourceCountIs('AWS::CertificateManager::Certificate', 2);
+    template.resourceCountIs('AWS::ApiGatewayV2::DomainName', 1);
   });
 });

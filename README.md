@@ -20,9 +20,9 @@ flowchart TB
     end
 
     subgraph AWS["Your AWS account · us-east-1"]
-        CF["CloudFront distribution<br/>(SPA + same-origin /api/* proxy)"]
+        CF["CloudFront distribution<br/>(SPA only · appDomain)"]
         S3web["S3 · web bucket<br/>(React SPA)"]
-        API["API Gateway · HTTP API"]
+        API["API Gateway · HTTP API<br/>(apiDomain · locked credentialed CORS)"]
         Authz["Lambda authorizer<br/>(cookie access token OR x-api-key)"]
         Rest["REST handler Lambda"]
         Mcp["MCP handler Lambda<br/>(POST /mcp · send_email)"]
@@ -32,10 +32,10 @@ flowchart TB
         Parse["Inbound parser Lambda<br/>(optional)"]
     end
 
-    Browser -->|"HTTPS (httpOnly cookies)"| CF
-    CF -->|"default behavior"| S3web
-    CF -->|"/api/* (same-origin, no CORS)"| API
-    Agent -->|"x-api-key"| API
+    Browser -->|"HTTPS · loads the SPA"| CF
+    CF --> S3web
+    Browser -->|"cross-origin fetch<br/>(httpOnly cookies · credentials: include)"| API
+    Agent -->|"x-api-key (no Origin, no CORS)"| API
 
     API --> Authz
     API --> Rest
@@ -51,7 +51,11 @@ flowchart TB
     Parse -.-> DDB
 ```
 
-**How it fits together.** The React SPA is served from a private S3 bucket via CloudFront. The **same CloudFront distribution proxies `/api/*` to the HTTP API**, so the browser only ever talks to one origin — that lets the session ride in `HttpOnly; Secure; SameSite=Strict` cookies with **no CORS and no token in web storage**. Agents skip the browser entirely and call the HTTP API directly with an `x-api-key` header. A single Lambda authorizer accepts either credential. Sending goes through Amazon SES; metadata and hashed secrets live in DynamoDB; raw inbound mail and attachments live in S3. Inbound is **off by default** — when enabled, SES writes received mail to S3 and a parser Lambda indexes it.
+**How it fits together.** The React SPA is served from a private S3 bucket via CloudFront at your `appDomain`; the HTTP API lives at your `apiDomain`. **Both domains are required** — the browser calls the API cross-origin, so there is no working deployment without them.
+
+The session rides in `HttpOnly; Secure; SameSite=Strict` cookies (`__Host-` prefixed, so they are host-locked to the api domain) with **no token in web storage**. Cross-origin access is defended in three coupled layers: `SameSite=Strict` blocks a foreign site outright; the API allows exactly **one** origin — your `appDomain` — with credentials, never a wildcard and never a reflected origin; and every state-changing route requires `Content-Type: application/json`, which forces a browser preflight that the origin allowlist then refuses. That third layer is what stops a _same-site sibling_ (`evil.example.com`), against which `SameSite=Strict` does nothing.
+
+Agents skip the browser entirely and call the HTTP API directly with an `x-api-key` header — they send no `Origin`, so CORS never applies to them. A single Lambda authorizer accepts either credential and remains the only authorization boundary; CORS governs what a browser may _read_, never whether a request is allowed. Sending goes through Amazon SES; metadata and hashed secrets live in DynamoDB; raw inbound mail and attachments live in S3. Inbound is **off by default** — when enabled, SES writes received mail to S3 and a parser Lambda indexes it.
 
 ## Capabilities and limitations
 
@@ -80,6 +84,8 @@ flowchart TB
 - **Node.js 22** (see [`.nvmrc`](./.nvmrc); Node ≥ 20.19 also works)
 - An **AWS account** with credentials configured, and **region `us-east-1`** (the only supported region)
 - A **domain** you control, with a Route53 hosted zone (existing, or one FreeMail creates for you)
+- **Two hostnames under that zone** — one for the web app (e.g. `app.example.com`) and one for the API (e.g. `api.example.com`). Both are **required**: the browser calls the API cross-origin, so neither has a usable default. `freemail init` prompts for them.
+- The hosted zone **delegated at your registrar before you deploy**. Both hostnames get DNS-validated ACM certificates, and that validation **blocks the CloudFormation deploy** until the records resolve publicly — an undelegated zone means the deploy hangs.
 
 ## Quickstart
 

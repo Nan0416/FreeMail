@@ -22,9 +22,22 @@ function requireDomain(value: string): true | string {
   return true;
 }
 
-async function optionalInput(message: string): Promise<string | undefined> {
-  const value = (await input({ message })).trim();
-  return value.length > 0 ? value : undefined;
+/**
+ * Prompt for a custom domain that must sit inside the hosted zone. Both the app and
+ * api domains are REQUIRED as of #47 (the SPA calls the API cross-origin, so neither
+ * has a working default), and `parseFreeMailConfig` rejects a config missing either —
+ * so validate here rather than letting the deployer discover it at build time.
+ */
+async function domainInZone(message: string, zoneName: string, suggested: string): Promise<string> {
+  return normalizeDomain(
+    await input({
+      message,
+      default: suggested,
+      validate: (value) =>
+        isSubdomainOrEqual(normalizeDomain(value), zoneName) ||
+        `Must be ${zoneName} or a subdomain of it.`,
+    }),
+  );
 }
 
 async function resolveHostedZone(): Promise<HostedZoneConfig> {
@@ -94,11 +107,18 @@ export async function promptAnswers(): Promise<InitAnswers> {
     }),
   );
 
-  const appDomain = await optionalInput(
-    'Custom domain for the web app (optional; blank = CloudFront default):',
+  // Required (#47): the web app is served at appDomain and calls the API cross-origin
+  // at apiDomain, which is the single origin the API's CORS allowlist is built from.
+  // They must differ — one host cannot alias both CloudFront and API Gateway.
+  const appDomain = await domainInZone(
+    'Domain for the web app (e.g. app.' + hostedZone.zoneName + '):',
+    hostedZone.zoneName,
+    `app.${hostedZone.zoneName}`,
   );
-  const apiDomain = await optionalInput(
-    'Custom domain for the API (optional; blank = API Gateway default):',
+  const apiDomain = await domainInZone(
+    'Domain for the API (must differ from the web app domain):',
+    hostedZone.zoneName,
+    `api.${hostedZone.zoneName}`,
   );
 
   const inboundEnabled = await confirm({

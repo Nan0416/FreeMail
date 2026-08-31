@@ -9,8 +9,13 @@
 /** The runtime config the SPA fetches from `/config.json`. */
 export interface WebRuntimeConfig {
   /**
-   * Base URL of the FreeMail HTTP API, with no trailing slash, e.g.
-   * `https://abc123.execute-api.us-east-1.amazonaws.com`.
+   * Absolute base URL of the FreeMail HTTP API, with no trailing slash, e.g.
+   * `https://api.example.com`. As of #47 the SPA calls the API CROSS-ORIGIN at the
+   * configured `apiDomain` — this is no longer the same-origin `/api` proxy path.
+   *
+   * Not asserted to be `https://` here: {@link parseWebRuntimeConfig} also parses the
+   * `VITE_API_BASE_URL` dev fallback, which is `http://localhost` under `vite dev`. The
+   * deployed value is the only one that must be https, so the CDK writer asserts it.
    */
   readonly apiBaseUrl: string;
   /**
