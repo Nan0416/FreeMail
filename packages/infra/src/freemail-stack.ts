@@ -1,7 +1,7 @@
 import { Annotations, CfnOutput, Fn, Stack } from 'aws-cdk-lib';
 import type { StackProps } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
-import type { FreeMailConfig } from '@freemail/shared';
+import type { FreeMailConfig } from '@freemail/shared/config';
 import { ApiConstruct } from './constructs/api.js';
 import { DataConstruct } from './constructs/data.js';
 import { DnsConstruct } from './constructs/dns.js';

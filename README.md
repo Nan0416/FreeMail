@@ -95,11 +95,12 @@ cd FreeMail
 npm install
 npm run build            # type-checks + compiles every package, incl. the web SPA
 
-npx freemail init        # interactive prompts → writes freemail.config.json
+npx freemail init        # interactive prompts → writes freemail-config.json
+                         # (or: cp freemail-config.template.json freemail-config.json)
 
 cd packages/infra
 npx cdk bootstrap        # first time per account/region
-npx cdk deploy           # deploys FreeMailStack, reads ../../freemail.config.json
+npx cdk deploy           # deploys FreeMailStack, reads ../../freemail-config.json
 ```
 
 After the deploy:

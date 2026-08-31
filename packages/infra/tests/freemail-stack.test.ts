@@ -1,7 +1,7 @@
 import { App } from 'aws-cdk-lib';
 import { Annotations, Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
-import type { FreeMailConfig } from '@freemail/shared';
+import type { FreeMailConfig } from '@freemail/shared/config';
 import { FreeMailStack } from '../src/freemail-stack.js';
 
 function makeConfig(overrides: Partial<FreeMailConfig> = {}): FreeMailConfig {

@@ -1,40 +1,36 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { parseFreeMailConfig } from '@freemail/shared';
-import type { FreeMailConfig } from '@freemail/shared';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { parseFreeMailConfig } from '@freemail/shared/config';
+import type { FreeMailConfig } from '@freemail/shared/config';
 
-export interface ConfigPathOptions {
-  /** `-c configPath=...` CDK context value, if provided. */
-  readonly contextPath?: unknown;
-  /** `FREEMAIL_CONFIG` environment override, if set. */
-  readonly envPath?: string;
-  /** Fallback path when neither context nor env is provided. */
-  readonly defaultPath: string;
+/**
+ * The deploy config has exactly ONE location: `freemail-config.json` at the repo root,
+ * written by `freemail init` and gitignored (it names your domains and zone).
+ * `freemail-config.template.json` beside it is the committed starting point.
+ *
+ * Deliberately not configurable. It used to be resolvable from three places — a
+ * `-c configPath=` CDK context value, a `FREEMAIL_CONFIG` env var, then a default —
+ * which meant answering "which config did this deploy actually use?" required checking
+ * three sources in precedence order. One fixed path is one answer.
+ */
+export const CONFIG_FILENAME = 'freemail-config.json';
+
+/** Absolute path to the repo-root config file. */
+export function configPath(): string {
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  return join(repoRoot, CONFIG_FILENAME);
 }
 
-/** Resolve the config file path from CDK context, then env, then the default. */
-export function resolveConfigPath({
-  contextPath,
-  envPath,
-  defaultPath,
-}: ConfigPathOptions): string {
-  if (typeof contextPath === 'string' && contextPath.length > 0) {
-    return resolve(contextPath);
-  }
-  if (envPath && envPath.length > 0) {
-    return resolve(envPath);
-  }
-  return defaultPath;
-}
-
-/** Read, JSON-parse, and validate the FreeMail config at `configPath`, failing loud. */
-export function loadConfig(configPath: string): FreeMailConfig {
+/** Read, JSON-parse, and validate the FreeMail deploy config, failing loud. */
+export function loadConfig(path: string = configPath()): FreeMailConfig {
   let raw: string;
   try {
-    raw = readFileSync(configPath, 'utf8');
+    raw = readFileSync(path, 'utf8');
   } catch {
     throw new Error(
-      `FreeMail: no config found at ${configPath}. Run \`freemail init\` to create one.`,
+      `FreeMail: no config found at ${path}. Run \`npx freemail init\` to create one, ` +
+        `or copy ${CONFIG_FILENAME.replace('.json', '.template.json')} and fill it in.`,
     );
   }
 
@@ -42,9 +38,7 @@ export function loadConfig(configPath: string): FreeMailConfig {
   try {
     json = JSON.parse(raw);
   } catch (error) {
-    throw new Error(
-      `FreeMail: config at ${configPath} is not valid JSON: ${(error as Error).message}`,
-    );
+    throw new Error(`FreeMail: config at ${path} is not valid JSON: ${(error as Error).message}`);
   }
 
   return parseFreeMailConfig(json);

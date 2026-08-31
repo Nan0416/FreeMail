@@ -5,7 +5,8 @@
  */
 import { existsSync } from 'node:fs';
 import { confirm, input, select } from '@inquirer/prompts';
-import { isSubdomainOrEqual, normalizeDomain, type HostedZoneConfig } from '@freemail/shared';
+import { isSubdomainOrEqual, normalizeDomain } from '@freemail/shared';
+import type { HostedZoneConfig } from '@freemail/shared/config';
 import { type InitAnswers, type InitIo, writeConfig } from './init.js';
 import { listHostedZones } from './route53.js';
 

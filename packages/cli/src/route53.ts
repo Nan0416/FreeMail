@@ -1,5 +1,5 @@
 import { ListHostedZonesCommand, Route53Client } from '@aws-sdk/client-route-53';
-import { DEFAULT_REGION } from '@freemail/shared';
+import { DEFAULT_REGION } from '@freemail/shared/config';
 
 export interface HostedZoneSummary {
   /** Zone apex domain, trailing dot stripped (e.g. `example.com`). */

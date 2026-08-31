@@ -40,7 +40,7 @@ npm run build   # tsc -b + the web SPA build (packages/web/dist)
 
 ## 2. Configure — `freemail init`
 
-`freemail init` is an interactive CLI that writes **`freemail.config.json`** — the single source of truth the CDK app reads at synth. Run it from the repo root:
+`freemail init` is an interactive CLI that writes **`freemail-config.json`** at the repo root — the single source of truth the CDK app reads at synth. Run it from the repo root:
 
 ```sh
 npx freemail init
@@ -71,14 +71,27 @@ The result looks like:
 
 The config is **fail-loud**: a malformed value (wrong region, an email/app/api domain outside the zone, a **missing** `appDomain` or `apiDomain`, inbound enabled without acknowledgement, an `appDomain` equal to `apiDomain`) is rejected at synth with a clear message, not silently defaulted.
 
-By default the file is written to `./freemail.config.json` (repo root), which is exactly where the CDK app looks. To write elsewhere, use `-o <path>` and point the CDK app at it with `-c configPath=<path>` or the `FREEMAIL_CONFIG` env var.
+### Where the config lives
+
+There is exactly **one** location: **`freemail-config.json` at the repo root**. It is not configurable — no CDK context value, no environment variable, no precedence order — so "which config did this deploy use?" always has one answer.
+
+The file is **gitignored** (it names your domains and hosted zone). **`freemail-config.template.json`** is committed beside it as a starting point.
+
+Prefer not to use the interactive CLI? Copy the template and edit it:
+
+```sh
+cp freemail-config.template.json freemail-config.json
+$EDITOR freemail-config.json
+```
+
+Either way the same schema validation runs at synth.
 
 ## 3. Deploy
 
 ```sh
 cd packages/infra
 npx cdk bootstrap    # first time per account/region only
-npx cdk deploy       # deploys FreeMailStack; reads ../../freemail.config.json
+npx cdk deploy       # deploys FreeMailStack; reads ../../freemail-config.json
 ```
 
 The Lambda handlers are bundled from source at synth (esbuild), so no separate handler build is needed — but the **web SPA must already be built** (`npm run build` from the root, per [§1](#1-prerequisites)).
