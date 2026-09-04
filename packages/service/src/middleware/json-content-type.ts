@@ -28,8 +28,12 @@
  * so a content-type requirement on a bodyless DELETE would be pure theater. Reads are
  * ungated for the same reason — they change nothing.
  *
- * `JSON_REQUIRED_ROUTES` below is the auditable list; `tests/handlers/service-handler.test.ts`
- * asserts that the routes wearing this middleware are exactly the routes in it.
+ * `JSON_REQUIRED_ROUTES` below is the auditable list FOR THE REST APP;
+ * `tests/handlers/service-handler.test.ts` asserts that the REST routes wearing this
+ * middleware are exactly the routes in it. The MCP app is a separate Express app with a
+ * single route, `POST /mcp`, which wears this same middleware for the same reason — it is
+ * audited by `tests/handlers/mcp-handler.test.ts` rather than by that set, which would
+ * otherwise claim a route the REST app does not serve.
  */
 import type { NextFunction, Request, Response } from 'express';
 import { authErrors } from '../utils/errors.js';

@@ -20,15 +20,13 @@
  * than 404ing in production.
  *
  * The MCP server (#7) is a separate handler on the same HTTP API, behind the same
- * dual-scheme authorizer.
+ * dual-scheme authorizer, and is assembled from these same pieces — see `mcp.ts`.
  */
-import serverlessExpressDefault from '@codegenie/serverless-express';
 import type {
   APIGatewayProxyEventV2,
   APIGatewayProxyStructuredResultV2,
   Context,
 } from 'aws-lambda';
-import type { Express } from 'express';
 import { DependencyFactory } from '../dependencies/index.js';
 import { authMiddleware, errorHandler, notFoundHandler } from '../middleware/index.js';
 import {
@@ -39,29 +37,10 @@ import {
 } from '../routes/index.js';
 import { FreeMailService } from './service.js';
 import { getServiceConfig } from './service-config.js';
+import { toApiGatewayHandler, type ApiGatewayHandler } from './serverless-express.js';
 import { getLogger } from '../utils/logger.js';
 
 const logger = getLogger('rest-lambda');
-
-type ApiGatewayHandler = (
-  event: APIGatewayProxyEventV2,
-  context: Context,
-  callback: () => void,
-) => Promise<APIGatewayProxyStructuredResultV2>;
-
-type ServerlessExpressFactory = (options: {
-  readonly app: Express;
-  readonly logSettings?: { readonly level: string };
-}) => ApiGatewayHandler;
-
-/**
- * `@codegenie/serverless-express` does `module.exports = configure`, so the module itself
- * IS the factory function. Its bundled `index.d.ts` declares that with ESM `export
- * default` syntax, which TypeScript reads as `exports.default` for a package that is
- * otherwise CommonJS — so the declaration and the runtime disagree about the shape. This
- * cast picks the runtime truth, which is what both esbuild and Vite's interop produce.
- */
-const serverlessExpress = serverlessExpressDefault as unknown as ServerlessExpressFactory;
 
 let apigHandler: ApiGatewayHandler | undefined;
 
@@ -88,15 +67,7 @@ function buildHandler(): ApiGatewayHandler {
     errorHandler,
   });
 
-  apigHandler = serverlessExpress({
-    app: service.init(),
-    // PINNED, not defaulted. serverless-express's `debug` level `util.inspect`s the ENTIRE
-    // invoking event — which for FreeMail includes the `cookies` array carrying the live
-    // `__Host-fm_access` / `__Host-fm_refresh` session tokens. Turning that on would write
-    // a working session into CloudWatch. `error` is the library default; stating it here
-    // makes raising it a deliberate, reviewable act rather than a one-word convenience.
-    logSettings: { level: 'error' },
-  });
+  apigHandler = toApiGatewayHandler(service.init());
   return apigHandler;
 }
 
