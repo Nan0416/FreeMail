@@ -1,8 +1,8 @@
 import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { describe, expect, it, vi } from 'vitest';
-import type { EmailReadService } from '../../src/email/read-service.js';
-import type { EmailService } from '../../src/email/service.js';
+import type { EmailReadService } from '../../src/services/email-read-service.js';
+import type { EmailService } from '../../src/services/email-service.js';
 import { dispatchMcpRequest } from '../../src/mcp/dispatch.js';
 
 const AUTHORIZED_CONTEXT = { lambda: { sub: 'owner-subject', scheme: 'apiKey' } };

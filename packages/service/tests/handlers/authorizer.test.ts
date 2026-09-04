@@ -1,24 +1,24 @@
 import type { APIGatewayRequestAuthorizerEventV2 } from 'aws-lambda';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ACCESS_COOKIE } from '../../src/auth/cookies.js';
+import { ACCESS_COOKIE } from '../../src/utils/cookies.js';
 import { handler } from '../../src/handlers/authorizer.js';
 
-vi.mock('../../src/config/signing-key.js', () => ({
+vi.mock('../../src/utils/signing-key.js', () => ({
   getSigningKey: () => Promise.resolve('test-key'),
   getOrCreateSigningKey: () => Promise.resolve('test-key'),
 }));
 
 const { verifyMock } = vi.hoisted(() => ({ verifyMock: vi.fn() }));
-vi.mock('../../src/auth/jwt.js', () => ({ verifyAccessToken: verifyMock }));
+vi.mock('../../src/utils/jwt.js', () => ({ verifyAccessToken: verifyMock }));
 
 const { verifyKeyMock } = vi.hoisted(() => ({ verifyKeyMock: vi.fn() }));
-vi.mock('../../src/keys/service.js', () => ({
+vi.mock('../../src/services/api-key-service.js', () => ({
   ApiKeyService: class {
     verify = verifyKeyMock;
   },
 }));
-vi.mock('../../src/data/ddb-keys-repo.js', () => ({ DdbApiKeysRepo: class {} }));
-vi.mock('../../src/data/ddb-auth-repo.js', () => ({ DdbAuthRepo: class {} }));
+vi.mock('../../src/data/ddb-api-keys-dao.js', () => ({ DdbApiKeysDao: class {} }));
+vi.mock('../../src/data/ddb-auth-dao.js', () => ({ DdbAuthDao: class {} }));
 
 function event(opts: {
   cookies?: string[];

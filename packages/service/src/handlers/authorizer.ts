@@ -14,13 +14,15 @@ import type {
   APIGatewayRequestAuthorizerEventV2,
   APIGatewaySimpleAuthorizerWithContextResult,
 } from 'aws-lambda';
-import { getSigningKey } from '../config/signing-key.js';
-import { verifyAccessToken } from '../auth/jwt.js';
-import { OWNER_SUBJECT } from '../auth/service.js';
-import { ACCESS_COOKIE, DUPLICATE_COOKIE, readCookie } from '../auth/cookies.js';
-import { DdbApiKeysRepo } from '../data/ddb-keys-repo.js';
-import { DdbAuthRepo } from '../data/ddb-auth-repo.js';
-import { ApiKeyService } from '../keys/service.js';
+import { getSigningKey } from '../utils/signing-key.js';
+import { verifyAccessToken } from '../utils/jwt.js';
+import { OWNER_SUBJECT } from '../services/auth-service.js';
+import { ACCESS_COOKIE, DUPLICATE_COOKIE, readCookie } from '../utils/cookies.js';
+import { DdbApiKeysDao } from '../data/ddb-api-keys-dao.js';
+import { DdbAuthDao } from '../data/ddb-auth-dao.js';
+import { ApiKeyService } from '../services/api-key-service.js';
+import { createDocumentClient } from '../data/document-client.js';
+import { getAuthorizerConfig } from './authorizer-config.js';
 
 interface AuthorizerContext {
   readonly sub: string;
@@ -28,26 +30,25 @@ interface AuthorizerContext {
 }
 
 // Reused across warm invocations. API-key verification is a table read; no signing key needed.
-let apiKeyService: ApiKeyService | undefined;
-let authRepo: DdbAuthRepo | undefined;
-
-function getApiKeyService(): ApiKeyService {
-  const tableName = process.env.API_KEYS_TABLE;
-  if (!tableName) {
-    throw new Error('API_KEYS_TABLE is not set.');
-  }
-  apiKeyService ??= new ApiKeyService({ repo: new DdbApiKeysRepo(tableName) });
-  return apiKeyService;
+interface AuthorizerDeps {
+  readonly apiKeyService: ApiKeyService;
+  /** Read-only view of the auth table — the authorizer holds no write grant on it. */
+  readonly authDao: DdbAuthDao;
 }
 
-/** Read-only view of the auth table — the authorizer holds no write grant on it. */
-function getAuthRepo(): DdbAuthRepo {
-  const tableName = process.env.AUTH_TABLE;
-  if (!tableName) {
-    throw new Error('AUTH_TABLE is not set.');
+let deps: AuthorizerDeps | undefined;
+
+function init(): AuthorizerDeps {
+  if (deps) {
+    return deps;
   }
-  authRepo ??= new DdbAuthRepo(tableName);
-  return authRepo;
+  const config = getAuthorizerConfig();
+  const doc = createDocumentClient();
+  deps = {
+    apiKeyService: new ApiKeyService({ apiKeysDao: new DdbApiKeysDao(doc, config.apiKeysTable) }),
+    authDao: new DdbAuthDao(doc, config.authTable),
+  };
+  return deps;
 }
 
 type Result = APIGatewaySimpleAuthorizerWithContextResult<AuthorizerContext>;
@@ -72,7 +73,7 @@ export const handler = async (
     // Fail closed when no key has been generated yet: the login route mints the key
     // before it can issue a token, so a cookie presented against an empty table was
     // never signed by this deployment.
-    const signingKey = await getSigningKey(getAuthRepo());
+    const signingKey = await getSigningKey(init().authDao);
     if (signingKey === null) {
       return DENY;
     }
@@ -88,8 +89,8 @@ export const handler = async (
   // single-tenant owner, so downstream routes need not care which scheme was used.
   const apiKey = headers['x-api-key'];
   if (apiKey) {
-    const keyId = await getApiKeyService().verify(apiKey);
-    if (keyId) {
+    const verified = await init().apiKeyService.verify({ rawKey: apiKey });
+    if (verified) {
       return { isAuthorized: true, context: { sub: OWNER_SUBJECT, scheme: 'apiKey' } };
     }
     return DENY;

@@ -29,6 +29,19 @@ export default tseslint.config(
   {
     rules: {
       curly: ['error', 'all'],
+      // Align ESLint with the compiler: `tsconfig.base.json` sets `noUnusedParameters`,
+      // which TypeScript already exempts `_`-prefixed names from. Without this the two
+      // disagree, and a parameter that MUST exist but is deliberately unused — an Express
+      // error handler's 4-arg arity, a service method whose Request carries no fields yet —
+      // has no way to be written that satisfies both.
+      '@typescript-eslint/no-unused-vars': [
+        'error',
+        {
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
+          caughtErrorsIgnorePattern: '^_',
+        },
+      ],
       // Immutable-by-default: every interface field must be `readonly`. Enforced
       // via core selectors (no type-aware linting / no extra dependency).
       // Element-level array immutability (`readonly readonly T[]`) is not
