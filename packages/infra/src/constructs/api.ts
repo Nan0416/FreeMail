@@ -147,7 +147,7 @@ export class ApiConstruct extends Construct {
       },
     });
 
-    this.restHandler = this.nodeFunction('RestHandler', 'rest.ts', {
+    this.restHandler = this.nodeFunction('RestHandler', 'service-handler.ts', {
       description: 'FreeMail REST API (auth + app routes).',
       memorySize: 1024, // more vCPU so the scrypt hash on login stays sub-second
       environment: {

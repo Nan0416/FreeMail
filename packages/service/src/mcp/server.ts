@@ -29,11 +29,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { EmailError } from '../email/errors.js';
-import { parseListEmailsQuery } from '../email/list-query.js';
-import type { EmailReadService } from '../email/read-service.js';
-import type { EmailService } from '../email/service.js';
-import { detailTrust, frameUntrusted, listTrust } from '../email/untrusted-frame.js';
+import { EmailError } from '../utils/errors.js';
+import { parseListEmailsQuery } from '../utils/list-query.js';
+import type { EmailReadService } from '../services/email-read-service.js';
+import type { EmailService } from '../services/email-service.js';
+import { detailTrust, frameUntrusted, listTrust } from '../utils/untrusted-frame.js';
 
 export const MCP_SERVER_NAME = 'freemail';
 export const MCP_SERVER_VERSION = '0.1.0';
@@ -235,7 +235,7 @@ export async function handleGetEmail(
   args: { id: string },
 ): Promise<CallToolResult> {
   try {
-    const email = await readService.getEmail(args.id);
+    const email = await readService.getEmail({ handle: args.id });
     return {
       content: [{ type: 'text', text: renderDetailText(email, nonce) }],
       structuredContent: { trust: detailTrust(email.direction), email },
@@ -255,7 +255,10 @@ export async function handleGetEmailAttachmentUrl(
   args: { id: string; attachmentId: string },
 ): Promise<CallToolResult> {
   try {
-    const result = await readService.getAttachmentUrl(args.id, args.attachmentId);
+    const result = await readService.getAttachmentUrl({
+      handle: args.id,
+      attachmentId: args.attachmentId,
+    });
     return {
       content: [
         {

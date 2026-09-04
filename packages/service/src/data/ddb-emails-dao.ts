@@ -1,0 +1,179 @@
+/**
+ * DynamoDB-backed {@link EmailsDao} over #2's `emailsTable` (composite key
+ * `pk`/`sk`). Each direction shares one partition so it lists newest-first:
+ *   { pk: 'SENT',    sk: '<sentAtIso>#<id>',     direction: 'sent',    ...metadata }
+ *   { pk: 'INBOUND', sk: '<receivedAtIso>#<id>', direction: 'inbound', ...metadata }
+ *
+ * The read slice (#11) adds the list/get queries over both partitions. Every put is
+ * conditional (`attribute_not_exists(pk)`) so a re-used id can never clobber an
+ * existing row — and for inbound, so an at-least-once S3 redelivery is a no-op.
+ */
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+  type GetCommandOutput,
+  PutCommand,
+  QueryCommand,
+  type QueryCommandOutput,
+  UpdateCommand,
+} from '@aws-sdk/lib-dynamodb';
+import { CONDITIONAL_CHECK_FAILED, EmailEntity } from './entities.js';
+import type {
+  CreateInboundEmailInput,
+  CreateInboundEmailOutput,
+  CreateSentEmailInput,
+  EmailsDao,
+  EmailsReadDao,
+  GetEmailInput,
+  GetEmailOutput,
+  QueryEmailsByDirectionInput,
+  UpdateSentEmailStatusInput,
+} from './emails-dao.js';
+
+/** Reconstruct the typed union row from a stored item (we wrote the shape, so trust `direction`). */
+function toRow(item: Record<string, unknown>): GetEmailOutput {
+  const sk = String(item.sk);
+  if (item.direction === 'inbound') {
+    return { ...(item as unknown as CreateInboundEmailInput), direction: 'inbound', sk };
+  }
+  return { ...(item as unknown as CreateSentEmailInput), direction: 'sent', sk };
+}
+
+export class DdbEmailsDao implements EmailsDao, EmailsReadDao {
+  private readonly doc: DynamoDBDocumentClient;
+
+  constructor(
+    doc: DynamoDBDocumentClient,
+    private readonly tableName: string,
+  ) {
+    this.doc = doc;
+  }
+
+  async createSentEmail(input: CreateSentEmailInput): Promise<void> {
+    await this.doc.send(
+      new PutCommand({
+        TableName: this.tableName,
+        Item: {
+          pk: EmailEntity.SENT_PARTITION,
+          sk: `${input.sentAt}#${input.id}`,
+          direction: 'sent',
+          id: input.id,
+          from: input.from,
+          to: input.to,
+          cc: input.cc,
+          bcc: input.bcc,
+          subject: input.subject,
+          // Undefined at the initial 'sending' write; removeUndefinedValues drops it, and it's
+          // filled by updateSentStatus on the 'sent' transition.
+          sesMessageId: input.sesMessageId,
+          sentAt: input.sentAt,
+          attachmentCount: input.attachmentCount,
+          sizeBytes: input.sizeBytes,
+          status: input.status,
+          rawS3Key: input.rawS3Key,
+          error: input.error,
+        },
+        ConditionExpression: 'attribute_not_exists(pk)',
+      }),
+    );
+  }
+
+  async updateSentEmailStatus(input: UpdateSentEmailStatusInput): Promise<void> {
+    // 'status' is a DynamoDB reserved word; alias every updated name to be safe.
+    const names: Record<string, string> = { '#status': 'status' };
+    const values: Record<string, unknown> = { ':status': input.status };
+    const sets = ['#status = :status'];
+    if (input.sesMessageId !== undefined) {
+      names['#mid'] = 'sesMessageId';
+      values[':mid'] = input.sesMessageId;
+      sets.push('#mid = :mid');
+    }
+    if (input.error !== undefined) {
+      names['#error'] = 'error';
+      values[':error'] = input.error;
+      sets.push('#error = :error');
+    }
+    await this.doc.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: { pk: EmailEntity.SENT_PARTITION, sk: `${input.sentAt}#${input.id}` },
+        UpdateExpression: `SET ${sets.join(', ')}`,
+        ExpressionAttributeNames: names,
+        ExpressionAttributeValues: values,
+        // The row was just written by putSent; guard against a vanished/absent row.
+        ConditionExpression: 'attribute_exists(pk)',
+      }),
+    );
+  }
+
+  async createInboundEmail(input: CreateInboundEmailInput): Promise<CreateInboundEmailOutput> {
+    try {
+      await this.doc.send(
+        new PutCommand({
+          TableName: this.tableName,
+          Item: {
+            pk: EmailEntity.INBOUND_PARTITION,
+            sk: `${input.receivedAt}#${input.id}`,
+            direction: 'inbound',
+            id: input.id,
+            sesMessageId: input.sesMessageId,
+            from: input.from,
+            fromName: input.fromName,
+            to: input.to,
+            cc: input.cc,
+            subject: input.subject,
+            snippet: input.snippet,
+            receivedAt: input.receivedAt,
+            headerDate: input.headerDate,
+            hasAttachments: input.hasAttachments,
+            attachmentCount: input.attachmentCount,
+            attachments: input.attachments,
+            spamVerdict: input.spamVerdict,
+            virusVerdict: input.virusVerdict,
+            parseStatus: input.parseStatus,
+            quarantined: input.quarantined,
+            rawS3Key: input.rawS3Key,
+            sizeBytes: input.sizeBytes,
+          },
+          // The idempotency guard: a redelivered event finds the row present and no-ops.
+          ConditionExpression: 'attribute_not_exists(pk)',
+        }),
+      );
+      return { created: true };
+    } catch (err) {
+      if (err instanceof Error && err.name === CONDITIONAL_CHECK_FAILED) {
+        return { created: false };
+      }
+      throw err;
+    }
+  }
+
+  async queryEmailsByDirection({
+    direction,
+    limit,
+    afterSk,
+  }: QueryEmailsByDirectionInput): Promise<GetEmailOutput[]> {
+    const pk = EmailEntity.partitionFor(direction);
+    const out = (await this.doc.send(
+      new QueryCommand({
+        TableName: this.tableName,
+        KeyConditionExpression: 'pk = :pk',
+        ExpressionAttributeValues: { ':pk': pk },
+        // Newest-first: sk = '<iso>#<id>' sorts lexicographically by receipt/send time.
+        ScanIndexForward: false,
+        Limit: limit,
+        // Resume strictly after the last row we emitted for this partition. pk is
+        // server-derived (never client-supplied), so a crafted cursor can't retarget it.
+        ...(afterSk ? { ExclusiveStartKey: { pk, sk: afterSk } } : {}),
+      }),
+    )) as QueryCommandOutput;
+    return (out.Items ?? []).map(toRow);
+  }
+
+  async getEmail(key: GetEmailInput): Promise<GetEmailOutput | null> {
+    const out = (await this.doc.send(
+      new GetCommand({ TableName: this.tableName, Key: { pk: key.pk, sk: key.sk } }),
+    )) as GetCommandOutput;
+    return out.Item ? toRow(out.Item) : null;
+  }
+}

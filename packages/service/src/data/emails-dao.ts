@@ -1,0 +1,196 @@
+/**
+ * Persistence port for email metadata. Kept an interface so the {@link EmailService}
+ * (sent side) and the inbound processor are testable with a fake, and so the read
+ * slice (#11) can extend the same store without either knowing about DynamoDB.
+ *
+ * Both directions share one table: sent messages under `pk='SENT'`, received under
+ * `pk='INBOUND'`, each `sk='<iso>#<id>'` so the read slice lists either partition
+ * newest-first and merges them into one timeline.
+ */
+import type { SentStatus } from '@freemail/shared';
+
+/** Partition holding sent messages. */
+export const SENT_PARTITION = 'SENT';
+/** Partition holding received messages. */
+export const INBOUND_PARTITION = 'INBOUND';
+
+/** The two (and only) valid partitions — used to validate a decoded message handle. */
+export const EMAIL_PARTITIONS: ReadonlySet<string> = new Set([SENT_PARTITION, INBOUND_PARTITION]);
+
+/** Metadata for one sent message — headers + SES id + status; the body lives in S3 (`rawS3Key`). */
+export interface CreateSentEmailInput {
+  /** FreeMail's own id for the message. */
+  readonly id: string;
+  readonly from: string;
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly bcc: readonly string[];
+  readonly subject: string;
+  /**
+   * The message id SES assigned. Absent until SES accepts the message: the row is first
+   * written `status:'sending'` with no id, then the id is set on the `'sent'` transition.
+   */
+  readonly sesMessageId?: string;
+  /** Send time (attempt time), ISO-8601 — the sort-key basis, stable across the status update. */
+  readonly sentAt: string;
+  readonly attachmentCount: number;
+  /** Size of the raw MIME message in bytes. */
+  readonly sizeBytes: number;
+  /**
+   * Delivery status, set write-before-send (`sending` → `sent`/`send_failed`). Optional on the
+   * type so a legacy row written before this field reads back without it (→ envelope-only detail).
+   */
+  readonly status?: SentStatus;
+  /**
+   * S3 pointer to the archived composed raw MIME (`sent/<id>`) — the source the read path
+   * re-parses on demand for the sent body. Absent on a legacy row (→ envelope-only detail).
+   */
+  readonly rawS3Key?: string;
+  /** Short failure reason on a `send_failed` row — server-side only, never surfaced in the read DTO. */
+  readonly error?: string;
+}
+
+/**
+ * The terminal status transition of a sent message after the SES call: `sent` (+ `sesMessageId`)
+ * or `send_failed` (+ `error`). Keyed by `id` + `sentAt` (the sort-key basis), so the update
+ * targets the exact row without moving it.
+ */
+export interface UpdateSentEmailStatusInput {
+  readonly id: string;
+  readonly sentAt: string;
+  readonly status: Extract<SentStatus, 'sent' | 'send_failed'>;
+  /** Set on `sent`. */
+  readonly sesMessageId?: string;
+  /** Set on `send_failed` — a short reason. */
+  readonly error?: string;
+}
+
+/**
+ * SES scan verdicts, normalized. `PASS` is the ONLY affirmative-clean value —
+ * `ABSENT` (no verdict header), `CONFLICTING` (duplicate/injected verdict lines),
+ * and `UNKNOWN` (unrecognized value) are all fail-closed alongside `FAIL` / `GRAY`
+ * / `PROCESSING_FAILED`. Attachments and the snippet are exposed only on `PASS`.
+ */
+export type InboundVerdict =
+  'PASS' | 'FAIL' | 'GRAY' | 'PROCESSING_FAILED' | 'CONFLICTING' | 'ABSENT' | 'UNKNOWN';
+
+/** Outcome of parsing the raw MIME. Only `ok` is a fully-processed message. */
+export type InboundParseStatus = 'ok' | 'oversize' | 'limit_exceeded' | 'parse_failed';
+
+/**
+ * A descriptor for one extracted attachment. `s3Key` is server-side only — the read
+ * API (#11) presigns it but never returns the raw key to the client. `filename` is
+ * the attacker-supplied name kept for display/`Content-Disposition`; it is NOT part
+ * of the (opaque) S3 key.
+ */
+export interface InboundAttachmentDescriptor {
+  /** Stable per-message id (the MIME part index). */
+  readonly id: string;
+  /** Original, sanitized filename — metadata only, never used in the S3 key. */
+  readonly filename: string;
+  readonly contentType: string;
+  readonly sizeBytes: number;
+  /** Server-side S3 pointer (`attachments/inbound/<id>/<partIndex>`). Never exposed by the read API. */
+  readonly s3Key: string;
+}
+
+/** Metadata for one received message. Attachments + snippet are present only when content is exposable. */
+export interface CreateInboundEmailInput {
+  /** FreeMail's id for the message — the validated SES message id (stable → idempotent). */
+  readonly id: string;
+  /** Same value as `id`; kept explicit to mirror the sent-side field. */
+  readonly sesMessageId: string;
+  /** First `From` address, sanitized. */
+  readonly from: string;
+  /** `From` display name, sanitized, if present. */
+  readonly fromName?: string;
+  /** `To` addresses, sanitized + count-capped. */
+  readonly to: readonly string[];
+  /** `Cc` addresses, sanitized + count-capped. */
+  readonly cc: readonly string[];
+  /** Subject, sanitized + length-capped (`''` if absent). */
+  readonly subject: string;
+  /** Short plain-text preview — present ONLY when content is exposable (parsed + virus `PASS`). */
+  readonly snippet?: string;
+  /** Server-trusted receipt time (S3 object `LastModified`), ISO-8601 — the sort-key basis. */
+  readonly receivedAt: string;
+  /** The message's own `Date:` header, ISO-8601 — display-only, attacker-controlled, may be absent. */
+  readonly headerDate?: string;
+  readonly hasAttachments: boolean;
+  readonly attachmentCount: number;
+  /** Extracted attachments — empty unless content is exposable. */
+  readonly attachments: readonly InboundAttachmentDescriptor[];
+  readonly spamVerdict: InboundVerdict;
+  readonly virusVerdict: InboundVerdict;
+  readonly parseStatus: InboundParseStatus;
+  /** Hidden-by-default: content suppressed (not virus-`PASS`/parse-failed) OR spam-flagged. */
+  readonly quarantined: boolean;
+  /** S3 pointer to the raw MIME kept as the forensic source of truth (`inbound/<id>`). */
+  readonly rawS3Key: string;
+  /** Raw MIME size in bytes (from S3 `HeadObject`). */
+  readonly sizeBytes: number;
+}
+
+export interface CreateInboundEmailOutput {
+  /**
+   * False when the row already existed. Inbound delivery is at-least-once, so a redelivery
+   * must be a no-op rather than a double-write — this is that signal.
+   */
+  readonly created: boolean;
+}
+
+export interface EmailsDao {
+  /**
+   * Record a sent message before the SES call (`status:'sending'`, with `rawS3Key` +
+   * metadata, no `sesMessageId` yet). Conditional on the id not already existing, so a
+   * reused id can never clobber an existing row.
+   */
+  createSentEmail(input: CreateSentEmailInput): Promise<void>;
+
+  /**
+   * Apply the terminal status transition after the SES call — `sent` (+ `sesMessageId`) or
+   * `send_failed` (+ `error`). Conditional on the row existing (it was just written); a
+   * plain `SET`, it never moves the row (the sort key derives from the unchanged `sentAt`).
+   */
+  updateSentEmailStatus(input: UpdateSentEmailStatusInput): Promise<void>;
+
+  /** Record a received message, idempotently. */
+  createInboundEmail(input: CreateInboundEmailInput): Promise<CreateInboundEmailOutput>;
+}
+
+/**
+ * A stored row plus its DynamoDB sort key — the input fields plus what the server derives.
+ * The read slice (#11) needs `sk` to mint the opaque message handle and the pagination
+ * cursor: both derive from `{ pk, sk }`, never from a client-supplied key.
+ */
+export type GetEmailOutput =
+  | ({ readonly direction: 'sent'; readonly sk: string } & CreateSentEmailInput)
+  | ({ readonly direction: 'inbound'; readonly sk: string } & CreateInboundEmailInput);
+
+export interface GetEmailInput {
+  readonly pk: string;
+  readonly sk: string;
+}
+
+export interface QueryEmailsByDirectionInput {
+  readonly direction: 'sent' | 'inbound';
+  readonly limit: number;
+  /** Return only rows strictly older than this sort key; omit to start from the newest. */
+  readonly afterSk?: string | undefined;
+}
+
+/** The read half, split out so a component can be granted reads without the write surface. */
+export interface EmailsReadDao {
+  /**
+   * One partition (`'sent'` → `pk='SENT'`, `'inbound'` → `pk='INBOUND'`), newest-first, at
+   * most `limit` rows strictly older than `afterSk` (omit `afterSk` to start from the
+   * newest). Fewer than `limit` rows means the partition is exhausted past that point — the
+   * read service uses that to decide when a direction is drained.
+   */
+  queryEmailsByDirection(
+    input: QueryEmailsByDirectionInput,
+  ): Promise<ReadonlyArray<GetEmailOutput>>;
+
+  /** Fetch exactly one row by its full primary key, or `null` if absent. */
+  getEmail(input: GetEmailInput): Promise<GetEmailOutput | null>;
+}

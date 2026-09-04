@@ -2,9 +2,9 @@ import type { EmailDetail, EmailListItem, ListEmailsResponse } from '@freemail/s
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { emailErrors } from '../../src/email/errors.js';
-import type { EmailReadService } from '../../src/email/read-service.js';
-import type { EmailService } from '../../src/email/service.js';
+import { emailErrors } from '../../src/utils/errors.js';
+import type { EmailReadService } from '../../src/services/email-read-service.js';
+import type { EmailService } from '../../src/services/email-service.js';
 import { buildMcpServer, type McpServerDeps } from '../../src/mcp/server.js';
 
 /**
@@ -316,7 +316,7 @@ describe('get_email', () => {
 
     const result = await client.callTool({ name: 'get_email', arguments: { id: 'ref-in-1' } });
 
-    expect(getEmail).toHaveBeenCalledWith('ref-in-1');
+    expect(getEmail).toHaveBeenCalledWith({ handle: 'ref-in-1' });
     expect(result.structuredContent).toEqual({ trust: 'untrusted_external_content', email });
     const text = textOf(result);
     // The attacker's body sits inside the nonce boundary (data, not instructions).
@@ -410,7 +410,7 @@ describe('get_email_attachment_url', () => {
       arguments: { id: 'ref-in-1', attachmentId: '2' },
     });
 
-    expect(getAttachmentUrl).toHaveBeenCalledWith('ref-in-1', '2');
+    expect(getAttachmentUrl).toHaveBeenCalledWith({ handle: 'ref-in-1', attachmentId: '2' });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toEqual(response);
     expect(textOf(result)).toContain('untrusted');

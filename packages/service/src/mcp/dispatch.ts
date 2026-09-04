@@ -12,9 +12,9 @@
  */
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
-import { AuthError, authErrors } from '../auth/errors.js';
-import { subjectFromContext } from '../handlers/request-context.js';
-import { hasJsonContentType } from '../handlers/content-type.js';
+import { AuthError, authErrors } from '../utils/errors.js';
+import { subjectFromContext } from '../utils/request-context.js';
+import { hasJsonContentType } from '../utils/content-type.js';
 import { eventToRequest, responseToResult } from './http-adapter.js';
 import { buildMcpServer, type McpServerDeps } from './server.js';
 
