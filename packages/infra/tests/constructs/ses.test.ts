@@ -4,7 +4,7 @@ import { HostedZone } from 'aws-cdk-lib/aws-route53';
 import { Bucket } from 'aws-cdk-lib/aws-s3';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
-import { SesConstruct } from '../../src/constructs/ses.js';
+import { SesConstruct, dmarcRecordValue } from '../../src/constructs/ses.js';
 import type { SesIdentityMode } from '@freemail/shared/config';
 
 function synth(
@@ -44,6 +44,38 @@ function synthWithInbound(emailDomain = 'mail.example.com', zoneName = 'example.
   });
   return Template.fromStack(stack);
 }
+
+function synthCreateWithInbound(emailDomain = 'mail.example.com', zoneName = 'example.com') {
+  const stack = new Stack(new App(), 'TestStack', {
+    env: { region: 'us-east-1', account: '111111111111' },
+  });
+  const hostedZone = new HostedZone(stack, 'Zone', { zoneName });
+  const mailBucket = new Bucket(stack, 'MailBucket');
+  const emailsTable = new Table(stack, 'EmailsTable', {
+    partitionKey: { name: 'pk', type: AttributeType.STRING },
+    sortKey: { name: 'sk', type: AttributeType.STRING },
+  });
+  new SesConstruct(stack, 'Ses', {
+    hostedZone,
+    emailDomain,
+    region: 'us-east-1',
+    sesIdentityMode: 'create',
+    inbound: { mailBucket, emailsTable },
+  });
+  return Template.fromStack(stack);
+}
+
+describe('dmarcRecordValue', () => {
+  it('adds an aggregate-report address only when inbound can receive it', () => {
+    // The reports are ordinary email. With inbound off the domain has no MX at all, so
+    // advertising dmarc@<domain> would point every reporter at a mailbox that cannot
+    // receive; with inbound on the catch-all rule delivers it like any other address.
+    expect(dmarcRecordValue('mail.example.com', true)).toBe(
+      'v=DMARC1; p=none; rua=mailto:dmarc@mail.example.com;',
+    );
+    expect(dmarcRecordValue('mail.example.com', false)).toBe('v=DMARC1; p=none;');
+  });
+});
 
 describe('SesConstruct — imported identity', () => {
   it('creates NEITHER the identity NOR any auth record', () => {
@@ -150,11 +182,21 @@ describe('SesConstruct', () => {
       Type: 'TXT',
       ResourceRecords: ['"v=spf1 include:amazonses.com ~all"'],
     });
-    // DMARC in monitoring mode.
+    // DMARC in monitoring mode. No rua here: this synth has inbound disabled, so there
+    // is no MX and nothing could deliver the aggregate reports.
     template.hasResourceProperties('AWS::Route53::RecordSet', {
       Name: '_dmarc.mail.example.com',
       Type: 'TXT',
-      ResourceRecords: [Match.stringLikeRegexp('^"v=DMARC1;')],
+      ResourceRecords: ['"v=DMARC1; p=none;"'],
+    });
+  });
+
+  it('publishes the DMARC aggregate-report address when inbound is enabled', () => {
+    const template = synthCreateWithInbound();
+    template.hasResourceProperties('AWS::Route53::RecordSet', {
+      Name: '_dmarc.mail.example.com',
+      Type: 'TXT',
+      ResourceRecords: ['"v=DMARC1; p=none; rua=mailto:dmarc@mail.example.com;"'],
     });
   });
 
