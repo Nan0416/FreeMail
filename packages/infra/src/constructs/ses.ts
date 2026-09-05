@@ -46,9 +46,26 @@ export interface SesConstructProps {
 
 const RECORD_TTL = '1800';
 const SPF_VALUE = 'v=spf1 include:amazonses.com ~all';
-// p=none = monitoring only: start here, then tighten to quarantine/reject once
-// aligned SPF/DKIM is confirmed via the aggregate reports.
-const DMARC_VALUE = 'v=DMARC1; p=none;';
+/** Mailbox the DMARC aggregate reports are addressed to, under the email domain. */
+const DMARC_REPORT_MAILBOX = 'dmarc';
+
+/**
+ * DMARC at p=none — monitoring only: start here, then tighten to quarantine/reject once
+ * aligned SPF/DKIM is confirmed via the aggregate reports.
+ *
+ * `rua` (where receiving providers send their daily aggregate reports) is included ONLY
+ * when inbound is enabled. The reports arrive as ordinary email: with inbound off the
+ * domain has no MX at all, so the tag would advertise a mailbox that cannot receive and
+ * every reporter's daily send would fail. With inbound on, the catch-all receipt rule
+ * delivers `dmarc@<emailDomain>` into FreeMail like any other address.
+ *
+ * Pure + exported so the published record value is unit-tested directly rather than
+ * only through a synthesized template.
+ */
+export function dmarcRecordValue(emailDomain: string, inboundEnabled: boolean): string {
+  const policy = 'v=DMARC1; p=none;';
+  return inboundEnabled ? `${policy} rua=mailto:${DMARC_REPORT_MAILBOX}@${emailDomain};` : policy;
+}
 
 /** Route53 stores TXT record values enclosed in double quotes. */
 function txt(value: string): string {
@@ -131,7 +148,13 @@ export class SesConstruct extends Construct {
         feedbackForwarding: false,
       });
 
-      this.writeAuthRecords(this.emailIdentity, hostedZone, emailDomain, region);
+      this.writeAuthRecords(
+        this.emailIdentity,
+        hostedZone,
+        emailDomain,
+        region,
+        props.inbound !== undefined,
+      );
     }
 
     // SES owns its inbound receipt setup too: when inbound is enabled the stack passes
@@ -186,6 +209,7 @@ export class SesConstruct extends Construct {
     hostedZone: IHostedZone,
     emailDomain: string,
     region: string,
+    inboundEnabled: boolean,
   ): void {
     // Easy DKIM: 3 CNAMEs. `record.name` is already the fully-qualified host, so a
     // raw CfnRecordSet (which does no FQDN munging) is required — the L2
@@ -218,11 +242,12 @@ export class SesConstruct extends Construct {
       resourceRecords: [txt(SPF_VALUE)],
     });
 
-    // DMARC (monitoring; p=none).
+    // DMARC (monitoring; p=none), with an aggregate-report address when inbound can
+    // actually receive it — see dmarcRecordValue.
     this.record('Dmarc', hostedZone, {
       name: `_dmarc.${emailDomain}`,
       type: 'TXT',
-      resourceRecords: [txt(DMARC_VALUE)],
+      resourceRecords: [txt(dmarcRecordValue(emailDomain, inboundEnabled))],
     });
   }
 

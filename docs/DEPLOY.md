@@ -147,7 +147,7 @@ FreeMail creates the email-authentication records in your hosted zone automatica
 - **DKIM** (Easy DKIM CNAMEs) — signs outbound mail.
 - **SPF** — a TXT record authorizing SES for the send domain.
 - **Custom MAIL FROM** — a `bounce.<emailDomain>` subdomain (MX + SPF) so bounce handling and DMARC alignment work.
-- **DMARC** — a `_dmarc` TXT record at `p=none` (monitoring).
+- **DMARC** — a `_dmarc` TXT record at `p=none` (monitoring). When **inbound is enabled** it also carries `rua=mailto:dmarc@<emailDomain>`, so the daily aggregate reports land in your own mailbox via the catch-all receipt rule. With inbound off the tag is omitted — the domain has no MX, so nothing could deliver them. The reports are gzipped XML, not readable mail; point `rua` at a parsing service if you want a rendered summary.
 
 You don't create these by hand — but they only take effect once the hosted zone is **live on the public internet**.
 
