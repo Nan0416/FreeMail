@@ -72,3 +72,22 @@ export function requireAccessScheme(req: Request, _res: Response, next: NextFunc
   }
   next();
 }
+
+/**
+ * Guard: the caller must have been authenticated by the Lambda authorizer, under EITHER
+ * scheme. This is the MCP route's guard: an `x-api-key` agent and a Bearer human are
+ * equally legitimate there, because `send_email` is the same capability as `POST /emails`
+ * — so unlike {@link requireAccessScheme} it does not discriminate on scheme, only on
+ * whether an identity was resolved at all.
+ *
+ * The authorizer already guards that route, so this is defense-in-depth: it fails closed if
+ * that wiring ever regresses, and documents that the caller's identity comes ONLY from the
+ * authorizer context, never from tool input.
+ */
+export function requireAuthenticated(req: Request, _res: Response, next: NextFunction): void {
+  if (!req.authContext) {
+    next(authErrors.invalidToken());
+    return;
+  }
+  next();
+}

@@ -52,18 +52,26 @@ dependencies/<name>-dependency-factory.ts   what it talks to
 The entry point does one thing: build once, memoize, delegate.
 
 ```ts
-let deps: McpDependencies | undefined;
+let apigHandler: ApiGatewayHandler | undefined;
 
-function init(): McpDependencies {
-  if (deps) {
+function buildHandler(): ApiGatewayHandler {
+  if (apigHandler) {
     logger.debug('Reusing lambda instance.');
-    return deps;
+    return apigHandler;
   }
   logger.info('Creating new MCP handler instance.');
-  deps = new McpDependencyFactory(getMcpConfig()).build();
-  return deps;
+  const deps = new McpDependencyFactory(getMcpConfig()).build();
+  // ... compose the Express app from middleware + endpoints ...
+  apigHandler = toApiGatewayHandler(service.init());
+  return apigHandler;
 }
 ```
+
+Both HTTP Lambdas memoize the same thing — the **serverless-express-wrapped Express app** —
+so the cold-start cost (DynamoDB, S3, and SES clients) is paid once per execution
+environment. What is deliberately NOT memoized is anything holding per-connection state: the
+MCP server and its transport are rebuilt per request, for reasons `routes/mcp-endpoints.ts`
+spells out.
 
 **[deviation]** The reference service keeps its _main_ service's config at the package root
 as `stage-config.ts`, and gives only its secondary Lambdas a `handlers/<name>-config.ts`.
