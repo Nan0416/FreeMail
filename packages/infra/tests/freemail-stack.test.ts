@@ -72,6 +72,35 @@ describe('FreeMailStack', () => {
     template.hasOutput('SesProductionAccessNote', {});
   });
 
+  it('grants SES send on BOTH the identity and the configuration set', () => {
+    // Regression: the sender always passes ConfigurationSetName, and SES authorizes such
+    // a send against the config-set resource as well as the identity. Granting only the
+    // identity deployed fine and then failed every send at runtime with a 403
+    // AccessDeniedException naming the configuration set.
+    const template = synth(makeConfig({ emailDomain: 'mail.example.com' }));
+    const policies = Object.values(template.findResources('AWS::IAM::Policy')).filter((policy) =>
+      (policy.Properties?.PolicyDocument?.Statement ?? []).some(
+        (statement: { Action?: unknown }) =>
+          Array.isArray(statement.Action) && statement.Action.includes('ses:SendRawEmail'),
+      ),
+    );
+    // Both senders: the REST /emails route and the MCP send_email tool.
+    expect(policies).toHaveLength(2);
+    for (const policy of policies) {
+      const statement = policy.Properties.PolicyDocument.Statement.find(
+        (candidate: { Action?: unknown }) =>
+          Array.isArray(candidate.Action) && candidate.Action.includes('ses:SendRawEmail'),
+      );
+      expect(statement.Effect).toBe('Allow');
+      expect(statement.Action).toEqual(['ses:SendEmail', 'ses:SendRawEmail']);
+      // Two ARNs, not one — the identity AND the configuration set.
+      expect(statement.Resource).toHaveLength(2);
+      const rendered = JSON.stringify(statement.Resource);
+      expect(rendered).toContain(':identity/mail.example.com');
+      expect(rendered).toContain(':configuration-set/');
+    }
+  });
+
   it('creates a hosted zone when mode is "create" and outputs name servers', () => {
     const template = synth(makeConfig({ hostedZone: { mode: 'create', zoneName: 'example.com' } }));
     template.resourceCountIs('AWS::Route53::HostedZone', 1);

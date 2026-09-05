@@ -180,7 +180,7 @@ export class ApiConstruct extends Construct {
     mailBucket.grantReadWrite(this.restHandler, 'sent/*');
 
     // The REST `/emails` route sends.
-    this.grantSesSend(this.restHandler, emailDomain);
+    this.grantSesSend(this.restHandler, emailDomain, sesConfigurationSetName);
 
     // MCP server: its own handler, but reuses the same EmailService (send) and, when
     // inbound is enabled, the same EmailReadService (#13 read tools). It gets the
@@ -208,7 +208,7 @@ export class ApiConstruct extends Construct {
     // Sent raw MIME archive (#29): send_email writes it. Write-only here — reading it back is
     // the get_email path, granted below only when inbound (and thus the read tools) is enabled.
     mailBucket.grantWrite(this.mcpHandler, 'sent/*');
-    this.grantSesSend(this.mcpHandler, emailDomain);
+    this.grantSesSend(this.mcpHandler, emailDomain, sesConfigurationSetName);
     // #13 read tools: read-only access scoped to exactly what EmailReadService touches —
     // the emails table (list/get), the inbound raw MIME + extracted-attachment prefixes
     // (body re-parse + attachment presign), and the sent raw MIME archive (#29, sent body
@@ -341,8 +341,19 @@ export class ApiConstruct extends Construct {
    * subdomains too). `SendEmail` with raw content also authorizes `SendRawEmail`.
    * Shared by the REST send route and the MCP server, which send through the same
    * EmailService.
+   *
+   * BOTH the identity and the configuration-set ARN are required. The sender passes
+   * `ConfigurationSetName` on every call (that is how suppression and bounce/complaint
+   * events keep working in sesIdentity `import` mode), and SES authorizes such a send
+   * against the configuration-set resource as well as the identity. Granting the
+   * identity alone fails at runtime, not at deploy, with a 403 AccessDeniedException
+   * naming the configuration set.
    */
-  private grantSesSend(fn: NodejsFunction, emailDomain: string): void {
+  private grantSesSend(
+    fn: NodejsFunction,
+    emailDomain: string,
+    configurationSetName: string,
+  ): void {
     fn.addToRolePolicy(
       new PolicyStatement({
         actions: ['ses:SendEmail', 'ses:SendRawEmail'],
@@ -351,6 +362,11 @@ export class ApiConstruct extends Construct {
             service: 'ses',
             resource: 'identity',
             resourceName: emailDomain,
+          }),
+          Stack.of(this).formatArn({
+            service: 'ses',
+            resource: 'configuration-set',
+            resourceName: configurationSetName,
           }),
         ],
       }),
