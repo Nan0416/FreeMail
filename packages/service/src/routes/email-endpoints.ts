@@ -1,5 +1,5 @@
 /**
- * The mailbox surface: one send route and three read routes.
+ * The mailbox surface: one send route and four read routes.
  *
  * The two halves have deliberately DIFFERENT authorization:
  *  - `POST /emails` is dual-scheme. A Bearer human and an `x-api-key` agent may both send,
@@ -91,6 +91,21 @@ export class EmailEndpoints implements Endpoints {
             attachmentId: requirePathParam(req, 'attachmentId'),
           });
           res.status(200).json(url);
+        } catch (err) {
+          next(err);
+        }
+      },
+    );
+
+    this.router.get(
+      '/emails/:id/raw',
+      requireAccessScheme,
+      async (req: Request, res: Response, next: NextFunction) => {
+        try {
+          logger.info('GET /emails/:id/raw.');
+          res
+            .status(200)
+            .json(await readService.getRawUrl({ handle: requirePathParam(req, 'id') }));
         } catch (err) {
           next(err);
         }

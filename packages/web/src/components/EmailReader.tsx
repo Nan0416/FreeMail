@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   Copy,
   Download,
+  FileDown,
   Forward,
   ImageOff,
   Image as ImageIcon,
@@ -96,17 +97,20 @@ export function EmailReader({
   async function download(attachment: EmailAttachmentInfo): Promise<void> {
     try {
       const { url } = await client.getAttachmentUrl(id, attachment.id);
-      // The presigned URL forces `Content-Disposition: attachment` + octet-stream, so a
-      // plain anchor click downloads it (never renders inline) and the SPA stays put.
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.rel = 'noopener noreferrer';
-      anchor.style.display = 'none';
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      triggerDownload(url);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not download the attachment.');
+    }
+  }
+
+  async function downloadOriginal(): Promise<void> {
+    try {
+      const { url } = await client.getRawUrl(id);
+      triggerDownload(url);
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError ? err.message : 'Could not download the original message.',
+      );
     }
   }
 
@@ -172,6 +176,12 @@ export function EmailReader({
                 <Copy />
                 Copy sender address
               </DropdownMenuItem>
+              {email?.rawAvailable && (
+                <DropdownMenuItem onSelect={() => void downloadOriginal()}>
+                  <FileDown />
+                  Download original (.eml)
+                </DropdownMenuItem>
+              )}
               {email && email.attachments.length > 0 && (
                 <>
                   <DropdownMenuSeparator />
@@ -416,6 +426,21 @@ function ReaderContent({
       )}
     </div>
   );
+}
+
+/**
+ * Download a presigned URL without leaving the SPA. Every URL the API mints forces
+ * `Content-Disposition: attachment` + octet-stream, so a plain anchor click downloads it
+ * (never renders inline).
+ */
+function triggerDownload(url: string): void {
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.rel = 'noopener noreferrer';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 function ReaderSkeleton(): React.JSX.Element {

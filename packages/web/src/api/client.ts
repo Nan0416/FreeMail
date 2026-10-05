@@ -5,6 +5,7 @@ import type {
   EmailDirection,
   ListApiKeysResponse,
   ListEmailsResponse,
+  RawEmailDownloadResponse,
   SendEmailRequest,
   SendEmailResponse,
   SessionResponse,
@@ -160,6 +161,15 @@ export class FreeMailClient {
     return this.request<AttachmentDownloadResponse>(
       'GET',
       `/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`,
+      { auth: true },
+    );
+  }
+
+  /** Mint a short-lived presigned URL that downloads the original message as an `.eml` file. */
+  async getRawUrl(emailId: string): Promise<RawEmailDownloadResponse> {
+    return this.request<RawEmailDownloadResponse>(
+      'GET',
+      `/emails/${encodeURIComponent(emailId)}/raw`,
       { auth: true },
     );
   }

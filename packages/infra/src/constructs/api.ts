@@ -270,12 +270,14 @@ export class ApiConstruct extends Construct {
     this.addRestRoute('/emails', HttpMethod.POST, { authorized: true });
 
     // Read the mailbox (access-token only — the handler enforces the scheme): list the
-    // merged timeline, read one message, and mint a presigned attachment download URL.
+    // merged timeline, read one message, and mint a presigned download URL for an attachment
+    // or for the original message (.eml — re-uses the inbound/* + sent/* read grants above).
     this.addRestRoute('/emails', HttpMethod.GET, { authorized: true });
     this.addRestRoute('/emails/{id}', HttpMethod.GET, { authorized: true });
     this.addRestRoute('/emails/{id}/attachments/{attachmentId}', HttpMethod.GET, {
       authorized: true,
     });
+    this.addRestRoute('/emails/{id}/raw', HttpMethod.GET, { authorized: true });
 
     // Outbound large-attachment download (#14) — PUBLIC (no authorizer): the token IS the
     // capability. The handler validates it and 302s to a short-lived presigned GET, or
