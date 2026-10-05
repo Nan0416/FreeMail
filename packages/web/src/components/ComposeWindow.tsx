@@ -36,6 +36,8 @@ export interface ComposeInit {
 export interface ComposeWindowProps {
   readonly init: ComposeInit;
   readonly onClose: () => void;
+  /** Reports how many files are attached, which a saved draft cannot keep. */
+  readonly onAttachmentCountChange?: (count: number) => void;
 }
 
 type WindowMode = 'normal' | 'minimized' | 'maximized';
@@ -65,7 +67,11 @@ function fileToAttachment(file: File): Promise<EmailAttachment> {
  * centred sheet when maximized. Edits auto-save to a browser-local draft (see
  * `lib/drafts.ts`); closing keeps the draft, discarding deletes it (with undo).
  */
-export function ComposeWindow({ init, onClose }: ComposeWindowProps): React.JSX.Element {
+export function ComposeWindow({
+  init,
+  onClose,
+  onAttachmentCountChange,
+}: ComposeWindowProps): React.JSX.Element {
   const { client } = useAuth();
   const draftId = useRef(init.draftId ?? newDraftId());
   const [from, setFrom] = useState(init.from);
@@ -82,6 +88,9 @@ export function ComposeWindow({ init, onClose }: ComposeWindowProps): React.JSX.
   const [showToolbar, setShowToolbar] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // The re-entrancy guard. `busy` drives the UI but only lands on the next render, so
+  // a second ⌘↵ in the same tick would still see it false and send twice.
+  const sending = useRef(false);
   const [savedAt, setSavedAt] = useState<Date | null>(init.draftId ? new Date() : null);
   const fileInput = useRef<HTMLInputElement>(null);
   const toInput = useRef<HTMLInputElement>(null);
@@ -132,6 +141,10 @@ export function ComposeWindow({ init, onClose }: ComposeWindowProps): React.JSX.
     return () => window.clearTimeout(timer);
   }, [from, fromName, to, cc, bcc, subject, html, hasContent]);
 
+  useEffect(() => {
+    onAttachmentCountChange?.(files.length);
+  }, [files.length, onAttachmentCountChange]);
+
   // Flush on unmount (window closed, or replaced by another compose).
   useEffect(
     () => () => {
@@ -174,6 +187,9 @@ export function ComposeWindow({ init, onClose }: ComposeWindowProps): React.JSX.
   }
 
   async function send(): Promise<void> {
+    if (sending.current) {
+      return;
+    }
     setError(null);
     const recipients = {
       to: parseRecipients(to),
@@ -209,6 +225,7 @@ export function ComposeWindow({ init, onClose }: ComposeWindowProps): React.JSX.
       return;
     }
 
+    sending.current = true;
     setBusy(true);
     try {
       const attachments = await Promise.all(files.map(fileToAttachment));
@@ -233,6 +250,7 @@ export function ComposeWindow({ init, onClose }: ComposeWindowProps): React.JSX.
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to send the message.');
     } finally {
+      sending.current = false;
       setBusy(false);
     }
   }

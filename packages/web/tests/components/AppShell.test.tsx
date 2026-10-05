@@ -163,6 +163,53 @@ describe('AppShell — message list', () => {
   });
 });
 
+describe('AppShell — refresh', () => {
+  it('keeps the loaded rows when a refresh fails, and reports it', async () => {
+    let failNext = false;
+    const base = mockApi([[item('a')], [item('b')]]);
+    const fetchMock = vi.fn<typeof fetch>(async (url, init) => {
+      const u = new URL(String(url));
+      if (u.pathname === '/emails' && !u.searchParams.has('cursor') && failNext) {
+        throw new TypeError('network down');
+      }
+      return base(url, init);
+    });
+    renderWithApp(<AppShell inboundEnabled />, fetchMock);
+    await screen.findByText('Subject a');
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }));
+    await screen.findByText('Subject b');
+
+    failNext = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+
+    expect(await screen.findByText(/Could not refresh/)).toBeInTheDocument();
+    expect(rows()).toHaveLength(2);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled();
+  });
+
+  it('does not leave Refresh stuck when the folder changes mid-refresh', async () => {
+    let hang = false;
+    const base = mockApi([[item('a')]]);
+    const fetchMock = vi.fn<typeof fetch>(async (url, init) => {
+      if (hang && new URL(String(url)).searchParams.get('direction') === 'inbound') {
+        return new Promise<Response>(() => {});
+      }
+      return base(url, init);
+    });
+    renderWithApp(<AppShell inboundEnabled />, fetchMock);
+    await screen.findByText('Subject a');
+
+    hang = true;
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeDisabled());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sent' }));
+    await screen.findByRole('heading', { name: 'Sent' });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Refresh' })).toBeEnabled());
+  });
+});
+
 describe('AppShell — compose', () => {
   it('opens a compose window with c and prefills reply from the open message', async () => {
     renderWithApp(
@@ -177,6 +224,24 @@ describe('AppShell — compose', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Re: Plans' });
     expect(within(dialog).getByLabelText('To')).toHaveValue('alice@x.com');
     expect(within(dialog).getByLabelText('Subject')).toHaveValue('Re: Plans');
+  });
+
+  it('refuses to replace an open compose that has attachments', async () => {
+    renderWithApp(<AppShell inboundEnabled />, mockApi([[]]));
+    fireEvent.keyDown(window, { key: 'c' });
+    const dialog = await screen.findByRole('dialog', { name: 'New message' });
+    fireEvent.change(within(dialog).getByLabelText('Subject'), { target: { value: 'With file' } });
+    const picker = dialog.querySelector('input[type="file"]') as HTMLInputElement;
+    fireEvent.change(picker, {
+      target: { files: [new File(['data'], 'report.pdf', { type: 'application/pdf' })] },
+    });
+    expect(within(dialog).getByText('report.pdf')).toBeInTheDocument();
+
+    fireEvent.keyDown(window, { key: 'c' });
+    expect(await screen.findByText('Finish your open message first')).toBeInTheDocument();
+    // The original window, and its attachment, are untouched.
+    expect(screen.getByRole('dialog', { name: 'With file' })).toBeInTheDocument();
+    expect(screen.getByText('report.pdf')).toBeInTheDocument();
   });
 
   it('keeps a closed compose as a browser draft, listed under Drafts', async () => {

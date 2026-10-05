@@ -37,9 +37,10 @@ export function useMailbox(direction: EmailDirection | undefined, enabled = true
   const fetchFirstPage = useCallback(
     async (background: boolean) => {
       const gen = ++generation.current;
-      if (background) {
-        setRefreshing(true);
-      } else {
+      // Always set, never only cleared in `finally`: a superseded refresh (folder
+      // switched mid-flight) skips its `finally`, so the next load must reset it.
+      setRefreshing(background);
+      if (!background) {
         setState({ status: 'loading' });
       }
       try {
@@ -48,14 +49,19 @@ export function useMailbox(direction: EmailDirection | undefined, enabled = true
           setState({ status: 'ready', emails: res.emails, nextCursor: res.nextCursor });
         }
       } catch (err) {
+        if (background) {
+          // Keep the rows already on screen (including loaded-more pages); the caller
+          // reports the failure — unless this refresh was superseded, which is moot.
+          if (gen === generation.current) {
+            throw err;
+          }
+          return;
+        }
         if (gen === generation.current) {
           setState({
             status: 'error',
             message: err instanceof ApiError ? err.message : 'Could not load messages.',
           });
-        }
-        if (background) {
-          throw err;
         }
       } finally {
         if (gen === generation.current) {

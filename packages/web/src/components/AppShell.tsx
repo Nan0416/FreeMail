@@ -96,13 +96,27 @@ export function AppShell({ inboundEnabled = false }: AppShellProps): React.JSX.E
     setNavOpen(false);
   }, []);
 
+  // Files attached in the open compose window. A replaced window is saved as a draft,
+  // and drafts cannot keep files, so replacing one that has attachments is refused.
+  const composeAttachments = useRef(0);
+
   const openCompose = useCallback((init?: Partial<ComposeInit>) => {
+    if (composeAttachments.current > 0) {
+      toast('Finish your open message first', {
+        description: 'It has attachments, which a saved draft can’t keep. Send or close it.',
+      });
+      return;
+    }
     const sender = getLastSender();
     setCompose((prev) => ({
       key: (prev?.key ?? 0) + 1,
       init: { from: sender.address, fromName: sender.name, ...init },
     }));
     setNavOpen(false);
+  }, []);
+
+  const onAttachmentCountChange = useCallback((count: number) => {
+    composeAttachments.current = count;
   }, []);
 
   const openDraft = useCallback(
@@ -302,7 +316,15 @@ export function AppShell({ inboundEnabled = false }: AppShellProps): React.JSX.E
 
       {compose && (
         <Suspense fallback={null}>
-          <ComposeWindow key={compose.key} init={compose.init} onClose={() => setCompose(null)} />
+          <ComposeWindow
+            key={compose.key}
+            init={compose.init}
+            onClose={() => {
+              composeAttachments.current = 0;
+              setCompose(null);
+            }}
+            onAttachmentCountChange={onAttachmentCountChange}
+          />
         </Suspense>
       )}
     </div>

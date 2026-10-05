@@ -89,6 +89,34 @@ describe('ComposeWindow — sending', () => {
   });
 });
 
+describe('ComposeWindow — send is not re-entrant', () => {
+  it('sends once when ⌘↵ is pressed again while a send is in flight', async () => {
+    let release: () => void = () => {};
+    const fetchImpl = vi.fn<typeof fetch>(async (url) => {
+      if (pathOf(url) === '/me') {
+        return json(200, { subject: 'owner' });
+      }
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return json(200, { id: 'm1', messageId: 'ses-1', sentAt: '2026-07-17T00:00:00.000Z' });
+    });
+    const { onClose } = renderCompose(
+      { from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' },
+      fetchImpl,
+    );
+    const dialog = screen.getByRole('dialog');
+    fireEvent.keyDown(dialog, { key: 'Enter', metaKey: true });
+    fireEvent.keyDown(dialog, { key: 'Enter', metaKey: true });
+    fireEvent.keyDown(dialog, { key: 'Enter', ctrlKey: true });
+
+    await waitFor(() => expect(callsTo(fetchImpl, '/emails', 'POST')).toHaveLength(1));
+    release();
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(callsTo(fetchImpl, '/emails', 'POST')).toHaveLength(1);
+  });
+});
+
 describe('ComposeWindow — drafts', () => {
   it('auto-saves to a browser draft while typing', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
