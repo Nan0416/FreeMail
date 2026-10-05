@@ -55,6 +55,37 @@ function roleActions(template: Template, description: string): string[] {
     .filter((a): a is string => typeof a === 'string');
 }
 
+/** True when the role behind `description` has a statement granting `action` on bucket objects under `prefix`. */
+function roleGrantsOnPrefix(
+  template: Template,
+  description: string,
+  action: string,
+  prefix: string,
+): boolean {
+  const fn = Object.values(template.findResources('AWS::Lambda::Function')).find(
+    (f) => f.Properties?.Description === description,
+  );
+  const roleRef = (fn?.Properties?.Role as { 'Fn::GetAtt'?: [string, string] } | undefined)?.[
+    'Fn::GetAtt'
+  ]?.[0];
+  return Object.values(template.findResources('AWS::IAM::Policy'))
+    .filter((p) =>
+      ((p.Properties?.Roles as { Ref?: string }[] | undefined) ?? []).some(
+        (r) => r.Ref === roleRef,
+      ),
+    )
+    .flatMap((p) => (p.Properties?.PolicyDocument?.Statement ?? []) as Record<string, unknown>[])
+    .some((stmt) => {
+      const actions = Array.isArray(stmt.Action) ? stmt.Action : [stmt.Action];
+      return (
+        actions.some((a) => typeof a === 'string' && a.startsWith(action)) &&
+        JSON.stringify(stmt.Resource).includes(`/${prefix}`)
+      );
+    });
+}
+
+const REST_DESCRIPTION = 'FreeMail REST API (auth + app routes).';
+
 describe('ApiConstruct', () => {
   it('stands up one HTTP API and no Secrets Manager secret (#42 — the signing key lives in authTable)', () => {
     const template = synth();
@@ -223,6 +254,34 @@ describe('ApiConstruct', () => {
     expect(actions.some((a) => a.startsWith('s3:GetObject'))).toBe(true);
     expect(actions.some((a) => a === 'dynamodb:Query' || a === 'dynamodb:GetItem')).toBe(true);
     expect(actions).toContain('s3:PutObject');
+  });
+
+  it('lets the REST handler write + presign sent-attachment copies (attachments/sent/*)', () => {
+    const template = synth();
+    expect(
+      roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:PutObject', 'attachments/sent/*'),
+    ).toBe(true);
+    expect(
+      roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'attachments/sent/*'),
+    ).toBe(true);
+  });
+
+  it('MCP writes sent-attachment copies, and reads sent + linked attachments only with inbound ON', () => {
+    const off = synth();
+    expect(roleGrantsOnPrefix(off, MCP_DESCRIPTION, 's3:PutObject', 'attachments/sent/*')).toBe(
+      true,
+    );
+    expect(roleGrantsOnPrefix(off, MCP_DESCRIPTION, 's3:GetObject', 'attachments/sent/*')).toBe(
+      false,
+    );
+
+    const on = synthWithInbound();
+    expect(roleGrantsOnPrefix(on, MCP_DESCRIPTION, 's3:GetObject', 'attachments/sent/*')).toBe(
+      true,
+    );
+    expect(roleGrantsOnPrefix(on, MCP_DESCRIPTION, 's3:GetObject', 'attachments/outbound/*')).toBe(
+      true,
+    );
   });
 
   it('gives the authorizer the API-keys table so it can validate presented keys', () => {

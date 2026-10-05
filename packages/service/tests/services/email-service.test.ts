@@ -74,6 +74,10 @@ class FakeObjectStore implements OutboundObjectStore {
   get attachmentPuts(): { key: string; bytes: Buffer }[] {
     return this.puts.filter((p) => p.key.startsWith('attachments/outbound/'));
   }
+  /** Only the downloadable copies of embedded attachments. */
+  get sentAttachmentPuts(): { key: string; bytes: Buffer }[] {
+    return this.puts.filter((p) => p.key.startsWith('attachments/sent/'));
+  }
   /** Only the sent raw-MIME archive (#29). */
   get archivePuts(): { key: string; bytes: Buffer }[] {
     return this.puts.filter((p) => p.key.startsWith('sent/'));
@@ -195,7 +199,9 @@ describe('EmailService.send', () => {
       sesMessageId: 'ses-msg-1',
       attachmentCount: 0,
       sizeBytes: Buffer.from('RAW-MIME').length,
+      attachments: [],
     });
+    expect(objectStore.sentAttachmentPuts).toHaveLength(0);
   });
 
   it('passes the display name + bcc to the MIME builder AND the SES envelope', async () => {
@@ -327,6 +333,46 @@ describe('EmailService.send', () => {
     expect(mimeInputs[0]?.attachments[0]?.contentBase64).toBe(b64);
     expect(emails.records[0]?.attachmentCount).toBe(1);
   });
+
+  it('copies each embedded attachment to attachments/sent/<id>/<index> and records its descriptor', async () => {
+    const { service, emails, objectStore } = makeService();
+    await service.send(
+      request({
+        attachments: [
+          {
+            filename: 'a.txt',
+            contentType: 'text/plain',
+            contentBase64: Buffer.from('aaa').toString('base64'),
+          },
+          {
+            filename: 'b.pdf',
+            contentType: 'application/pdf',
+            contentBase64: Buffer.from('bbbb').toString('base64'),
+          },
+        ],
+      }),
+    );
+    expect(objectStore.sentAttachmentPuts.map((p) => [p.key, p.bytes.toString()])).toEqual([
+      ['attachments/sent/id-1/0', 'aaa'],
+      ['attachments/sent/id-1/1', 'bbbb'],
+    ]);
+    expect(emails.records[0]?.attachments).toEqual([
+      {
+        id: '0',
+        filename: 'a.txt',
+        contentType: 'text/plain',
+        sizeBytes: 3,
+        s3Key: 'attachments/sent/id-1/0',
+      },
+      {
+        id: '1',
+        filename: 'b.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 4,
+        s3Key: 'attachments/sent/id-1/1',
+      },
+    ]);
+  });
 });
 
 describe('EmailService.send — write-before-send failure paths (#29)', () => {
@@ -339,6 +385,27 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
     expect(ses.calls).toHaveLength(0);
     expect(emails.records).toHaveLength(0);
     expect(emails.statusUpdates).toHaveLength(0);
+  });
+
+  it('FAILS CLOSED when an attachment-copy write fails: no send, no row', async () => {
+    const objectStore = new FakeObjectStore();
+    objectStore.failKeyPrefix = 'attachments/sent/';
+    const { service, ses, emails } = makeService({ objectStore });
+    await expect(
+      service.send(
+        request({
+          attachments: [
+            {
+              filename: 'a.txt',
+              contentType: 'text/plain',
+              contentBase64: Buffer.from('aaa').toString('base64'),
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow('s3 down');
+    expect(ses.calls).toHaveLength(0);
+    expect(emails.records).toHaveLength(0);
   });
 
   it('FAILS CLOSED when the sending-row write fails: no send', async () => {
@@ -494,6 +561,31 @@ describe('EmailService.send — large attachments (#14)', () => {
     expect(objectStore.attachmentPuts).toHaveLength(1);
     expect(tokens.created).toHaveLength(1);
     expect(tokens.created[0]?.filename).toBe('big.bin');
+  });
+
+  it('records descriptors in request order — a linked one reuses its upload key (no second copy)', async () => {
+    const { service, emails, objectStore } = makeService();
+    const small = Buffer.from('a small file').toString('base64');
+    await service.send(
+      request({
+        // Large FIRST, so its request index (0) differs from its position among embedded parts.
+        attachments: [
+          {
+            filename: 'big.bin',
+            contentType: 'application/octet-stream',
+            contentBase64: base64OfBlocks(LARGE_BLOCKS),
+          },
+          { filename: 'small.txt', contentType: 'text/plain', contentBase64: small },
+        ],
+      }),
+    );
+    const [linkedKey] = objectStore.attachmentPuts.map((p) => p.key);
+    expect(objectStore.sentAttachmentPuts.map((p) => p.key)).toEqual(['attachments/sent/id-1/1']);
+    expect(emails.records[0]?.attachments?.map((a) => [a.id, a.filename, a.s3Key])).toEqual([
+      ['0', 'big.bin', linkedKey],
+      ['1', 'small.txt', 'attachments/sent/id-1/1'],
+    ]);
+    expect(emails.records[0]?.attachments?.[0]?.sizeBytes).toBe(LARGE_BLOCKS * 3);
   });
 
   it('links large attachments into an HTML-only body with an escaped anchor', async () => {

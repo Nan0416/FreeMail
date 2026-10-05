@@ -48,7 +48,20 @@ export interface CreateSentEmailInput {
   readonly rawS3Key?: string;
   /** Short failure reason on a `send_failed` row — server-side only, never surfaced in the read DTO. */
   readonly error?: string;
+  /**
+   * One descriptor per attachment the message carried, in request order — embedded ones copied
+   * to `attachments/sent/<id>/<index>`, linked (large) ones pointing at their existing
+   * `attachments/outbound/*` upload. Absent on a row written before attachments were recorded
+   * (the read path treats that as none).
+   */
+  readonly attachments?: readonly SentAttachmentDescriptor[];
 }
+
+/**
+ * A stored attachment of a sent message. Same shape as the inbound descriptor so the read path
+ * presigns either direction the same way; `s3Key` is server-side only.
+ */
+export type SentAttachmentDescriptor = InboundAttachmentDescriptor;
 
 /**
  * The terminal status transition of a sent message after the SES call: `sent` (+ `sesMessageId`)

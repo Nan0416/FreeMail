@@ -43,7 +43,7 @@ export interface ApiConstructProps {
   readonly emailsTable: Table;
   /** Outbound large-attachment download tokens (#14) — send mints them, `GET /d/{token}` claims them. */
   readonly downloadTokensTable: Table;
-  /** Inbound raw MIME + extracted attachments + outbound large attachments (send writes, reads presign). */
+  /** Inbound raw MIME + extracted attachments, sent MIME + attachment copies, outbound large attachments. */
   readonly mailBucket: IBucket;
   /** The SES send domain — `from` must be under it, and it scopes the send IAM grant. */
   readonly emailDomain: string;
@@ -178,6 +178,9 @@ export class ApiConstruct extends Construct {
     // Sent raw MIME archive (#29): the send route writes it; the always-available
     // GET /emails/{id} re-parses it for the sent body.
     mailBucket.grantReadWrite(this.restHandler, 'sent/*');
+    // Sent embedded-attachment copies: the send route writes them; the attachment route
+    // presigns them (linked ones are presigned from attachments/outbound/*, granted above).
+    mailBucket.grantReadWrite(this.restHandler, 'attachments/sent/*');
 
     // The REST `/emails` route sends.
     this.grantSesSend(this.restHandler, emailDomain, sesConfigurationSetName);
@@ -208,16 +211,21 @@ export class ApiConstruct extends Construct {
     // Sent raw MIME archive (#29): send_email writes it. Write-only here — reading it back is
     // the get_email path, granted below only when inbound (and thus the read tools) is enabled.
     mailBucket.grantWrite(this.mcpHandler, 'sent/*');
+    // Sent embedded-attachment copies: send_email writes them (read granted below, like sent/*).
+    mailBucket.grantWrite(this.mcpHandler, 'attachments/sent/*');
     this.grantSesSend(this.mcpHandler, emailDomain, sesConfigurationSetName);
     // #13 read tools: read-only access scoped to exactly what EmailReadService touches —
     // the emails table (list/get), the inbound raw MIME + extracted-attachment prefixes
-    // (body re-parse + attachment presign), and the sent raw MIME archive (#29, sent body
-    // re-parse). Added only when inbound is enabled (fail-closed, gates get_email too).
+    // (body re-parse + attachment presign), the sent raw MIME archive (#29, sent body
+    // re-parse), and the sent attachments — embedded copies + linked large uploads — for
+    // get_email_attachment_url. Added only when inbound is enabled (fail-closed, gates get_email too).
     if (inboundEnabled) {
       emailsTable.grantReadData(this.mcpHandler);
       mailBucket.grantRead(this.mcpHandler, 'inbound/*');
       mailBucket.grantRead(this.mcpHandler, 'attachments/inbound/*');
       mailBucket.grantRead(this.mcpHandler, 'sent/*');
+      mailBucket.grantRead(this.mcpHandler, 'attachments/sent/*');
+      mailBucket.grantRead(this.mcpHandler, 'attachments/outbound/*');
     }
 
     this.authorizerHandler = this.nodeFunction('AuthorizerHandler', 'authorizer.ts', {
