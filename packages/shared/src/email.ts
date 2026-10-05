@@ -112,8 +112,9 @@ export function isValidEmailAddress(value: string): boolean {
  * (`pk='INBOUND'`) — merged into one newest-first timeline. Every message is
  * addressed by an OPAQUE `id` handle (minted by the list, echoed on read); the
  * client never constructs it and the raw S3 key never appears on the wire. Bodies
- * for received mail are materialized on demand from the raw MIME; sent mail carries
- * no stored body in v1, so its detail is envelope-only.
+ * are materialized on demand from the archived raw MIME — received mail from
+ * `inbound/<id>` (verdict-gated), sent mail from `sent/<id>` (#29, always exposable).
+ * A sent row written before #29 has no archive, so its detail is envelope-only.
  * ------------------------------------------------------------------ */
 
 /** Which partition a stored message came from. */
@@ -178,7 +179,7 @@ export interface EmailListItem {
   readonly virusVerdict?: InboundVerdict;
 }
 
-/** A single message with headers, body (received-only), and attachment list. */
+/** A single message with headers, body, and attachment list. */
 export interface EmailDetail {
   /** Opaque handle (echoes the request). */
   readonly id: string;
@@ -196,12 +197,12 @@ export interface EmailDetail {
   readonly status?: SentStatus;
   /** Inbound only: the message's own `Date:` header (attacker-controlled), if present. */
   readonly headerDate?: string;
-  /** Plain-text body — present only for an exposable received message. */
+  /** Plain-text body — present for sent mail and exposable received mail. */
   readonly text?: string;
   /**
    * HTML body, returned RAW as data. The client MUST sandbox + sanitize before
    * rendering (a sandboxed iframe with no `allow-same-origin`) — the API never
-   * renders it. Present only for an exposable received message.
+   * renders it. Present for sent mail and exposable received mail.
    */
   readonly html?: string;
   /** True when a body part hit the read-size cap and was truncated. */

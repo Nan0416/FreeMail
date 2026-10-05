@@ -11,6 +11,7 @@ import {
   Paperclip,
   Reply,
   ReplyAll,
+  SendHorizontal,
   ShieldAlert,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -26,7 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ApiError } from '../api/client.js';
 import { useAuth } from '../auth/auth-context.js';
-import { bodyKind, quarantineNotice } from '../lib/email-reader.js';
+import { bodyKind, quarantineNotice, sentStatusNotice } from '../lib/email-reader.js';
 import { formatBytes, formatLongDate } from '../lib/format.js';
 import { avatarTint, initials } from '../lib/people.js';
 import type { ReplyMode } from '../lib/reply.js';
@@ -268,8 +269,11 @@ function ReaderContent({
   onDownload: (attachment: EmailAttachmentInfo) => void;
 }): React.JSX.Element {
   const notice = quarantineNotice(email);
+  const statusNotice = sentStatusNotice(email);
   const showBody = !notice || revealed;
   const kind = bodyKind(email);
+  // Our own outgoing mail: its remote images are ones we chose to send, so no opt-in gate.
+  const allowImages = showImages || email.direction === 'sent';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -363,7 +367,17 @@ function ReaderContent({
           </div>
         )}
 
-        {showBody && kind === 'html' && !showImages && email.direction === 'inbound' && (
+        {statusNotice && (
+          <div
+            role="status"
+            className="mt-5 flex items-start gap-3 rounded-md border border-warning/25 bg-warning-surface px-3 py-2.5 text-[13px]"
+          >
+            <SendHorizontal className="mt-px size-4 shrink-0 text-warning" />
+            <p className="flex-1">{statusNotice}</p>
+          </div>
+        )}
+
+        {showBody && kind === 'html' && !allowImages && (
           <div className="mt-5 flex items-center gap-2 text-xs text-muted-foreground">
             <ImageOff className="size-3.5" />
             Remote images are blocked.
@@ -378,33 +392,27 @@ function ReaderContent({
         )}
       </div>
 
-      {email.direction === 'sent' ? (
-        <p className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-10 text-[13px] text-muted-foreground">
-          The body of a sent message isn&rsquo;t stored — only its metadata.
-        </p>
-      ) : (
-        showBody && (
-          <>
-            {kind === 'html' && email.html !== undefined && (
-              <EmailBodyFrame html={email.html} allowImages={showImages} />
-            )}
-            {kind === 'text' && (
-              <pre className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-10 font-sans text-sm leading-relaxed whitespace-pre-wrap">
-                {email.text}
-              </pre>
-            )}
-            {kind === 'none' && (
-              <p className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-10 text-[13px] text-muted-foreground">
-                This message has no readable body.
-              </p>
-            )}
-            {email.bodyTruncated && (
-              <p className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-6 text-xs text-muted-foreground">
-                This message was truncated for display.
-              </p>
-            )}
-          </>
-        )
+      {showBody && (
+        <>
+          {kind === 'html' && email.html !== undefined && (
+            <EmailBodyFrame html={email.html} allowImages={allowImages} />
+          )}
+          {kind === 'text' && (
+            <pre className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-10 font-sans text-sm leading-relaxed whitespace-pre-wrap">
+              {email.text}
+            </pre>
+          )}
+          {kind === 'none' && (
+            <p className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-10 text-[13px] text-muted-foreground">
+              This message has no readable body.
+            </p>
+          )}
+          {email.bodyTruncated && (
+            <p className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-6 text-xs text-muted-foreground">
+              This message was truncated for display.
+            </p>
+          )}
+        </>
       )}
     </div>
   );
