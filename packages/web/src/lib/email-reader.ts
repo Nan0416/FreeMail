@@ -45,6 +45,24 @@ export function quarantineNotice(email: EmailDetail): QuarantineNotice | null {
   return { message: 'This message was flagged as spam.', canReveal: hasBody };
 }
 
+/**
+ * A delivery-status notice for a sent message, or null when it went out (or is inbound / a
+ * legacy row with no status). The body still renders below it — the archive is written
+ * before the SES call, so even a failed send has its composed message on file.
+ */
+export function sentStatusNotice(email: EmailDetail): string | null {
+  if (email.direction !== 'sent') {
+    return null;
+  }
+  if (email.status === 'send_failed') {
+    return 'This message failed to send and was not delivered.';
+  }
+  if (email.status === 'sending') {
+    return 'This message is still sending (or its delivery status was not recorded).';
+  }
+  return null;
+}
+
 /** Display form of a sender: `Name <addr>` when a display name exists, else the address. */
 export function formatSender(email: Pick<EmailDetail, 'from' | 'fromName'>): string {
   return email.fromName ? `${email.fromName} <${email.from}>` : email.from;

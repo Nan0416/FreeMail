@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { EmailDetail } from '@freemail/shared';
-import { bodyKind, formatSender, quarantineNotice } from '../../src/lib/email-reader.js';
+import {
+  bodyKind,
+  formatSender,
+  quarantineNotice,
+  sentStatusNotice,
+} from '../../src/lib/email-reader.js';
 
 function inbound(overrides: Partial<EmailDetail> = {}): EmailDetail {
   return {
@@ -61,5 +66,22 @@ describe('quarantineNotice', () => {
     );
     expect(notice?.canReveal).toBe(false);
     expect(notice?.message).toMatch(/parse/i);
+  });
+});
+
+describe('sentStatusNotice', () => {
+  it('is null for inbound, delivered, and legacy (status-less) sent mail', () => {
+    expect(sentStatusNotice(inbound())).toBeNull();
+    expect(sentStatusNotice(inbound({ direction: 'sent', status: 'sent' }))).toBeNull();
+    expect(sentStatusNotice(inbound({ direction: 'sent' }))).toBeNull();
+  });
+
+  it('explains a failed or still-sending message', () => {
+    expect(sentStatusNotice(inbound({ direction: 'sent', status: 'send_failed' }))).toMatch(
+      /failed to send/i,
+    );
+    expect(sentStatusNotice(inbound({ direction: 'sent', status: 'sending' }))).toMatch(
+      /still sending/i,
+    );
   });
 });

@@ -44,19 +44,45 @@ afterEach(() => {
 });
 
 describe('EmailReader — body matrix', () => {
-  it('renders a SENT message as metadata-only (no body)', async () => {
+  it('renders a SENT message body (text) with its bcc and no status notice once sent', async () => {
     renderReader(
       mockReader({
         ...BASE_INBOUND,
         direction: 'sent',
+        status: 'sent',
         subject: 'My sent mail',
         bcc: ['secret@z.com'],
+        text: 'what I wrote',
       }),
     );
     expect(await screen.findByRole('heading', { name: 'My sent mail' })).toBeInTheDocument();
-    expect(screen.getByText(/only its metadata/i)).toBeInTheDocument();
+    expect(screen.getByText('what I wrote')).toBeInTheDocument();
     expect(screen.getByText('secret@z.com')).toBeInTheDocument();
-    expect(screen.queryByTitle('Email content')).not.toBeInTheDocument();
+    expect(screen.queryByText(/only its metadata/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
+
+  it('renders a SENT HTML body in the same sandbox, with images allowed (our own mail)', async () => {
+    renderReader(
+      mockReader({ ...BASE_INBOUND, direction: 'sent', status: 'sent', html: '<p>sent-html</p>' }),
+    );
+    const frame = await screen.findByTitle('Email content');
+    expect(frame.getAttribute('sandbox')).toBe('allow-popups allow-popups-to-escape-sandbox');
+    expect(frame.getAttribute('srcdoc')).toContain('img-src https:');
+    expect(screen.queryByRole('button', { name: 'Show images' })).not.toBeInTheDocument();
+  });
+
+  it('flags a send_failed message but still shows the archived body', async () => {
+    renderReader(
+      mockReader({ ...BASE_INBOUND, direction: 'sent', status: 'send_failed', text: 'draft body' }),
+    );
+    expect(await screen.findByRole('status')).toHaveTextContent(/failed to send/i);
+    expect(screen.getByText('draft body')).toBeInTheDocument();
+  });
+
+  it('falls back to the no-body note for a sent message without a stored body', async () => {
+    renderReader(mockReader({ ...BASE_INBOUND, direction: 'sent' }));
+    expect(await screen.findByText(/no readable body/i)).toBeInTheDocument();
   });
 
   it('renders inbound HTML in a locked-down sandboxed iframe with images blocked by default', async () => {
