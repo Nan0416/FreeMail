@@ -26,7 +26,11 @@ import {
   type SendEmailResponse,
 } from '@freemail/shared';
 import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
-import type { EmailsDao, UpdateSentEmailStatusInput } from '../data/emails-dao.js';
+import type {
+  EmailsDao,
+  SentAttachmentDescriptor,
+  UpdateSentEmailStatusInput,
+} from '../data/emails-dao.js';
 import type { OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { appendDownloadLinks, type DownloadLink } from '../utils/attachment-links.js';
 import {
@@ -43,8 +47,9 @@ export interface EmailServiceDeps {
   readonly emailsDao: EmailsDao;
   /**
    * Stores send-path objects in the mail bucket: outbound large attachments (#14,
-   * `attachments/outbound/*`) and the archived composed raw MIME (#29, `sent/<id>`). The
-   * archive is only ever re-read server-side, so the store's octet-stream disposition is harmless.
+   * `attachments/outbound/*`), the archived composed raw MIME (#29, `sent/<id>`), and a
+   * downloadable copy of each embedded attachment (`attachments/sent/<id>/<index>`). The
+   * octet-stream disposition suits all three — attachments are only ever served as downloads.
    */
   readonly objectStore: OutboundObjectStore;
   /** Persists the download tokens minted for large attachments (#14). */
@@ -131,11 +136,14 @@ export class EmailService {
     const nowDate = this.now();
 
     // Route each attachment: embed small ones in the MIME, upload large ones + mint a link.
+    // Remember where each large one landed (by request index) so its descriptor can point there.
     const embed: RawMimeAttachment[] = [];
     const large: ProcessedAttachment[] = [];
-    for (const attachment of processed) {
+    const largeIndexes: number[] = [];
+    processed.forEach((attachment, index) => {
       if (attachment.sizeBytes > MAX_EMBED_ATTACHMENT_BYTES) {
         large.push(attachment);
+        largeIndexes.push(index);
       } else {
         embed.push({
           filename: attachment.filename,
@@ -143,8 +151,10 @@ export class EmailService {
           contentBase64: attachment.contentBase64,
         });
       }
-    }
-    const links = await this.uploadLargeAttachments(large, id, nowDate);
+    });
+    const uploaded = await this.uploadLargeAttachments(large, id, nowDate);
+    const links = uploaded.map((u) => u.link);
+    const linkedKeys = new Map(largeIndexes.map((index, i) => [index, uploaded[i].s3Key]));
     const body = appendDownloadLinks(
       {
         ...(text !== undefined ? { text } : {}),
@@ -171,11 +181,13 @@ export class EmailService {
     const sentAt = nowDate.toISOString();
     const rawS3Key = sentRawKey(id);
 
-    // Write-before-send (#29), FAIL-CLOSED: archive the EXACT composed MIME, then record the
-    // attempt as `status:'sending'` — both BEFORE SES. A failure in either throws (no send),
-    // so we never send a message we couldn't archive + record; the caller can retry with a
-    // fresh id. An orphan `sent/<id>` object from a later putSent failure is harmless (RETAINed).
+    // Write-before-send (#29), FAIL-CLOSED: archive the EXACT composed MIME and a downloadable
+    // copy of every embedded attachment, then record the attempt as `status:'sending'` — all
+    // BEFORE SES. A failure in any throws (no send), so we never send a message we couldn't
+    // archive + record; the caller can retry with a fresh id. Orphan objects from a later
+    // failure are harmless (RETAINed).
     await this.objectStore.put(rawS3Key, raw);
+    const attachments = await this.storeAttachmentCopies(processed, linkedKeys, id);
     await this.emailsDao.createSentEmail({
       id,
       from,
@@ -188,6 +200,7 @@ export class EmailService {
       sizeBytes: raw.length,
       status: 'sending',
       rawS3Key,
+      attachments,
     });
 
     let messageId: string;
@@ -230,8 +243,38 @@ export class EmailService {
   }
 
   /**
+   * Describe every attachment for the row, in request order. Embedded ones exist only inside
+   * the MIME, so each gets its own copy at `attachments/sent/<id>/<index>` (a presignable object
+   * — re-extracting from the archive per download would mean a full MIME parse each time);
+   * linked ones already have an upload, so their descriptor reuses that key (no second copy).
+   */
+  private async storeAttachmentCopies(
+    processed: ProcessedAttachment[],
+    linkedKeys: ReadonlyMap<number, string>,
+    emailId: string,
+  ): Promise<SentAttachmentDescriptor[]> {
+    const descriptors: SentAttachmentDescriptor[] = [];
+    for (let index = 0; index < processed.length; index += 1) {
+      const attachment = processed[index];
+      let s3Key = linkedKeys.get(index);
+      if (s3Key === undefined) {
+        s3Key = sentAttachmentKey(emailId, index);
+        await this.objectStore.put(s3Key, attachment.bytes);
+      }
+      descriptors.push({
+        id: String(index),
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        sizeBytes: attachment.sizeBytes,
+        s3Key,
+      });
+    }
+    return descriptors;
+  }
+
+  /**
    * Upload each large attachment to S3, mint a download token per file, and return the
-   * links to inject into the body. Uploads/token writes happen BEFORE the SES send (the
+   * links to inject into the body (with each upload's key, for the row's descriptor). Uploads/token writes happen BEFORE the SES send (the
    * links must be in the MIME); a later send failure leaves harmless orphans that expire
    * with the token TTL. `generateToken`/`now` are injected for deterministic tests.
    */
@@ -239,7 +282,7 @@ export class EmailService {
     large: ProcessedAttachment[],
     emailId: string,
     nowDate: Date,
-  ): Promise<DownloadLink[]> {
+  ): Promise<{ link: DownloadLink; s3Key: string }[]> {
     if (large.length === 0) {
       return [];
     }
@@ -248,7 +291,7 @@ export class EmailService {
     const expiresAt = new Date(expiresMs).toISOString();
     const ttl = Math.floor(expiresMs / 1000);
 
-    const links: DownloadLink[] = [];
+    const uploaded: { link: DownloadLink; s3Key: string }[] = [];
     for (let index = 0; index < large.length; index += 1) {
       const attachment = large[index];
       const token = this.generateToken();
@@ -267,13 +310,16 @@ export class EmailService {
         revoked: false,
         downloadCount: 0,
       });
-      links.push({
-        filename: attachment.filename,
-        sizeBytes: attachment.sizeBytes,
-        url: downloadUrl(this.downloadBaseUrl, token),
+      uploaded.push({
+        link: {
+          filename: attachment.filename,
+          sizeBytes: attachment.sizeBytes,
+          url: downloadUrl(this.downloadBaseUrl, token),
+        },
+        s3Key,
       });
     }
-    return links;
+    return uploaded;
   }
 
   /** Enforce "from any address under the configured domain" — an explicit 400, not a 500 from SES. */
@@ -357,6 +403,14 @@ const MAX_ERROR_LENGTH = 1000;
  */
 export function sentRawKey(id: string): string {
   return `sent/${id}`;
+}
+
+/**
+ * S3 key for the downloadable copy of a sent message's embedded attachment, by its index in the
+ * send request. Opaque (never the filename); mirrors the inbound `attachments/inbound/<id>/<part>`.
+ */
+export function sentAttachmentKey(id: string, index: number): string {
+  return `attachments/sent/${id}/${index}`;
 }
 
 /** A short, bounded failure reason for a `send_failed` row (server-side only, never in the read DTO). */

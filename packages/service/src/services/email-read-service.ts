@@ -31,6 +31,7 @@ import {
   INBOUND_PARTITION,
   SENT_PARTITION,
   type GetEmailOutput,
+  type InboundAttachmentDescriptor,
 } from '../data/emails-dao.js';
 import type { AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import {
@@ -178,16 +179,16 @@ export class EmailReadService {
 
   /**
    * Mint a presigned download URL for one attachment. Only descriptors actually on the row
-   * are addressable — a quarantined/virus/parse-failed message has none, so the id resolves
-   * to nothing → 404, never a guessable key. The raw S3 key is used server-side only.
+   * are addressable — a quarantined/virus/parse-failed message has none, and neither does a
+   * sent row written before attachments were recorded — so the id resolves to nothing → 404,
+   * never a guessable key. The raw S3 key is used server-side only.
    */
   async getAttachmentUrl(
     request: GetAttachmentUrlServiceRequest,
   ): Promise<AttachmentDownloadResponse> {
     const { handle, attachmentId } = request;
     const row = await this.loadRow(handle);
-    const descriptor =
-      row.direction === 'inbound' ? row.attachments.find((a) => a.id === attachmentId) : undefined;
+    const descriptor = rowAttachments(row).find((a) => a.id === attachmentId);
     if (!descriptor) {
       throw emailErrors.notFound('No such attachment.');
     }
@@ -317,7 +318,7 @@ export class EmailReadService {
         date: row.sentAt,
         ...(row.status !== undefined ? { status: row.status } : {}),
         ...body,
-        attachments: [],
+        attachments: rowAttachments(row).map(publicDescriptor),
         hasAttachments: row.attachmentCount > 0,
         attachmentCount: row.attachmentCount,
         sizeBytes: row.sizeBytes,
@@ -347,6 +348,11 @@ export class EmailReadService {
 }
 
 /** Strip the server-only S3 key — the client gets only the addressable attachment id. */
+/** A row's stored attachment descriptors; a sent row from before they were recorded has none. */
+function rowAttachments(row: GetEmailOutput): readonly InboundAttachmentDescriptor[] {
+  return row.direction === 'inbound' ? row.attachments : (row.attachments ?? []);
+}
+
 function publicDescriptor(descriptor: {
   id: string;
   filename: string;

@@ -39,6 +39,23 @@ function sentRow(overrides: Partial<GetEmailOutput & { direction: 'sent' }> = {}
   } as GetEmailOutput;
 }
 
+const SENT_ATTACHMENTS = [
+  {
+    id: '0',
+    filename: 'notes.txt',
+    contentType: 'text/plain',
+    sizeBytes: 12,
+    s3Key: 'attachments/sent/s1/0',
+  },
+  {
+    id: '1',
+    filename: 'big.zip',
+    contentType: 'application/zip',
+    sizeBytes: 5_000_000,
+    s3Key: 'attachments/outbound/s1/0',
+  },
+];
+
 function inboundRow(
   overrides: Partial<GetEmailOutput & { direction: 'inbound' }> = {},
 ): GetEmailOutput {
@@ -195,6 +212,22 @@ describe('EmailReadService.getEmail', () => {
     expect((calls[0].limits as { maxSnippetSourceBytes: number }).maxSnippetSourceBytes).toBe(
       MAX_READ_BODY_BYTES,
     );
+  });
+
+  it('sent row with recorded attachments → lists them WITHOUT the S3 key', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(
+      SENT_PARTITION,
+      sentRow({ attachments: SENT_ATTACHMENTS } as Partial<GetEmailOutput>),
+    );
+    const detail = await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({
+      handle,
+    });
+    expect(detail.attachments).toEqual([
+      { id: '0', filename: 'notes.txt', contentType: 'text/plain', sizeBytes: 12 },
+      { id: '1', filename: 'big.zip', contentType: 'application/zip', sizeBytes: 5_000_000 },
+    ]);
+    expect(JSON.stringify(detail)).not.toContain('attachments/');
   });
 
   it('sent archive that fails to re-parse (exposed:false) → envelope-only, no throw', async () => {
@@ -462,13 +495,32 @@ describe('EmailReadService.getAttachmentUrl', () => {
     expect(presigner.last).toBeUndefined();
   });
 
-  it('sent message → not_found (no attachment descriptors)', async () => {
+  it('sent row written before attachments were recorded → not_found (no descriptors)', async () => {
     const repo = new FakeDao();
     const presigner = new FakePresigner();
     const handle = repo.put(SENT_PARTITION, sentRow());
     await expect(
       service(repo, presigner, new FakeRawMime()).getAttachmentUrl({ handle, attachmentId: '0' }),
     ).rejects.toMatchObject({ code: 'not_found' });
+    expect(presigner.last).toBeUndefined();
+  });
+
+  it('sent message → presigns its stored descriptor (embedded copy or linked upload)', async () => {
+    const repo = new FakeDao();
+    const presigner = new FakePresigner();
+    const handle = repo.put(
+      SENT_PARTITION,
+      sentRow({ attachments: SENT_ATTACHMENTS } as Partial<GetEmailOutput>),
+    );
+
+    await service(repo, presigner, new FakeRawMime()).getAttachmentUrl({
+      handle,
+      attachmentId: '1',
+    });
+
+    expect(presigner.last?.key).toBe('attachments/outbound/s1/0');
+    expect(presigner.last?.contentType).toBe('application/octet-stream');
+    expect(presigner.last?.contentDisposition).toMatch(/^attachment; filename="big\.zip"/);
   });
 });
 

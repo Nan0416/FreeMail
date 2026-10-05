@@ -72,6 +72,7 @@ export class DdbEmailsDao implements EmailsDao, EmailsReadDao {
           status: input.status,
           rawS3Key: input.rawS3Key,
           error: input.error,
+          attachments: input.attachments,
         },
         ConditionExpression: 'attribute_not_exists(pk)',
       }),

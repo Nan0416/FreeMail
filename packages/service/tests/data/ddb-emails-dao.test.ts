@@ -80,6 +80,15 @@ function record(overrides: Partial<CreateSentEmailInput> = {}): CreateSentEmailI
     sizeBytes: 4096,
     status: 'sending',
     rawS3Key: 'sent/id-1',
+    attachments: [
+      {
+        id: '0',
+        filename: 'a.txt',
+        contentType: 'text/plain',
+        sizeBytes: 3,
+        s3Key: 'attachments/sent/id-1/0',
+      },
+    ],
     ...overrides,
   };
 }
@@ -109,6 +118,15 @@ describe('DdbEmailsDao', () => {
       rawS3Key: 'sent/id-1',
       attachmentCount: 2,
       sizeBytes: 4096,
+      attachments: [
+        {
+          id: '0',
+          filename: 'a.txt',
+          contentType: 'text/plain',
+          sizeBytes: 3,
+          s3Key: 'attachments/sent/id-1/0',
+        },
+      ],
     });
     // No SES id yet at the sending write — it's set on the 'sent' transition.
     expect(input?.Item?.sesMessageId).toBeUndefined();
