@@ -182,6 +182,41 @@ describe('EmailReader — attachment download', () => {
   });
 });
 
+describe('EmailReader — download original (.eml)', () => {
+  it('offers it in More actions when rawAvailable, and downloads via a minted URL', async () => {
+    let clickedHref = '';
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clickedHref = this.href;
+    });
+    renderReader(
+      mockReader({ ...BASE_INBOUND, text: 'body', rawAvailable: true }, (path) =>
+        path === '/emails/h1/raw'
+          ? json(200, { url: 'https://s3.example/raw', expiresAt: '2026-07-17T00:01:00.000Z' })
+          : null,
+      ),
+    );
+    await screen.findByRole('heading', { name: 'Hello' });
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'More actions' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Download original (.eml)' }));
+
+    await waitFor(() => expect(clickedHref).toBe('https://s3.example/raw'));
+  });
+
+  it('hides it when the original is not available', async () => {
+    renderReader(mockReader({ ...BASE_INBOUND, text: 'body', rawAvailable: false }));
+    await screen.findByRole('heading', { name: 'Hello' });
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'More actions' }), { key: 'Enter' });
+    await screen.findByRole('menuitem', { name: 'Copy sender address' });
+    expect(
+      screen.queryByRole('menuitem', { name: 'Download original (.eml)' }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe('EmailReader — actions', () => {
   it('hands the loaded message to reply, reply-all and forward', async () => {
     const onReply = vi.fn();

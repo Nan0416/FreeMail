@@ -25,6 +25,7 @@ import {
   type ListEmailsResponse,
   MAX_EMAIL_RESPONSE_BYTES,
   MAX_READ_BODY_BYTES,
+  type RawEmailDownloadResponse,
 } from '@freemail/shared';
 import {
   type EmailsReadDao,
@@ -137,6 +138,10 @@ export interface GetAttachmentUrlServiceRequest {
   readonly attachmentId: string;
 }
 
+export interface GetRawUrlServiceRequest {
+  readonly handle: string;
+}
+
 export class EmailReadService {
   private readonly emailsDao: EmailsReadDao;
   private readonly presigner: AttachmentPresigner;
@@ -197,6 +202,31 @@ export class EmailReadService {
       // Force a non-inline download regardless of the object's stored metadata.
       contentType: 'application/octet-stream',
       contentDisposition: contentDispositionForDownload(descriptor.filename),
+      expiresInSeconds: ATTACHMENT_URL_TTL_SECONDS,
+    });
+    const expiresAt = new Date(
+      this.now().getTime() + ATTACHMENT_URL_TTL_SECONDS * 1000,
+    ).toISOString();
+    return { url, expiresAt };
+  }
+
+  /**
+   * Mint a presigned URL that downloads a message's original raw MIME as `<subject>.eml`. Only
+   * a message whose detail reports `rawAvailable` resolves; anything else is a 404 (a received
+   * message that didn't pass the virus scan, a sent row without an archive). The S3 key is
+   * used server-side only.
+   */
+  async getRawUrl(request: GetRawUrlServiceRequest): Promise<RawEmailDownloadResponse> {
+    const row = await this.loadRow(request.handle);
+    const key = rawDownloadKey(row);
+    if (key === undefined) {
+      throw emailErrors.notFound('The original message is not available.');
+    }
+    const url = await this.presigner.presign({
+      key,
+      // Forced download, like attachments: the raw MIME is never served as a renderable type.
+      contentType: 'application/octet-stream',
+      contentDisposition: contentDispositionForDownload(emlFilename(row.subject)),
       expiresInSeconds: ATTACHMENT_URL_TTL_SECONDS,
     });
     const expiresAt = new Date(
@@ -318,6 +348,7 @@ export class EmailReadService {
         date: row.sentAt,
         ...(row.status !== undefined ? { status: row.status } : {}),
         ...body,
+        rawAvailable: rawDownloadKey(row) !== undefined,
         attachments: rowAttachments(row).map(publicDescriptor),
         hasAttachments: row.attachmentCount > 0,
         attachmentCount: row.attachmentCount,
@@ -335,6 +366,7 @@ export class EmailReadService {
       date: row.receivedAt,
       ...(row.headerDate !== undefined ? { headerDate: row.headerDate } : {}),
       ...body,
+      rawAvailable: rawDownloadKey(row) !== undefined,
       attachments: row.attachments.map(publicDescriptor),
       hasAttachments: row.hasAttachments,
       attachmentCount: row.attachmentCount,
@@ -347,12 +379,39 @@ export class EmailReadService {
   }
 }
 
-/** Strip the server-only S3 key — the client gets only the addressable attachment id. */
 /** A row's stored attachment descriptors; a sent row from before they were recorded has none. */
 function rowAttachments(row: GetEmailOutput): readonly InboundAttachmentDescriptor[] {
   return row.direction === 'inbound' ? row.attachments : (row.attachments ?? []);
 }
 
+/**
+ * The S3 key of a message's downloadable original, or undefined when it may not be downloaded.
+ * Sent: our own archive, if the row has one. Received: only on an affirmative virus `PASS` —
+ * the same gate as attachments, so a download never hands out bytes the scan flagged or skipped
+ * (spam-flagged and parse-failed-but-clean mail stay downloadable: the original is the point).
+ */
+function rawDownloadKey(row: GetEmailOutput): string | undefined {
+  if (row.direction === 'sent') {
+    return row.rawS3Key || undefined;
+  }
+  return row.virusVerdict === 'PASS' ? row.rawS3Key : undefined;
+}
+
+/** Characters that are unsafe in a filename on common filesystems — replaced, not dropped. */
+const UNSAFE_FILENAME_CHARS = /[\\/:*?"<>|]/g;
+/** Max code points of the subject kept in the `.eml` filename. */
+const MAX_EML_STEM_CHARS = 80;
+
+/** `<subject>.eml`, or `message.eml` for an empty subject. Header-safety is contentDispositionForDownload's job. */
+function emlFilename(subject: string): string {
+  const stem = Array.from(subject.replace(UNSAFE_FILENAME_CHARS, '_').trim())
+    .slice(0, MAX_EML_STEM_CHARS)
+    .join('')
+    .trim();
+  return `${stem || 'message'}.eml`;
+}
+
+/** Strip the server-only S3 key — the client gets only the addressable attachment id. */
 function publicDescriptor(descriptor: {
   id: string;
   filename: string;

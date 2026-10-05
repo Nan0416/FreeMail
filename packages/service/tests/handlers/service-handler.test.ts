@@ -55,13 +55,19 @@ vi.mock('../../src/services/email-service.js', () => ({
 // Stub the read service so the read routes exercise routing/authorization/validation
 // without DDB or S3.
 const { readMocks } = vi.hoisted(() => ({
-  readMocks: { listEmails: vi.fn(), getEmail: vi.fn(), getAttachmentUrl: vi.fn() },
+  readMocks: {
+    listEmails: vi.fn(),
+    getEmail: vi.fn(),
+    getAttachmentUrl: vi.fn(),
+    getRawUrl: vi.fn(),
+  },
 }));
 vi.mock('../../src/services/email-read-service.js', () => ({
   EmailReadService: class {
     listEmails = readMocks.listEmails;
     getEmail = readMocks.getEmail;
     getAttachmentUrl = readMocks.getAttachmentUrl;
+    getRawUrl = readMocks.getRawUrl;
   },
 }));
 
@@ -106,6 +112,7 @@ const ROUTES: ReadonlyArray<readonly [string, Record<string, string>]> = [
   ['GET /emails', {}],
   ['GET /emails/{id}', { id: 'handle-123' }],
   ['GET /emails/{id}/attachments/{attachmentId}', { id: 'handle-1', attachmentId: '0' }],
+  ['GET /emails/{id}/raw', { id: 'handle-1' }],
   ['GET /d/{token}', { token: 'tok-abc' }],
 ];
 
@@ -212,6 +219,7 @@ describe('rest handler — the Express routes match the CDK route table', () => 
       readMocks.listEmails.mockResolvedValue({ emails: [] });
       readMocks.getEmail.mockResolvedValue({ id: 'h', direction: 'inbound' });
       readMocks.getAttachmentUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
+      readMocks.getRawUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
       downloadMock.resolve.mockResolvedValue(null);
       authMocks.refresh.mockResolvedValue(TOKEN_PAIR);
 
@@ -287,16 +295,19 @@ describe('rest handler — reads are access-token-only', () => {
     readMocks.listEmails.mockReset().mockResolvedValue({ emails: [] });
     readMocks.getEmail.mockReset().mockResolvedValue({ id: 'h', direction: 'inbound' });
     readMocks.getAttachmentUrl.mockReset().mockResolvedValue({ url: 'u', expiresAt: 't' });
+    readMocks.getRawUrl.mockReset().mockResolvedValue({ url: 'u', expiresAt: 't' });
   });
 
-  it.each(['GET /emails', 'GET /emails/{id}', 'GET /emails/{id}/attachments/{attachmentId}'])(
-    'rejects an x-api-key credential on %s with 403 forbidden',
-    async (routeKey) => {
-      const res = await invoke(routeKey, { contentType: null, lambda: lambdaContext('apiKey') });
-      expect(res.statusCode).toBe(403);
-      expect(JSON.parse(res.body ?? '{}').error).toBe('forbidden');
-    },
-  );
+  it.each([
+    'GET /emails',
+    'GET /emails/{id}',
+    'GET /emails/{id}/attachments/{attachmentId}',
+    'GET /emails/{id}/raw',
+  ])('rejects an x-api-key credential on %s with 403 forbidden', async (routeKey) => {
+    const res = await invoke(routeKey, { contentType: null, lambda: lambdaContext('apiKey') });
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body ?? '{}').error).toBe('forbidden');
+  });
 
   it('rejects a missing scheme on reads (fails closed)', async () => {
     const res = await invoke('GET /emails', {
@@ -362,6 +373,17 @@ describe('rest handler — reads are access-token-only', () => {
       handle: 'handle-1',
       attachmentId: '0',
     });
+  });
+
+  it('mints a raw (.eml) url from the path id', async () => {
+    const res = await invoke('GET /emails/{id}/raw', {
+      contentType: null,
+      lambda: lambdaContext('access'),
+      params: { id: 'handle-1' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(readMocks.getRawUrl).toHaveBeenCalledWith({ handle: 'handle-1' });
+    expect(readMocks.getEmail).not.toHaveBeenCalled();
   });
 
   it('maps a service not_found to a 404 body', async () => {

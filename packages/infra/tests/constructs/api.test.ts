@@ -142,15 +142,21 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('exposes 13 routes: 4 public (3 auth + download) + 9 protected (me + 3 keys + send + 3 reads + mcp)', () => {
+  it('exposes 14 routes: 4 public (3 auth + download) + 10 protected (me + 3 keys + send + 4 reads + mcp)', () => {
     const template = synth();
     // 3 auth routes, not 4: #42 folded enrollment into login and dropped /auth/set-password.
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 13);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 14);
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const authorizationTypes = routes.map((r) => r.Properties.AuthorizationType);
     // The public GET /d/{token} download is unauthenticated (the token is the capability).
-    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(9);
+    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(10);
     expect(authorizationTypes.filter((t) => t !== 'CUSTOM')).toHaveLength(4);
+  });
+
+  it('registers GET /emails/{id}/raw behind the authorizer', () => {
+    const routes = Object.values(synth().findResources('AWS::ApiGatewayV2::Route'));
+    const raw = routes.find((r) => r.Properties.RouteKey === 'GET /emails/{id}/raw');
+    expect(raw?.Properties.AuthorizationType).toBe('CUSTOM');
   });
 
   it('registers GET /d/{token} as a PUBLIC route (no authorizer)', () => {

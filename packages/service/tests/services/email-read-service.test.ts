@@ -524,6 +524,95 @@ describe('EmailReadService.getAttachmentUrl', () => {
   });
 });
 
+describe('EmailReadService.getRawUrl', () => {
+  it('presigns a sent archive as a forced <subject>.eml download', async () => {
+    const repo = new FakeDao();
+    const presigner = new FakePresigner();
+    const handle = repo.put(
+      SENT_PARTITION,
+      sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>),
+    );
+
+    const result = await service(repo, presigner, new FakeRawMime()).getRawUrl({ handle });
+
+    expect(result).toEqual({ url: presigner.url, expiresAt: '2026-07-17T12:01:00.000Z' });
+    expect(presigner.last?.key).toBe('sent/s1');
+    expect(presigner.last?.contentType).toBe('application/octet-stream');
+    expect(presigner.last?.contentDisposition).toMatch(/^attachment; filename="Sent hi\.eml"/);
+    expect(presigner.last?.expiresInSeconds).toBe(60);
+  });
+
+  it('presigns a received message that passed the virus scan, even if spam-flagged', async () => {
+    const repo = new FakeDao();
+    const presigner = new FakePresigner();
+    const handle = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({ spamVerdict: 'FAIL', quarantined: true }),
+    );
+
+    await service(repo, presigner, new FakeRawMime()).getRawUrl({ handle });
+
+    expect(presigner.last?.key).toBe('inbound/i1');
+  });
+
+  it.each(['FAIL', 'GRAY', 'PROCESSING_FAILED', 'ABSENT', 'UNKNOWN'] as const)(
+    'refuses a received message with virus verdict %s → not_found, never presigned',
+    async (virusVerdict) => {
+      const repo = new FakeDao();
+      const presigner = new FakePresigner();
+      const handle = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict, quarantined: true }));
+
+      await expect(
+        service(repo, presigner, new FakeRawMime()).getRawUrl({ handle }),
+      ).rejects.toMatchObject({ code: 'not_found' });
+      expect(presigner.last).toBeUndefined();
+    },
+  );
+
+  it('refuses a sent row without an archive → not_found', async () => {
+    const repo = new FakeDao();
+    const presigner = new FakePresigner();
+    const handle = repo.put(SENT_PARTITION, sentRow());
+    await expect(
+      service(repo, presigner, new FakeRawMime()).getRawUrl({ handle }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+    expect(presigner.last).toBeUndefined();
+  });
+
+  it('names the file safely: unsafe chars replaced, long subjects capped, empty → message.eml', async () => {
+    const cases: [string, RegExp][] = [
+      ['Q3: plan/v2 <draft>?', /filename="Q3_ plan_v2 _draft__\.eml"/],
+      ['', /filename="message\.eml"/],
+      ['x'.repeat(200), new RegExp(`filename="${'x'.repeat(80)}\\.eml"`)],
+    ];
+    for (const [subject, expected] of cases) {
+      const repo = new FakeDao();
+      const presigner = new FakePresigner();
+      const handle = repo.put(
+        SENT_PARTITION,
+        sentRow({ subject, rawS3Key: 'sent/s1' } as Partial<GetEmailOutput>),
+      );
+      await service(repo, presigner, new FakeRawMime()).getRawUrl({ handle });
+      expect(presigner.last?.contentDisposition).toMatch(expected);
+    }
+  });
+
+  it('reports rawAvailable on the detail to match what getRawUrl allows', async () => {
+    const repo = new FakeDao();
+    const read = service(repo, new FakePresigner(), new FakeRawMime());
+    const legacySent = repo.put(SENT_PARTITION, sentRow());
+    const virusFailed = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({ virusVerdict: 'FAIL', quarantined: true, attachments: [] }),
+    );
+    const clean = repo.put(INBOUND_PARTITION, { ...inboundRow(), sk: 'other#i2' });
+
+    expect((await read.getEmail({ handle: legacySent })).rawAvailable).toBe(false);
+    expect((await read.getEmail({ handle: virusFailed })).rawAvailable).toBe(false);
+    expect((await read.getEmail({ handle: clean })).rawAvailable).toBe(true);
+  });
+});
+
 describe('EmailReadService.listEmails', () => {
   it('maps rows to list items, strips S3 keys, passes the cursor through', async () => {
     const repo = new FakeDao();

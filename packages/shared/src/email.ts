@@ -207,6 +207,11 @@ export interface EmailDetail {
   readonly html?: string;
   /** True when a body part hit the read-size cap and was truncated. */
   readonly bodyTruncated?: boolean;
+  /**
+   * True when the original message (`.eml`) can be downloaded via `GET /emails/{id}/raw`:
+   * sent mail with an archive, and received mail that passed the virus scan.
+   */
+  readonly rawAvailable?: boolean;
   readonly attachments: readonly EmailAttachmentInfo[];
   readonly hasAttachments: boolean;
   readonly attachmentCount: number;
@@ -233,6 +238,12 @@ export interface AttachmentDownloadResponse {
   /** When the URL stops working, ISO-8601. */
   readonly expiresAt: string;
 }
+
+/**
+ * A short-lived presigned download URL for a message's original raw MIME (`GET /emails/{id}/raw`),
+ * served as an `.eml` download. Same shape and lifetime as an attachment URL.
+ */
+export type RawEmailDownloadResponse = AttachmentDownloadResponse;
 
 /** Default page size for `GET /emails` when `?limit=` is omitted. */
 export const DEFAULT_EMAIL_PAGE_SIZE = 25;
