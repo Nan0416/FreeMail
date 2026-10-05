@@ -18,8 +18,14 @@ import DOMPurify from 'dompurify';
  * trusted alone; each independently contains a miss in the others.
  */
 
-/** Only these schemes may appear in any URI attribute (`href`, `src`, …). Blocks `javascript:`, `data:`, `vbscript:`, `cid:`, `file:`, … */
-const ALLOWED_URI_REGEXP = /^(?:https?:|mailto:|tel:)/i;
+/**
+ * Only these schemes may appear in an attribute value. Blocks `javascript:`, `data:`,
+ * `vbscript:`, `cid:`, `file:`, … DOMPurify tests this against EVERY attribute it does not
+ * deem URI-safe — `width`, `align`, `cellpadding`, `bgcolor`, … — not just URLs, so
+ * scheme-less values must pass too (this is DOMPurify's default pattern, narrowed to our
+ * schemes). Requiring a scheme stripped all table/image layout attributes.
+ */
+const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto|tel):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i;
 
 /**
  * Tags removed outright — active content, embedding, form/phishing surface, and CSS/SVG
@@ -144,7 +150,7 @@ const IFRAME_RESET_CSS =
   'body{margin:0 auto;max-width:768px;padding:4px 32px 40px;box-sizing:border-box;' +
   'color:#2a2a31;background:#fff;' +
   "font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;" +
-  'font-size:14px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere;}' +
+  'font-size:14px;line-height:1.6;overflow-wrap:break-word;}' +
   'a{color:#4752c4;}img{max-width:100%;height:auto;}' +
   'table{max-width:100%;}' +
   'blockquote{margin:0 0 0 .25rem;padding-left:.75rem;border-left:2px solid #e4e4e7;color:#63636e;}' +
