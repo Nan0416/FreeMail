@@ -21,3 +21,37 @@ export function formatBytes(bytes: number): string {
   }
   return `${value.toFixed(1)} ${units[unit]}`;
 }
+
+/**
+ * Compact list timestamp: time of day for today, `Oct 2` within the current year, and a
+ * numeric date otherwise. `now` is injectable for tests.
+ */
+export function formatListDate(iso: string, now: Date = new Date()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  if (date.toDateString() === now.toDateString()) {
+    return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  }
+  if (date.getFullYear() === now.getFullYear()) {
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  }
+  return date.toLocaleDateString(undefined, { year: '2-digit', month: 'numeric', day: 'numeric' });
+}
+
+/** Full reader timestamp, e.g. `Sat, Oct 4, 2026, 3:42 PM`. */
+export function formatLongDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) {
+    return iso;
+  }
+  return date.toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}

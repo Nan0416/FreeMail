@@ -1,21 +1,10 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { AuthProvider } from '../../src/auth/auth-context.js';
 import { KeysView } from '../../src/components/KeysView.js';
-
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
+import { json, renderWithApp } from '../helpers.js';
 
 function renderKeys(fetchImpl: typeof fetch) {
-  return render(
-    <AuthProvider apiBaseUrl="http://api.test" fetchImpl={fetchImpl}>
-      <KeysView />
-    </AuthProvider>,
-  );
+  return renderWithApp(<KeysView />, fetchImpl);
 }
 
 const RAW_KEY = 'fm_kid1_thesecretpart';
@@ -56,7 +45,7 @@ describe('KeysView', () => {
     expect(document.body.textContent).not.toContain(RAW_KEY);
   });
 
-  it('revokes a key after an inline confirm', async () => {
+  it('revokes a key only after confirming in a dialog', async () => {
     const fetchMock = vi.fn<typeof fetch>(async (url, init) => {
       const path = new URL(String(url)).pathname;
       if (path === '/me') {
@@ -72,8 +61,17 @@ describe('KeysView', () => {
     });
     renderKeys(fetchMock);
 
+    // Cancelling leaves the key alone.
     fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
+    fireEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }),
+    );
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+    expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
+    const dialog = await screen.findByRole('alertdialog', { name: 'Revoke agent?' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke key' }));
 
     await waitFor(() => expect(screen.getByText('No API keys yet.')).toBeInTheDocument());
     expect(

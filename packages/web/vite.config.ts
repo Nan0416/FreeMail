@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { parseFreeMailConfig, type FreeMailConfig } from '@freemail/shared/config';
 
 /** Same-origin path the dev server proxies to the deployed API. */
@@ -68,7 +69,14 @@ export default defineConfig(({ command, mode }) => {
   // Vitest also runs as 'serve'; only a real dev server talks to the deployed API.
   const deployConfig = command === 'serve' && mode !== 'test' ? loadDeployConfig() : null;
   return {
-    plugins: [react(), ...(deployConfig ? [devAgainstDeployedApi(deployConfig)] : [])],
+    plugins: [
+      react(),
+      tailwindcss(),
+      ...(deployConfig ? [devAgainstDeployedApi(deployConfig)] : []),
+    ],
+    resolve: {
+      alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    },
     test: {
       environment: 'jsdom',
       globals: true,
