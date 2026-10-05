@@ -22,6 +22,43 @@ describe('sanitizeEmailHtml — hostile input', () => {
     expect(out).not.toContain('alert(1)');
   });
 
+  it('keeps scheme-less layout attributes on tables and images', () => {
+    // DOMPurify checks ALLOWED_URI_REGEXP against these values too; requiring a scheme
+    // stripped them and collapsed table-based email layouts.
+    const out = sanitizeEmailHtml(
+      '<table width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#fff">' +
+        '<tr><td align="center" valign="top"><img src="https://x.test/a.png" width="32" height="32"></td></tr></table>',
+      { allowImages: true },
+    );
+    for (const attr of [
+      'width="100%"',
+      'cellpadding="0"',
+      'cellspacing="0"',
+      'border="0"',
+      'bgcolor="#fff"',
+      'align="center"',
+      'valign="top"',
+      'width="32"',
+      'height="32"',
+    ]) {
+      expect(out).toContain(attr);
+    }
+  });
+
+  it('still drops dangerous schemes in any attribute and case', () => {
+    for (const value of [
+      'javascript:alert(1)',
+      'JaVaScRiPt:alert(1)',
+      'vbscript:x',
+      'data:text/html,x',
+      'cid:part1',
+      'file:///etc/passwd',
+    ]) {
+      const out = sanitizeEmailHtml(`<a href="${value}">x</a>`, { allowImages: true });
+      expect(out).not.toContain('href=');
+    }
+  });
+
   it('drops a javascript: href', () => {
     const out = sanitizeEmailHtml('<a href="javascript:alert(1)">x</a>', { allowImages: true });
     expect(out.toLowerCase()).not.toContain('javascript:');

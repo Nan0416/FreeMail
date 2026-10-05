@@ -242,6 +242,12 @@ describe('appContentSecurityPolicy', () => {
     expect(policy).toContain("connect-src 'self' https://api.example.com");
   });
 
+  it('permits https: images so the inherited policy does not block "show images"', () => {
+    // A srcdoc iframe inherits the app CSP and must satisfy it AND its own <meta> CSP;
+    // the per-email `img-src 'none' | https:` is the actual show-images gate.
+    expect(policy).toContain("img-src 'self' data: https:");
+  });
+
   it('adds exactly ONE extra origin, and only to connect-src', () => {
     const api = 'https://api.example.com';
     const directivesNamingApi = policy.split('; ').filter((directive) => directive.includes(api));

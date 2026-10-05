@@ -76,7 +76,9 @@ export function webRuntimeConfigJson(
  * cross-origin scripts/connections, `object-src 'none'`, `base-uri 'none'`, and
  * `frame-ancestors 'none'` (clickjacking). `frame-src 'self'` permits the reader's
  * same-URL `srcdoc` iframe, which is ALSO independently locked by its own injected
- * per-email `<meta>` CSP. This is the app layer; the sandbox attributes + DOMPurify +
+ * per-email `<meta>` CSP. A srcdoc document inherits this policy and is enforced against
+ * BOTH (intersection), so the per-email CSP can only narrow it — hence `img-src https:`
+ * here, leaving the show-images gate to the per-email CSP. This is the app layer; the sandbox attributes + DOMPurify +
  * the per-email CSP are the other three independent controls. It cannot be set via a
  * `<meta>` (that can't express `frame-ancestors`), so it rides a CloudFront
  * ResponseHeadersPolicy.
@@ -93,7 +95,10 @@ export function appContentSecurityPolicy(apiOrigin: string): string {
     "script-src 'self'",
     // Inline `style=` attributes / a bundled stylesheet — never inline scripts.
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
+    // `https:` because the reader's srcdoc iframe INHERITS this policy and both CSPs must
+    // allow a load: without it "show images" (per-email `img-src https:`) stays blocked.
+    // Images remain off by default — the per-email CSP is `img-src 'none'` until opt-in.
+    "img-src 'self' data: https:",
     "font-src 'self'",
     `connect-src 'self' ${apiOrigin}`,
     // The reader's srcdoc iframe is same-URL as the app document → 'self'.
