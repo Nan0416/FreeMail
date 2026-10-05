@@ -153,6 +153,8 @@ npm run format:check  # prettier --check (CI gate)
 npm run format        # prettier --write
 ```
 
+To work on the web app locally against your **deployed** API, run `npm run dev -w @freemail/web` (after `npm run build`). The dev server reads `freemail-config.json` and proxies `/api` to your `apiDomain`, so the browser only talks to `localhost` — no CORS change needed. The session cookies are `Secure`, which Chrome and Firefox accept on `http://localhost` (Safari does not). It is your live mailbox: what you send is sent.
+
 CI (`.github/workflows/ci.yml`) runs `format:check` → `lint` → `build` → `test`. Per-package scripts work too, e.g. `npm run build -w @freemail/shared`.
 
 ## Contributing
