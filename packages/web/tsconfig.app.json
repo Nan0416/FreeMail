@@ -18,8 +18,16 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "moduleDetection": "force",
-    "verbatimModuleSyntax": true
+    "verbatimModuleSyntax": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
   "include": ["src", "tests"],
-  "references": [{ "path": "../shared" }]
+  "references": [
+    {
+      "path": "../shared"
+    }
+  ]
 }

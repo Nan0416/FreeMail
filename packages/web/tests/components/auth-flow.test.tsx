@@ -1,21 +1,15 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { AuthProvider } from '../../src/auth/auth-context.js';
 import { AuthGate } from '../../src/components/AuthGate.js';
-
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
+import { json, renderWithApp } from '../helpers.js';
 
 function renderGate(fetchImpl: typeof fetch) {
-  return render(
-    <AuthProvider apiBaseUrl="http://api.test" fetchImpl={fetchImpl}>
-      <AuthGate />
-    </AuthProvider>,
-  );
+  return renderWithApp(<AuthGate />, fetchImpl);
+}
+
+/** The signed-in shell is up: its folder navigation is on screen. */
+function findShell() {
+  return screen.findByRole('navigation', { name: 'Folders' });
 }
 
 /** The boot probe finds no session: `/me` is denied and the cookie refresh fails. */
@@ -61,8 +55,8 @@ describe('AuthGate', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    expect(await screen.findByRole('heading', { name: 'Compose' })).toBeInTheDocument();
-    expect(screen.getByText('Signed in as owner')).toBeInTheDocument();
+    expect(await findShell()).toBeInTheDocument();
+    expect(screen.getByText('owner')).toBeInTheDocument();
   });
 
   it('keeps the session and surfaces a retriable error when sign-out fails', async () => {
@@ -79,6 +73,9 @@ describe('AuthGate', () => {
       if (path === '/auth/logout') {
         return json(500, { error: 'invalid_request', message: 'retry' });
       }
+      if (path === '/emails') {
+        return json(200, { emails: [] });
+      }
       throw new Error(`unexpected ${path}`);
     });
     renderGate(fetchMock);
@@ -87,13 +84,15 @@ describe('AuthGate', () => {
       target: { value: 'a-strong-password' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-    await screen.findByRole('heading', { name: 'Compose' });
+    await findShell();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    // Sign out lives in the account menu (Radix opens it from the keyboard in jsdom).
+    fireEvent.keyDown(screen.getByRole('button', { name: /owner/ }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
 
     // The failure is surfaced, and the app shell stays — never a false sign-out.
-    expect(await screen.findByRole('alert')).toHaveTextContent('Sign-out failed');
-    expect(screen.getByRole('heading', { name: 'Compose' })).toBeInTheDocument();
+    expect(await screen.findByText(/Sign-out failed/)).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Folders' })).toBeInTheDocument();
     expect(screen.queryByRole('form', { name: 'Sign in' })).not.toBeInTheDocument();
   });
 
@@ -118,7 +117,7 @@ describe('AuthGate', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Sign in' }));
 
-    await screen.findByRole('heading', { name: 'Compose' });
+    await findShell();
     expect(screen.queryByRole('form', { name: 'Set password' })).not.toBeInTheDocument();
     const loginCalls = fetchMock.mock.calls.filter(
       ([url]) => new URL(String(url)).pathname === '/auth/login',

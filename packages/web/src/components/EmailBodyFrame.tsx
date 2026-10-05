@@ -14,14 +14,14 @@ export interface EmailBodyFrameProps {
  * NO `allow-scripts`/`allow-forms`; only `allow-popups(-to-escape-sandbox)` so a
  * user-clicked link opens a real new tab. The document itself is DOMPurify-sanitized and
  * carries its own per-email CSP (see {@link buildEmailSrcdoc}). With no `allow-scripts`,
- * the frame cannot self-size (postMessage would need scripts), so it fills a fixed pane
- * and scrolls internally — the correct script-free sizing.
+ * the frame cannot self-size (postMessage would need scripts), so it fills the rest of the
+ * reading pane and scrolls internally — the correct script-free sizing.
  */
 export function EmailBodyFrame({ html, allowImages }: EmailBodyFrameProps): React.JSX.Element {
   const srcDoc = useMemo(() => buildEmailSrcdoc(html, { allowImages }), [html, allowImages]);
   return (
     <iframe
-      className="email-frame"
+      className="block min-h-80 w-full flex-1 border-0 bg-white"
       title="Email content"
       sandbox="allow-popups allow-popups-to-escape-sandbox"
       referrerPolicy="no-referrer"

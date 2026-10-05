@@ -1,5 +1,6 @@
 import { useAuth } from '../auth/auth-context.js';
 import { AppShell } from './AppShell.js';
+import { AuthScreen } from './AuthScreen.js';
 import { SignInView } from './SignInView.js';
 
 export interface AuthGateProps {
@@ -12,9 +13,9 @@ export function AuthGate({ inboundEnabled = false }: AuthGateProps): React.JSX.E
   const { status } = useAuth();
   if (status === 'loading') {
     return (
-      <main className="auth-screen">
-        <p className="muted">Loading…</p>
-      </main>
+      <AuthScreen>
+        <p className="text-center text-[13px] text-muted-foreground">Loading…</p>
+      </AuthScreen>
     );
   }
   return status === 'authenticated' ? <AppShell inboundEnabled={inboundEnabled} /> : <SignInView />;

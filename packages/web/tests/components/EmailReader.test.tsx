@@ -1,14 +1,7 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthProvider } from '../../src/auth/auth-context.js';
 import { EmailReader } from '../../src/components/EmailReader.js';
-
-function json(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
+import { json, renderWithApp } from '../helpers.js';
 
 const BASE_INBOUND = {
   id: 'h1',
@@ -42,12 +35,8 @@ function mockReader(detail: unknown, extra?: (path: string) => Response | null):
   });
 }
 
-function renderReader(fetchImpl: typeof fetch) {
-  return render(
-    <AuthProvider apiBaseUrl="http://api.test" fetchImpl={fetchImpl}>
-      <EmailReader id="h1" onBack={vi.fn()} />
-    </AuthProvider>,
-  );
+function renderReader(fetchImpl: typeof fetch, onReply = vi.fn()) {
+  return renderWithApp(<EmailReader id="h1" onBack={vi.fn()} onReply={onReply} />, fetchImpl);
 }
 
 afterEach(() => {
@@ -65,7 +54,7 @@ describe('EmailReader — body matrix', () => {
       }),
     );
     expect(await screen.findByRole('heading', { name: 'My sent mail' })).toBeInTheDocument();
-    expect(screen.getByText(/metadata only/i)).toBeInTheDocument();
+    expect(screen.getByText(/only its metadata/i)).toBeInTheDocument();
     expect(screen.getByText('secret@z.com')).toBeInTheDocument();
     expect(screen.queryByTitle('Email content')).not.toBeInTheDocument();
   });
@@ -99,7 +88,8 @@ describe('EmailReader — image toggle', () => {
     await waitFor(() =>
       expect(screen.getByTitle('Email content').getAttribute('srcdoc')).toContain('img-src https:'),
     );
-    expect(screen.getByRole('button', { name: 'Hide images' })).toBeInTheDocument();
+    // The inline prompt goes away; re-blocking lives in the More actions menu.
+    expect(screen.queryByRole('button', { name: 'Show images' })).not.toBeInTheDocument();
   });
 });
 
@@ -156,12 +146,35 @@ describe('EmailReader — attachment download', () => {
     );
     renderReader(fetchMock);
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Download' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Download report.pdf' }));
     await waitFor(() => expect(clickedHref).toBe('https://s3.example/signed'));
     expect(
       (fetchMock as ReturnType<typeof vi.fn>).mock.calls.some(
         ([url]) => new URL(String(url)).pathname === '/emails/h1/attachments/a1',
       ),
     ).toBe(true);
+  });
+});
+
+describe('EmailReader — actions', () => {
+  it('hands the loaded message to reply, reply-all and forward', async () => {
+    const onReply = vi.fn();
+    renderReader(mockReader({ ...BASE_INBOUND, text: 'body' }), onReply);
+    await screen.findByRole('heading', { name: 'Hello' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reply' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Reply all' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Forward' }));
+
+    expect(onReply.mock.calls.map(([email, mode]) => [email.id, mode])).toEqual([
+      ['h1', 'reply'],
+      ['h1', 'replyAll'],
+      ['h1', 'forward'],
+    ]);
+  });
+
+  it('disables the actions until the message has loaded', () => {
+    renderReader(mockReader({ ...BASE_INBOUND, text: 'body' }));
+    expect(screen.getByRole('button', { name: 'Reply' })).toBeDisabled();
   });
 });

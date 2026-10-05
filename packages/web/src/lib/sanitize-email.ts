@@ -133,13 +133,23 @@ export function sanitizeEmailHtml(html: string, opts: SanitizeOptions): string {
   }
 }
 
-/** Minimal dark-theme reset for the isolated email document (matches the app palette). */
+/**
+ * Light reset for the isolated email document, matching the reading pane: the body column
+ * is centred at the same max width as the pane's header, so the iframe can span the full
+ * pane (its scrollbar sits at the pane edge) while the text keeps a readable measure.
+ * Fonts are system-only: the per-email CSP (`default-src 'none'`) loads no web fonts.
+ */
 const IFRAME_RESET_CSS =
-  'html,body{margin:0;padding:12px;color:#e2e8f0;background:#0f172a;' +
-  "font-family:system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;" +
-  'font-size:14px;line-height:1.5;word-break:break-word;overflow-wrap:anywhere;}' +
-  'a{color:#38bdf8;}img{max-width:100%;height:auto;}' +
-  'table{max-width:100%;}blockquote{margin:0 0 0 1rem;padding-left:1rem;border-left:2px solid #334155;}';
+  'html{background:#fff;}' +
+  'body{margin:0 auto;max-width:768px;padding:4px 32px 40px;box-sizing:border-box;' +
+  'color:#2a2a31;background:#fff;' +
+  "font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;" +
+  'font-size:14px;line-height:1.6;word-break:break-word;overflow-wrap:anywhere;}' +
+  'a{color:#4752c4;}img{max-width:100%;height:auto;}' +
+  'table{max-width:100%;}' +
+  'blockquote{margin:0 0 0 .25rem;padding-left:.75rem;border-left:2px solid #e4e4e7;color:#63636e;}' +
+  'pre{white-space:pre-wrap;}' +
+  '@media (max-width:767px){body{padding:4px 20px 32px;}}';
 
 /**
  * Build the full `srcdoc` document for the reader iframe: the sanitized body wrapped in

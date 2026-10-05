@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import type { WebRuntimeConfig } from '@freemail/shared';
 import { AuthProvider } from './auth/auth-context.js';
 import { AuthGate } from './components/AuthGate.js';
+import { AuthScreen } from './components/AuthScreen.js';
+import { Toaster } from '@/components/ui/sonner';
+import { TooltipProvider } from '@/components/ui/tooltip';
 import { loadRuntimeConfig } from './config/runtime-config.js';
 
 type Boot =
@@ -46,27 +49,30 @@ export function App(
 
   if (boot.status === 'loading') {
     return (
-      <main className="auth-screen">
-        <p className="muted">Starting FreeMail…</p>
-      </main>
+      <AuthScreen>
+        <p className="text-center text-[13px] text-muted-foreground">Starting FreeMail…</p>
+      </AuthScreen>
     );
   }
   if (boot.status === 'error') {
     return (
-      <main className="auth-screen">
-        <div className="card auth-card">
-          <h1>FreeMail</h1>
-          <p role="alert" className="error">
-            {boot.message}
-          </p>
-        </div>
-      </main>
+      <AuthScreen>
+        <p
+          role="alert"
+          className="rounded-lg border bg-background p-4 text-[13px] text-destructive"
+        >
+          {boot.message}
+        </p>
+      </AuthScreen>
     );
   }
 
   return (
     <AuthProvider apiBaseUrl={boot.config.apiBaseUrl} fetchImpl={fetchImpl}>
-      <AuthGate inboundEnabled={boot.config.inboundEnabled} />
+      <TooltipProvider delayDuration={400}>
+        <AuthGate inboundEnabled={boot.config.inboundEnabled} />
+        <Toaster position="bottom-center" />
+      </TooltipProvider>
     </AuthProvider>
   );
 }

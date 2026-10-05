@@ -1,424 +1,135 @@
+@import '@fontsource-variable/inter';
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/*
+ * Design tokens. One neutral ramp, one restrained accent (indigo), subtle borders instead
+ * of shadows, a 6px base radius. shadcn/ui components read these through the
+ * `@theme inline` mapping below, so restyling the app is a token change, not a hunt.
+ */
 :root {
-  --bg: #0f172a;
-  --surface: #1e293b;
-  --border: #334155;
-  --text: #e2e8f0;
-  --muted: #94a3b8;
-  --accent: #38bdf8;
-  --danger: #f87171;
-  --success: #34d399;
-  --warn: #fbbf24;
-  color-scheme: dark;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  font-family:
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    sans-serif;
-  background: var(--bg);
-  color: var(--text);
-}
-
-h1,
-h2,
-h3 {
-  margin: 0 0 0.75rem;
-}
-
-.muted {
-  color: var(--muted);
-}
-
-.hint {
-  color: var(--muted);
-  font-size: 0.85rem;
-  margin: 0.25rem 0 0.5rem;
-}
-
-.error {
-  color: var(--danger);
-}
-
-.success {
-  color: var(--success);
-}
-
-.warn {
-  color: var(--warn);
-}
-
-label {
-  display: block;
-  margin: 0.75rem 0 0.25rem;
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-
-input,
-textarea {
-  width: 100%;
-  padding: 0.5rem 0.65rem;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font: inherit;
-}
-
-textarea {
-  resize: vertical;
-}
-
-button {
-  margin-top: 0.75rem;
-  padding: 0.5rem 1rem;
-  background: var(--accent);
-  color: #04263a;
-  border: none;
-  border-radius: 6px;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-button.danger {
-  background: var(--danger);
-  color: #300;
-}
-
-.card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 1.5rem;
-}
-
-.auth-screen {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 1.5rem;
-}
-
-.auth-card {
-  width: 100%;
-  max-width: 24rem;
-}
-
-.shell {
-  min-height: 100vh;
-}
-
-.shell-header {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-  padding: 0.75rem 1.5rem;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
-}
-
-.brand {
-  font-weight: 700;
-}
-
-.tabs {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.tabs button,
-.shell-account button {
-  margin: 0;
-  background: transparent;
-  color: var(--text);
-  border: 1px solid var(--border);
-}
-
-.tabs button.active {
-  background: var(--accent);
-  color: #04263a;
-  border-color: var(--accent);
-}
-
-.shell-account {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-}
-
-.shell-main {
-  max-width: 44rem;
-  margin: 1.5rem auto;
-  padding: 0 1.5rem;
-}
-
-.inline-form {
-  display: flex;
-  align-items: flex-end;
-  gap: 0.75rem;
-  flex-wrap: wrap;
-}
-
-.inline-form input {
-  width: auto;
-  flex: 1;
-  min-width: 12rem;
-}
-
-.inline-form button {
-  margin: 0;
-}
-
-.key-list {
-  list-style: none;
-  padding: 0;
-  margin: 1rem 0 0;
-}
-
-.key-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.75rem 0;
-  border-top: 1px solid var(--border);
-}
-
-.key-list li > div:first-child {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.key-name {
-  font-weight: 600;
-}
-
-.key-id {
-  font-family: ui-monospace, monospace;
-  font-size: 0.85rem;
-}
-
-.confirm-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.confirm-row button {
-  margin: 0;
-}
-
-.reveal-panel {
-  border: 1px solid var(--warn);
-  border-radius: 8px;
-  padding: 1rem;
-  margin: 1rem 0;
-}
-
-.secret {
-  display: block;
-  padding: 0.65rem;
-  margin: 0.5rem 0;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-family: ui-monospace, monospace;
-  word-break: break-all;
-}
-
-.reveal-actions {
-  display: flex;
-  gap: 0.5rem;
-}
-
-.reveal-actions button {
-  margin: 0;
-}
-
-/* --- Mail list --- */
-.mail-list {
-  list-style: none;
-  padding: 0;
-  margin: 1rem 0 0;
-}
-
-.mail-list li {
-  border-top: 1px solid var(--border);
-}
-
-.mail-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  width: 100%;
-  margin: 0;
-  padding: 0.75rem 0;
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.mail-row:hover {
-  background: rgba(148, 163, 184, 0.08);
-}
-
-.mail-row-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.mail-party {
-  font-weight: 600;
-}
-
-.mail-subject {
-  color: var(--text);
-}
-
-.mail-snippet {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.mail-badges {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.badge {
-  font-size: 0.75rem;
-}
-
-.badge-warn {
-  color: var(--warn);
-  border: 1px solid var(--warn);
-  border-radius: 999px;
-  padding: 0 0.5rem;
-}
-
-/* --- Reader --- */
-.link-back {
-  margin: 0 0 0.75rem;
-  padding: 0.25rem 0;
-  background: transparent;
-  border: none;
-  color: var(--accent);
-  cursor: pointer;
-}
-
-.email-headers {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.15rem 0.75rem;
-  margin: 0 0 1rem;
-  font-size: 0.9rem;
-}
-
-.email-headers dt {
-  color: var(--muted);
-  font-weight: 600;
-}
-
-.email-headers dd {
-  margin: 0;
-  word-break: break-word;
-}
-
-.quarantine-banner {
-  border: 1px solid var(--warn);
-  border-radius: 8px;
-  padding: 0.75rem 1rem;
-  margin: 0 0 1rem;
-}
-
-.quarantine-banner p {
-  margin: 0 0 0.5rem;
-  color: var(--warn);
-}
-
-.quarantine-banner button {
-  margin: 0;
-}
-
-.image-toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin: 0 0 0.5rem;
-}
-
-.image-toggle button {
-  margin: 0;
-}
-
-.email-frame {
-  width: 100%;
-  height: 60vh;
-  min-height: 20rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-}
-
-.email-text {
-  white-space: pre-wrap;
-  word-break: break-word;
-  margin: 0;
-  font: inherit;
-}
-
-.email-attachments {
-  margin-top: 1.5rem;
-}
-
-.attachment-list {
-  list-style: none;
-  padding: 0;
-  margin: 0.5rem 0 0;
-}
-
-.attachment-list li {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.5rem 0;
-  border-top: 1px solid var(--border);
-}
-
-.attachment-list li > div:first-child {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-}
-
-.attachment-name {
-  font-weight: 600;
-  word-break: break-all;
-}
-
-.attachment-list button {
-  margin: 0;
+  --radius: 0.375rem;
+
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.27 0.006 286);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.27 0.006 286);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.27 0.006 286);
+
+  --primary: oklch(0.51 0.19 268);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.967 0.002 286);
+  --secondary-foreground: oklch(0.27 0.006 286);
+  --muted: oklch(0.967 0.002 286);
+  --muted-foreground: oklch(0.52 0.012 286);
+  --accent: oklch(0.955 0.003 286);
+  --accent-foreground: oklch(0.21 0.006 286);
+  --destructive: oklch(0.56 0.2 27);
+  --border: oklch(0.922 0.004 286);
+  --input: oklch(0.9 0.004 286);
+  --ring: oklch(0.51 0.19 268 / 0.45);
+
+  /* App-specific surfaces. */
+  --sidebar: oklch(0.982 0.0015 286);
+  --selected: oklch(0.955 0.025 268);
+  --selected-foreground: oklch(0.42 0.17 268);
+  --unread: oklch(0.51 0.19 268);
+  --warning: oklch(0.6 0.13 70);
+  --warning-surface: oklch(0.975 0.03 85);
+}
+
+@theme inline {
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-selected: var(--selected);
+  --color-selected-foreground: var(--selected-foreground);
+  --color-unread: var(--unread);
+  --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-size: 14px;
+    font-feature-settings:
+      'cv11' 1,
+      'ss01' 1;
+  }
+}
+
+/* Rich-text editor content (Tiptap / ProseMirror). */
+.compose-editor .ProseMirror {
+  min-height: 100%;
+  outline: none;
+  line-height: 1.6;
+}
+.compose-editor .ProseMirror p {
+  margin: 0 0 0.5em;
+}
+.compose-editor .ProseMirror ul,
+.compose-editor .ProseMirror ol {
+  margin: 0 0 0.5em;
+  padding-left: 1.5em;
+}
+.compose-editor .ProseMirror ul {
+  list-style: disc;
+}
+.compose-editor .ProseMirror ol {
+  list-style: decimal;
+}
+.compose-editor .ProseMirror blockquote {
+  margin: 0 0 0.5em;
+  padding-left: 0.75em;
+  border-left: 2px solid var(--border);
+  color: var(--muted-foreground);
+}
+.compose-editor .ProseMirror a {
+  color: var(--primary);
+  text-decoration: underline;
+}
+.compose-editor .ProseMirror code {
+  font-size: 0.9em;
+  padding: 0.1em 0.3em;
+  border-radius: 4px;
+  background: var(--muted);
+}
+.compose-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--muted-foreground);
 }
