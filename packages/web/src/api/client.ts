@@ -1,6 +1,8 @@
 import type {
   AttachmentDownloadResponse,
   CreateApiKeyResponse,
+  CreateAttachmentUploadRequest,
+  CreateAttachmentUploadResponse,
   EmailDetail,
   EmailListFilter,
   ListApiKeysResponse,
@@ -112,6 +114,29 @@ export class FreeMailClient {
 
   async sendEmail(req: SendEmailRequest): Promise<SendEmailResponse> {
     return this.request<SendEmailResponse>('POST', '/emails', { body: req, auth: true });
+  }
+
+  /** Step one of an attachment: where to PUT the file (a presigned S3 URL). */
+  async createUpload(req: CreateAttachmentUploadRequest): Promise<CreateAttachmentUploadResponse> {
+    return this.request<CreateAttachmentUploadResponse>('POST', '/attachments/uploads', {
+      body: req,
+      auth: true,
+    });
+  }
+
+  /**
+   * PUT a file's bytes to its presigned upload URL — straight to S3, never through the API.
+   * The URL is the whole credential: no cookies, no auth header (S3 would reject them anyway).
+   */
+  async putUpload(uploadUrl: string, file: Blob): Promise<void> {
+    const res = await this.fetchImpl(uploadUrl, {
+      method: 'PUT',
+      body: file,
+      headers: { 'Content-Type': file.type || 'application/octet-stream' },
+    });
+    if (!res.ok) {
+      throw new ApiError(res.status, 'upload_failed', 'The attachment could not be uploaded.');
+    }
   }
 
   async listKeys(): Promise<ListApiKeysResponse> {

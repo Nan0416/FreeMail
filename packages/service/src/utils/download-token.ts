@@ -1,6 +1,6 @@
 /**
  * Download-token primitives for the outbound large-attachment flow (#14): mint the
- * token, derive the server-side S3 key, and build the public download URL.
+ * token and build the public download URL.
  *
  * The token is 256 bits of randomness (base64url). It is the SOLE capability guarding
  * an UNAUTHENTICATED endpoint, so — unlike the read API's non-secret `email-ref` handle
@@ -32,15 +32,6 @@ export function generateDownloadToken(): string {
  */
 export function isValidDownloadToken(token: string): boolean {
   return TOKEN_RE.test(token);
-}
-
-/**
- * Server-side S3 key for an outbound large attachment. Opaque, never returned to a
- * client, and namespaced by the sending email's id so a message's uploads group together.
- * Mirrors the inbound layout (`attachments/inbound/...`).
- */
-export function outboundAttachmentKey(emailId: string, index: number): string {
-  return `attachments/outbound/${emailId}/${index}`;
 }
 
 /**

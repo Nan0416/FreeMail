@@ -53,6 +53,17 @@ export interface InboundConfig {
   readonly confirmInboundMx: boolean;
 }
 
+/**
+ * When an outbound attachment is embedded in the message rather than sent as a download link.
+ * Both optional — omitted, the defaults from `@freemail/shared` apply (3 MB / 10 MB).
+ */
+export interface AttachmentsConfig {
+  /** Embed a file at most this many bytes (≤ 15 MB, so mail to your own domain isn't quarantined). */
+  readonly embedMaxBytes?: number;
+  /** Cap on one message's embedded files, in bytes (≤ 20 MB, well inside SES's 40 MB message). */
+  readonly embedTotalBytes?: number;
+}
+
 export interface FreeMailConfig {
   /** AWS region. Pinned to us-east-1. */
   readonly region: string;
@@ -74,6 +85,8 @@ export interface FreeMailConfig {
   /** How the SES identity for `emailDomain` is managed. Omit for `create`. */
   readonly sesIdentity: SesIdentityConfig;
   readonly inbound: InboundConfig;
+  /** Outbound attachment embed limits. Omit for the defaults. */
+  readonly attachments?: AttachmentsConfig;
 }
 
 /** Canonicalized domain: trimmed, lowercased, trailing dot dropped, non-empty. */
@@ -119,6 +132,25 @@ const inboundSchema = z.object({
   confirmInboundMx: z.boolean({ error: 'must be a boolean' }),
 });
 
+const MIB = 1024 * 1024;
+
+/** A byte count from 1 to `maxMib` MiB. */
+const byteLimit = (maxMib: number) =>
+  z
+    .number({ error: 'must be a number of bytes' })
+    .int({ error: 'must be a whole number of bytes' })
+    .min(1, { error: 'must be at least 1 byte' })
+    .max(maxMib * MIB, { error: `must be at most ${maxMib} MB (${maxMib * MIB} bytes)` });
+
+const attachmentsSchema = z
+  .object({
+    // ≤ the inbound per-attachment cap, so a message sent to your own domain isn't quarantined.
+    embedMaxBytes: byteLimit(15).optional(),
+    // base64 inflates ~1.37×, so 20 MB embedded stays well inside SES's 40 MB message.
+    embedTotalBytes: byteLimit(20).optional(),
+  })
+  .optional();
+
 const freeMailConfigSchema = z
   .object({
     // The only supported region: inbound SES and CloudFront ACM certs both require it.
@@ -133,6 +165,7 @@ const freeMailConfigSchema = z
     apiDomain: domainSchema,
     sesIdentity: sesIdentitySchema,
     inbound: inboundSchema,
+    attachments: attachmentsSchema,
   })
   .superRefine((config, ctx) => {
     // Every managed domain's ACM validation and alias records are written into the one
@@ -220,5 +253,17 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
       enabled: result.data.inbound.enabled,
       confirmInboundMx: result.data.inbound.confirmInboundMx,
     },
+    ...(result.data.attachments !== undefined
+      ? {
+          attachments: {
+            ...(result.data.attachments.embedMaxBytes !== undefined
+              ? { embedMaxBytes: result.data.attachments.embedMaxBytes }
+              : {}),
+            ...(result.data.attachments.embedTotalBytes !== undefined
+              ? { embedTotalBytes: result.data.attachments.embedTotalBytes }
+              : {}),
+          },
+        }
+      : {}),
   };
 }

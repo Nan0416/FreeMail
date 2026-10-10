@@ -159,6 +159,10 @@ build(): Dependencies {
 - **One client of each kind per Lambda.** A client owns a connection pool; four DAOs each
   constructing their own quietly creates four. This is why DAOs _take_ a client rather than
   building one — and why the client parameter is required, not optional with a default.
+  One sanctioned exception: the send Lambdas build a **second S3 client only for presigning
+  attachment uploads**, configured `requestChecksumCalculation: 'WHEN_REQUIRED'` (otherwise
+  the SDK presigns a checksum of an empty body and every real upload fails). It never sends a
+  request, so it opens no connections.
 - **No I/O in `build()`.** If a dependency needs I/O to construct (a signing key read from
   a table), inject a **provider** rather than the resolved value. That keeps construction
   free and keeps the I/O behind whatever request-level gates run first.

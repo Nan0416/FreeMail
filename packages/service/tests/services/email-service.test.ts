@@ -19,6 +19,7 @@ import type {
 } from '../../src/data/emails-dao.js';
 import type { MailBodyContent, MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
 import type { OutboundObjectStore } from '../../src/facades/s3-outbound-object-store.js';
+import type { UploadStore, UploadedObject } from '../../src/facades/s3-upload-store.js';
 import { MAX_INLINE_BODY_BYTES } from '../../src/services/email-body-storage.js';
 import { EmailError } from '../../src/utils/errors.js';
 import type { RawMimeInput } from '../../src/utils/mime.js';
@@ -92,14 +93,6 @@ class FakeObjectStore implements OutboundObjectStore {
     this.puts.push({ key, bytes: body });
     return Promise.resolve();
   }
-  /** Only the large-attachment (#14) uploads. */
-  get attachmentPuts(): { key: string; bytes: Buffer }[] {
-    return this.puts.filter((p) => p.key.startsWith('attachments/outbound/'));
-  }
-  /** Only the downloadable copies of embedded attachments. */
-  get sentAttachmentPuts(): { key: string; bytes: Buffer }[] {
-    return this.puts.filter((p) => p.key.startsWith('attachments/sent/'));
-  }
   /** Only the sent raw-MIME archive (#29). */
   get archivePuts(): { key: string; bytes: Buffer }[] {
     return this.puts.filter((p) => p.key.startsWith('sent/'));
@@ -120,10 +113,56 @@ class FakeDownloadTokens implements DownloadTokensDao {
 const NOW_ISO = '2026-07-17T12:00:00.000Z';
 const DOWNLOAD_BASE_URL = 'https://api.example.test';
 
-/** Canonical base64 for `3 * blocks` zero bytes ('AAAA' → three 0x00 bytes, no padding). */
-function base64OfBlocks(blocks: number): string {
-  return 'AAAA'.repeat(blocks);
+/** A finished upload in S3: what HEAD reports, plus (optionally) real bytes for embedding. */
+interface StoredUpload {
+  readonly meta: UploadedObject;
+  readonly bytes?: Buffer;
 }
+
+class FakeUploadStore implements UploadStore {
+  readonly objects = new Map<string, StoredUpload>();
+  readonly copies: { source: string; dest: string }[] = [];
+  readonly reads: string[] = [];
+  failCopy = false;
+  /** Seed a finished upload; returns its upload id. */
+  add(n: number, filename: string, contentType: string, content: Buffer | number): string {
+    const id = uploadId(n);
+    const bytes = typeof content === 'number' ? undefined : content;
+    const sizeBytes = typeof content === 'number' ? content : content.length;
+    this.objects.set(`uploads/${id}`, { meta: { filename, contentType, sizeBytes }, bytes });
+    return id;
+  }
+  presignPut(): Promise<string> {
+    return Promise.resolve('https://bucket.s3.example/uploads/x');
+  }
+  head(key: string): Promise<UploadedObject | null> {
+    return Promise.resolve(this.objects.get(key)?.meta ?? null);
+  }
+  copy(source: string, dest: string): Promise<boolean> {
+    if (this.failCopy) {
+      return Promise.reject(new Error('s3 copy down'));
+    }
+    const object = this.objects.get(source);
+    if (!object) {
+      return Promise.resolve(false);
+    }
+    this.copies.push({ source, dest });
+    this.objects.set(dest, object);
+    return Promise.resolve(true);
+  }
+  getBytes(key: string): Promise<Buffer> {
+    this.reads.push(key);
+    const object = this.objects.get(key);
+    return Promise.resolve(object?.bytes ?? Buffer.alloc(object?.meta.sizeBytes ?? 0));
+  }
+}
+
+/** A well-formed (22-char base64url) upload id, distinct per n. */
+function uploadId(n: number): string {
+  return `U${String(n).padStart(21, '0')}`;
+}
+
+const MB = 1024 * 1024;
 
 class FakeBodyStore implements MailBodyStore {
   readonly puts = new Map<string, MailBodyContent>();
@@ -146,6 +185,7 @@ function makeService(overrides: Partial<EmailServiceDeps> = {}): {
   emails: FakeEmails;
   objectStore: FakeObjectStore;
   bodies: FakeBodyStore;
+  uploads: FakeUploadStore;
   tokens: FakeDownloadTokens;
   mimeInputs: RawMimeInput[];
 } {
@@ -158,6 +198,8 @@ function makeService(overrides: Partial<EmailServiceDeps> = {}): {
   const tokens =
     overrides.tokens instanceof FakeDownloadTokens ? overrides.tokens : new FakeDownloadTokens();
   const bodies = overrides.bodies instanceof FakeBodyStore ? overrides.bodies : new FakeBodyStore();
+  const uploads =
+    overrides.uploads instanceof FakeUploadStore ? overrides.uploads : new FakeUploadStore();
   const mimeInputs: RawMimeInput[] = [];
   let tokenSeq = 0;
   const service = new EmailService({
@@ -165,6 +207,7 @@ function makeService(overrides: Partial<EmailServiceDeps> = {}): {
     emailsDao: emails,
     objectStore,
     bodies,
+    uploads,
     tokensDao: tokens,
     downloadBaseUrl: DOWNLOAD_BASE_URL,
     emailDomain: 'example.com',
@@ -177,7 +220,7 @@ function makeService(overrides: Partial<EmailServiceDeps> = {}): {
     generateToken: () => `tok-${tokenSeq++}`,
     ...overrides,
   });
-  return { service, ses, emails, objectStore, bodies, tokens, mimeInputs };
+  return { service, ses, emails, objectStore, bodies, uploads, tokens, mimeInputs };
 }
 
 function request(overrides: Partial<SendEmailRequest> = {}): SendEmailRequest {
@@ -241,7 +284,7 @@ describe('EmailService.send', () => {
       sizeBytes: Buffer.from('RAW-MIME').length,
       attachments: [],
     });
-    expect(setup.objectStore.sentAttachmentPuts).toHaveLength(0);
+    expect(setup.uploads.copies).toHaveLength(0);
   });
 
   it('passes the display name + bcc to the MIME builder AND the SES envelope', async () => {
@@ -309,94 +352,56 @@ describe('EmailService.send', () => {
     ).rejects.toMatchObject({ code: 'invalid_request' });
   });
 
-  it('rejects an attachment with invalid base64', async () => {
+  it('rejects an attachment that is not an upload reference (no S3 call, no send)', async () => {
     const setup = makeService();
     await expect(
-      setup.service.send(
-        request({
-          attachments: [
-            {
-              filename: 'x.bin',
-              contentType: 'application/octet-stream',
-              contentBase64: 'not base64 !!!',
-            },
-          ],
-        }),
-      ),
+      setup.service.send(request({ attachments: [{ uploadId: '../uploads/other' }] })),
     ).rejects.toMatchObject({ code: 'invalid_request' });
     expect(setup.ses.calls).toHaveLength(0);
   });
 
-  // Malformed base64 that Buffer.from would silently truncate/ignore, so it must be
-  // rejected outright: a lone char, all-padding, wrong length, and a non-alphabet char.
-  it.each(['A', '====', 'AAAAA', 'AA*A'])(
-    'rejects non-canonical base64 attachment content %j',
-    async (contentBase64) => {
-      const setup = makeService();
-      await expect(
-        setup.service.send(
-          request({
-            attachments: [
-              { filename: 'x.bin', contentType: 'application/octet-stream', contentBase64 },
-            ],
-          }),
-        ),
-      ).rejects.toMatchObject({ code: 'invalid_request' });
-      expect(setup.ses.calls).toHaveLength(0);
-    },
-  );
-
-  it('rejects attachments whose total exceeds the size cap (before sending)', async () => {
+  it('rejects an upload that was never uploaded or has expired (no archive, no send)', async () => {
     const setup = makeService();
-    // ~8 MB decoded — 'AAAA' (4 base64 chars) decodes to 3 bytes.
-    const big = 'AAAA'.repeat(3 * 1024 * 1024);
     await expect(
-      setup.service.send(
-        request({
-          attachments: [
-            { filename: 'big.bin', contentType: 'application/octet-stream', contentBase64: big },
-          ],
-        }),
-      ),
-    ).rejects.toMatchObject({ code: 'invalid_request' });
+      setup.service.send(request({ attachments: [{ uploadId: uploadId(9) }] })),
+    ).rejects.toThrow(/was not found/);
+    expect(setup.objectStore.archivePuts).toHaveLength(0);
     expect(setup.ses.calls).toHaveLength(0);
   });
 
-  it('normalizes attachment content (strips whitespace) and counts it', async () => {
+  it('rejects more attachments than the cap', async () => {
     const setup = makeService();
-    const b64 = Buffer.from('file body').toString('base64');
-    await setup.service.send(
-      request({
-        attachments: [
-          { filename: 'note.txt', contentType: 'text/plain', contentBase64: `${b64}\n` },
-        ],
-      }),
-    );
-    expect(setup.mimeInputs[0]?.attachments[0]?.contentBase64).toBe(b64);
-    expect(setup.emails.records[0]?.attachmentCount).toBe(1);
+    const attachments = Array.from({ length: 21 }, (_, i) => ({
+      uploadId: setup.uploads.add(i, `f${i}`, 'text/plain', 1),
+    }));
+    await expect(setup.service.send(request({ attachments }))).rejects.toThrow(/at most 20/);
   });
 
-  it('copies each embedded attachment to attachments/sent/<id>/<index> and records its descriptor', async () => {
+  it('copies each upload once to attachments/sent/<id>/<index>, embedding small ones from the upload', async () => {
     const setup = makeService();
-    await setup.service.send(
-      request({
-        attachments: [
-          {
-            filename: 'a.txt',
-            contentType: 'text/plain',
-            contentBase64: Buffer.from('aaa').toString('base64'),
-          },
-          {
-            filename: 'b.pdf',
-            contentType: 'application/pdf',
-            contentBase64: Buffer.from('bbbb').toString('base64'),
-          },
-        ],
-      }),
-    );
-    expect(setup.objectStore.sentAttachmentPuts.map((p) => [p.key, p.bytes.toString()])).toEqual([
-      ['attachments/sent/id-1/0', 'aaa'],
-      ['attachments/sent/id-1/1', 'bbbb'],
+    const a = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('aaa'));
+    const b = setup.uploads.add(2, 'b.pdf', 'application/pdf', Buffer.from('bbbb'));
+
+    await setup.service.send(request({ attachments: [{ uploadId: a }, { uploadId: b }] }));
+
+    expect(setup.uploads.copies).toEqual([
+      { source: `uploads/${a}`, dest: 'attachments/sent/id-1/0' },
+      { source: `uploads/${b}`, dest: 'attachments/sent/id-1/1' },
+    ]);
+    // Embedded from the upload itself (an MCP role without the read tools can't read the sent
+    // copies), with the filename + type S3 recorded at upload.
+    expect(setup.uploads.reads).toEqual([`uploads/${a}`, `uploads/${b}`]);
+    expect(setup.mimeInputs[0]?.attachments).toEqual([
+      {
+        filename: 'a.txt',
+        contentType: 'text/plain',
+        contentBase64: Buffer.from('aaa').toString('base64'),
+      },
+      {
+        filename: 'b.pdf',
+        contentType: 'application/pdf',
+        contentBase64: Buffer.from('bbbb').toString('base64'),
+      },
     ]);
     expect(setup.emails.records[0]?.attachments).toEqual([
       {
@@ -414,6 +419,8 @@ describe('EmailService.send', () => {
         s3Key: 'attachments/sent/id-1/1',
       },
     ]);
+    expect(setup.emails.records[0]?.attachmentCount).toBe(2);
+    expect(setup.tokens.created).toHaveLength(0);
   });
 });
 
@@ -454,19 +461,9 @@ describe('EmailService.send — stored body', () => {
   it('stores the body exactly as sent — download links included', async () => {
     const setup = makeService();
 
-    await setup.service.send(
-      request({
-        text: 'See attached.',
-        attachments: [
-          {
-            filename: 'big.bin',
-            contentType: 'application/octet-stream',
-            // 3.6 MB decoded: over the embed limit, so it becomes a download link.
-            contentBase64: 'AAAA'.repeat(1_200_000),
-          },
-        ],
-      }),
-    );
+    // 5 MB: over the embed limit, so it becomes a download link.
+    const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
+    await setup.service.send(request({ text: 'See attached.', attachments: [{ uploadId: big }] }));
 
     const body = setup.emails.records[0]?.body;
     expect(body?.kind).toBe('inline');
@@ -486,25 +483,36 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
     expect(setup.emails.statusUpdates).toHaveLength(0);
   });
 
-  it('FAILS CLOSED when an attachment-copy write fails: no send, no row', async () => {
-    const objectStore = new FakeObjectStore();
-    objectStore.failKeyPrefix = 'attachments/sent/';
-    const setup = makeService({ objectStore });
+  it('answers "upload not found" (400) when an upload vanishes between its HEAD and its copy', async () => {
+    const setup = makeService();
+    const a = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('aaa'));
+    const head = setup.uploads.head.bind(setup.uploads);
+    setup.uploads.head = async (key) => {
+      const meta = await head(key);
+      setup.uploads.objects.delete(key); // swept right after the HEAD
+      return meta;
+    };
+
     await expect(
-      setup.service.send(
-        request({
-          attachments: [
-            {
-              filename: 'a.txt',
-              contentType: 'text/plain',
-              contentBase64: Buffer.from('aaa').toString('base64'),
-            },
-          ],
-        }),
-      ),
-    ).rejects.toThrow('s3 down');
+      setup.service.send(request({ attachments: [{ uploadId: a }] })),
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: expect.stringContaining('was not found'),
+    });
+    expect(setup.emails.records).toEqual([]);
     expect(setup.ses.calls).toHaveLength(0);
-    expect(setup.emails.records).toHaveLength(0);
+  });
+
+  it('FAILS CLOSED when copying an upload fails: no send, no row', async () => {
+    const setup = makeService();
+    const a = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('aaa'));
+    setup.uploads.failCopy = true;
+
+    await expect(setup.service.send(request({ attachments: [{ uploadId: a }] }))).rejects.toThrow(
+      /s3 copy down/,
+    );
+    expect(setup.emails.records).toEqual([]);
+    expect(setup.ses.calls).toHaveLength(0);
   });
 
   it('FAILS CLOSED when a large-body write fails: no row, no send', async () => {
@@ -565,187 +573,106 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
   });
 });
 
-describe('EmailService.send — large attachments (#14)', () => {
-  // 'AAAA' decodes to 3 bytes; MAX_EMBED_ATTACHMENT_BYTES = 3 MB = 3 * 1024 * 1024.
-  const EMBED_LIMIT_BLOCKS = 1024 * 1024; // exactly 3 MB decoded
-  const LARGE_BLOCKS = 1_200_000; // 3.6 MB decoded — above the embed limit, under the 7 MB total cap
-
-  it('uploads a large attachment to S3, mints a token, and links it in the body instead of embedding', async () => {
+describe('EmailService.send — embed or link (#14)', () => {
+  it('embeds a file at exactly the per-file limit; links one byte over', async () => {
     const setup = makeService();
+    const exact = setup.uploads.add(1, 'exact.bin', 'application/octet-stream', 3 * MB);
+    const over = setup.uploads.add(2, 'over.bin', 'application/octet-stream', 3 * MB + 1);
 
-    await setup.service.send(
-      request({
-        attachments: [
-          {
-            filename: 'report.pdf',
-            contentType: 'application/pdf',
-            contentBase64: base64OfBlocks(LARGE_BLOCKS),
-          },
-        ],
-      }),
+    await setup.service.send(request({ attachments: [{ uploadId: exact }, { uploadId: over }] }));
+
+    expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual(['exact.bin']);
+    expect(setup.tokens.created.map((t) => t.filename)).toEqual(['over.bin']);
+  });
+
+  it('links a file that would pass the message’s embed budget', async () => {
+    const setup = makeService();
+    // Four 3 MB files: three fit the 10 MB budget (9 MB), the fourth is linked.
+    const ids = [1, 2, 3, 4].map((n) =>
+      setup.uploads.add(n, `f${n}.bin`, 'application/octet-stream', 3 * MB),
     );
 
-    // Not embedded in the MIME.
+    await setup.service.send(request({ attachments: ids.map((uploadId) => ({ uploadId })) }));
+
+    expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual([
+      'f1.bin',
+      'f2.bin',
+      'f3.bin',
+    ]);
+    expect(setup.tokens.created.map((t) => t.filename)).toEqual(['f4.bin']);
+  });
+
+  it('still embeds a small file after a linked one (first fit, in request order)', async () => {
+    const setup = makeService();
+    const ids = [3, 3, 3, 3, 1].map((size, n) =>
+      setup.uploads.add(n, `f${n}.bin`, 'application/octet-stream', size * MB),
+    );
+
+    await setup.service.send(request({ attachments: ids.map((uploadId) => ({ uploadId })) }));
+
+    expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual([
+      'f0.bin',
+      'f1.bin',
+      'f2.bin',
+      'f4.bin',
+    ]);
+    expect(setup.tokens.created.map((t) => t.filename)).toEqual(['f3.bin']);
+  });
+
+  it('links a large file: a token for its permanent copy, a link in the body, no embed', async () => {
+    const setup = makeService();
+    const big = setup.uploads.add(1, 'report.pdf', 'application/pdf', 50 * MB);
+
+    await setup.service.send(request({ attachments: [{ uploadId: big }] }));
+
     expect(setup.mimeInputs[0]?.attachments).toEqual([]);
-    // Uploaded to the opaque outbound key.
-    expect(setup.objectStore.attachmentPuts).toHaveLength(1);
-    expect(setup.objectStore.attachmentPuts[0].key).toBe('attachments/outbound/id-1/0');
-    expect(setup.objectStore.attachmentPuts[0].bytes.length).toBe(LARGE_BLOCKS * 3);
-    // Token minted with server-authoritative expiry + TTL and a zero counter.
-    expect(setup.tokens.created).toHaveLength(1);
+    expect(setup.uploads.reads).toEqual([]); // never pulled into the Lambda
     const expiresAt = new Date(
       Date.parse(NOW_ISO) + DOWNLOAD_TOKEN_TTL_SECONDS * 1000,
     ).toISOString();
-    expect(setup.tokens.created[0]).toEqual({
-      token: 'tok-0',
-      s3Key: 'attachments/outbound/id-1/0',
-      filename: 'report.pdf',
-      contentType: 'application/pdf',
-      sizeBytes: LARGE_BLOCKS * 3,
-      emailId: 'id-1',
-      createdAt: NOW_ISO,
-      expiresAt,
-      ttl: Math.floor(Date.parse(expiresAt) / 1000),
-      revoked: false,
-      downloadCount: 0,
-    });
-    // Linked in the body, not embedded — and still counted as an attachment on the record.
+    expect(setup.tokens.created).toEqual([
+      {
+        token: 'tok-0',
+        s3Key: 'attachments/sent/id-1/0',
+        filename: 'report.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 50 * MB,
+        emailId: 'id-1',
+        createdAt: NOW_ISO,
+        expiresAt,
+        ttl: Math.floor(Date.parse(expiresAt) / 1000),
+        revoked: false,
+        downloadCount: 0,
+      },
+    ]);
     expect(setup.mimeInputs[0]?.text).toContain('https://api.example.test/d/tok-0');
-    expect(setup.emails.records[0]?.attachmentCount).toBe(1);
+    // The sender's own copy (Sent folder) points at the same permanent key, without a token.
+    expect(setup.emails.records[0]?.attachments?.[0]?.s3Key).toBe('attachments/sent/id-1/0');
   });
 
-  it('embeds an attachment at exactly the embed limit (boundary — no upload, no token)', async () => {
+  it('links into an HTML-only body with an escaped anchor', async () => {
     const setup = makeService();
-    await setup.service.send(
-      request({
-        attachments: [
-          {
-            filename: 'ok.bin',
-            contentType: 'application/octet-stream',
-            contentBase64: base64OfBlocks(EMBED_LIMIT_BLOCKS),
-          },
-        ],
-      }),
-    );
-    expect(setup.mimeInputs[0]?.attachments).toHaveLength(1);
-    expect(setup.objectStore.attachmentPuts).toHaveLength(0);
-    expect(setup.tokens.created).toHaveLength(0);
-  });
+    const big = setup.uploads.add(1, 'a&b.pdf', 'application/pdf', 5 * MB);
 
-  it('links an attachment one byte over the embed limit (boundary)', async () => {
-    const setup = makeService();
-    // One 3-byte block over the exact 3 MB limit → routed to a link.
     await setup.service.send(
-      request({
-        attachments: [
-          {
-            filename: 'over.bin',
-            contentType: 'application/octet-stream',
-            contentBase64: base64OfBlocks(EMBED_LIMIT_BLOCKS + 1),
-          },
-        ],
-      }),
+      request({ text: undefined, html: '<p>hi</p>', attachments: [{ uploadId: big }] }),
     );
-    expect(setup.mimeInputs[0]?.attachments).toEqual([]);
-    expect(setup.objectStore.attachmentPuts).toHaveLength(1);
-    expect(setup.tokens.created).toHaveLength(1);
-  });
 
-  it('mixes embedded small + linked large attachments in one message', async () => {
-    const setup = makeService();
-    const small = Buffer.from('a small file').toString('base64');
-    await setup.service.send(
-      request({
-        attachments: [
-          { filename: 'small.txt', contentType: 'text/plain', contentBase64: small },
-          {
-            filename: 'big.bin',
-            contentType: 'application/octet-stream',
-            contentBase64: base64OfBlocks(LARGE_BLOCKS),
-          },
-        ],
-      }),
-    );
-    // Only the small one is embedded; the large one is a link.
-    expect(setup.mimeInputs[0]?.attachments).toHaveLength(1);
-    expect(setup.mimeInputs[0]?.attachments[0]?.filename).toBe('small.txt');
-    expect(setup.objectStore.attachmentPuts).toHaveLength(1);
-    expect(setup.tokens.created).toHaveLength(1);
-    expect(setup.tokens.created[0]?.filename).toBe('big.bin');
-  });
-
-  it('records descriptors in request order — a linked one reuses its upload key (no second copy)', async () => {
-    const setup = makeService();
-    const small = Buffer.from('a small file').toString('base64');
-    await setup.service.send(
-      request({
-        // Large FIRST, so its request index (0) differs from its position among embedded parts.
-        attachments: [
-          {
-            filename: 'big.bin',
-            contentType: 'application/octet-stream',
-            contentBase64: base64OfBlocks(LARGE_BLOCKS),
-          },
-          { filename: 'small.txt', contentType: 'text/plain', contentBase64: small },
-        ],
-      }),
-    );
-    const [linkedKey] = setup.objectStore.attachmentPuts.map((p) => p.key);
-    expect(setup.objectStore.sentAttachmentPuts.map((p) => p.key)).toEqual([
-      'attachments/sent/id-1/1',
-    ]);
-    expect(setup.emails.records[0]?.attachments?.map((a) => [a.id, a.filename, a.s3Key])).toEqual([
-      ['0', 'big.bin', linkedKey],
-      ['1', 'small.txt', 'attachments/sent/id-1/1'],
-    ]);
-    expect(setup.emails.records[0]?.attachments?.[0]?.sizeBytes).toBe(LARGE_BLOCKS * 3);
-  });
-
-  it('links large attachments into an HTML-only body with an escaped anchor', async () => {
-    const setup = makeService();
-    await setup.service.send(
-      request({
-        text: undefined,
-        html: '<p>see attached</p>',
-        attachments: [
-          {
-            filename: 'q1"report.pdf',
-            contentType: 'application/pdf',
-            contentBase64: base64OfBlocks(LARGE_BLOCKS),
-          },
-        ],
-      }),
-    );
-    expect(setup.mimeInputs[0]?.text).toBeUndefined();
-    expect(setup.mimeInputs[0]?.html).toContain('<p>see attached</p>');
     expect(setup.mimeInputs[0]?.html).toContain('<a href="https://api.example.test/d/tok-0">');
-    // The quote in the filename is escaped, not rendered raw.
-    expect(setup.mimeInputs[0]?.html).toContain('q1&quot;report.pdf');
+    expect(setup.mimeInputs[0]?.html).toContain('a&amp;b.pdf');
   });
 
-  it('mints one token per large attachment with per-file keys and sequential tokens', async () => {
-    const setup = makeService();
-    const blocks = 1_050_000; // 3.15 MB each; two = 6.3 MB, under the 7 MB total cap
+  it('honors deploy-configured limits', async () => {
+    const setup = makeService({ embedMaxBytes: 100, embedTotalBytes: 150 });
+    const a = setup.uploads.add(1, 'a.txt', 'text/plain', 100);
+    const b = setup.uploads.add(2, 'b.txt', 'text/plain', 100); // would pass the 150 total
+    const c = setup.uploads.add(3, 'c.txt', 'text/plain', 101); // over the per-file limit
+
     await setup.service.send(
-      request({
-        attachments: [
-          {
-            filename: 'a.bin',
-            contentType: 'application/octet-stream',
-            contentBase64: base64OfBlocks(blocks),
-          },
-          {
-            filename: 'b.bin',
-            contentType: 'application/octet-stream',
-            contentBase64: base64OfBlocks(blocks),
-          },
-        ],
-      }),
+      request({ attachments: [{ uploadId: a }, { uploadId: b }, { uploadId: c }] }),
     );
-    expect(setup.objectStore.attachmentPuts.map((p) => p.key)).toEqual([
-      'attachments/outbound/id-1/0',
-      'attachments/outbound/id-1/1',
-    ]);
-    expect(setup.tokens.created.map((t) => t.token)).toEqual(['tok-0', 'tok-1']);
+
+    expect(setup.mimeInputs[0]?.attachments.map((x) => x.filename)).toEqual(['a.txt']);
+    expect(setup.tokens.created.map((t) => t.filename)).toEqual(['b.txt', 'c.txt']);
   });
 });

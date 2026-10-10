@@ -80,10 +80,10 @@ export interface CreateSentEmailInput {
   /** Short failure reason on a `send_failed` row — server-side only, never surfaced in the read DTO. */
   readonly error?: string;
   /**
-   * One descriptor per attachment the message carried, in request order — embedded ones copied
-   * to `attachments/sent/<id>/<index>`, linked (large) ones pointing at their existing
-   * `attachments/outbound/*` upload. Absent on a row written before attachments were recorded
-   * (the read path treats that as none).
+   * One descriptor per attachment the message carried, in request order, each pointing at its
+   * permanent copy `attachments/sent/<id>/<index>` (embedded or linked alike; rows from before
+   * direct uploads point linked ones at `attachments/outbound/*`). Absent on a row written
+   * before attachments were recorded (the read path treats that as none).
    */
   readonly attachments?: readonly SentAttachmentDescriptor[];
   /** The body as sent (download links included). Absent on a row written before bodies were stored. */

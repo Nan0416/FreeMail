@@ -3,7 +3,6 @@ import {
   downloadUrl,
   generateDownloadToken,
   isValidDownloadToken,
-  outboundAttachmentKey,
 } from '../../src/utils/download-token.js';
 
 describe('generateDownloadToken', () => {
@@ -42,13 +41,6 @@ describe('isValidDownloadToken', () => {
     ['contains padding =', `${'A'.repeat(42)}=`],
   ])('rejects a %s token', (_label, token) => {
     expect(isValidDownloadToken(token)).toBe(false);
-  });
-});
-
-describe('outboundAttachmentKey', () => {
-  it('namespaces the opaque key by email id and index', () => {
-    expect(outboundAttachmentKey('email-1', 0)).toBe('attachments/outbound/email-1/0');
-    expect(outboundAttachmentKey('email-1', 2)).toBe('attachments/outbound/email-1/2');
   });
 });
 

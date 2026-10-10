@@ -7,17 +7,20 @@
  * Validation is deliberately here (not in the handler): the sender-domain check
  * and payload caps must hold for every caller, REST or MCP.
  *
- * Large attachments (#14): an attachment larger than {@link MAX_EMBED_ATTACHMENT_BYTES}
- * is NOT embedded in the MIME — it's uploaded to S3, a download token is minted, and a
- * `GET /d/{token}` link is appended to the body. Smaller ones embed as before. The same
+ * Attachments arrive as references to finished uploads (`uploads/<uploadId>`, see
+ * {@link AttachmentUploadService}) — never as bytes in the request. Each is copied once to its
+ * permanent key, `attachments/sent/<id>/<index>`. Small ones are also embedded in the MIME
+ * (first fit, in request order, while the message's embedded total stays within budget); the
+ * rest get a download token and a `GET /d/{token}` link appended to the body (#14). The same
  * routing applies to REST and MCP callers because both send through this one service.
  */
 import {
+  DEFAULT_EMBED_ATTACHMENT_BYTES,
+  DEFAULT_EMBED_TOTAL_BYTES,
   DOWNLOAD_TOKEN_TTL_SECONDS,
   MAX_ATTACHMENTS,
-  MAX_ATTACHMENT_TOTAL_BYTES,
-  MAX_EMBED_ATTACHMENT_BYTES,
   MAX_RAW_MESSAGE_BYTES,
+  MAX_UPLOAD_BYTES,
   MAX_RECIPIENTS,
   isSubdomainOrEqual,
   isValidEmailAddress,
@@ -29,36 +32,38 @@ import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
 import type {
   CreateSentEmailInput,
   EmailsDao,
-  SentAttachmentDescriptor,
   UpdateSentEmailStatusInput,
 } from '../data/emails-dao.js';
 import type { MailBodyStore } from '../facades/s3-mail-body-store.js';
 import type { OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { appendDownloadLinks, type DownloadLink } from '../utils/attachment-links.js';
-import {
-  downloadUrl,
-  generateDownloadToken,
-  outboundAttachmentKey,
-} from '../utils/download-token.js';
+import type { UploadStore, UploadedObject } from '../facades/s3-upload-store.js';
+import { downloadUrl, generateDownloadToken } from '../utils/download-token.js';
 import { emailErrors } from '../utils/errors.js';
+import { mapBounded } from '../utils/bounded-map.js';
 import { buildRawMime, type RawMimeAttachment, type RawMimeInput } from '../utils/mime.js';
 import type { SesSender } from '../facades/ses-email-facade.js';
+import { isValidUploadId, uploadKey } from './attachment-upload-service.js';
 import { bodyKey, estimateRowBytes, storeEmailBody } from './email-body-storage.js';
 
 export interface EmailServiceDeps {
   readonly ses: SesSender;
   readonly emailsDao: EmailsDao;
-  /**
-   * Stores send-path objects in the mail bucket: outbound large attachments (#14,
-   * `attachments/outbound/*`), the archived composed raw MIME (#29, `sent/<id>`), and a
-   * downloadable copy of each embedded attachment (`attachments/sent/<id>/<index>`). The
-   * octet-stream disposition suits all three — attachments are only ever served as downloads.
-   */
+  /** Archives the composed raw MIME of each send (#29, `sent/<id>`). */
   readonly objectStore: OutboundObjectStore;
   /** Stores a sent body too large to keep inline in the row (`bodies/sent/<id>.json`). */
   readonly bodies: MailBodyStore;
   /** Persists the download tokens minted for large attachments (#14). */
   readonly tokensDao: DownloadTokensDao;
+  /**
+   * Reads finished attachment uploads (`uploads/<id>`) — HEAD, and a small one's bytes to embed —
+   * and copies them to their permanent key.
+   */
+  readonly uploads: UploadStore;
+  /** Embed an attachment at most this size (bytes); larger ones are linked. Deploy-configurable. */
+  readonly embedMaxBytes?: number;
+  /** Cap on the embedded attachments of one message (bytes); beyond it they are linked. */
+  readonly embedTotalBytes?: number;
   /** Public base URL for download links — the API's own endpoint (`https://…`). */
   readonly downloadBaseUrl: string;
   /** The domain every `from` must be under (the configured send domain). */
@@ -73,13 +78,14 @@ export interface EmailServiceDeps {
   readonly generateToken?: () => string;
 }
 
-/** A validated attachment plus its decoded bytes — the input to embed-vs-link routing. */
-interface ProcessedAttachment {
+/** A finished upload, as S3 reports it, in request order — the input to embed-vs-link routing. */
+interface ResolvedAttachment {
+  readonly uploadId: string;
   readonly filename: string;
   readonly contentType: string;
-  readonly contentBase64: string;
-  readonly bytes: Buffer;
   readonly sizeBytes: number;
+  /** Embedded in the MIME (true) or delivered as a download link (false). */
+  readonly embed: boolean;
 }
 
 export class EmailService {
@@ -88,6 +94,9 @@ export class EmailService {
   private readonly objectStore: OutboundObjectStore;
   private readonly bodies: MailBodyStore;
   private readonly tokensDao: DownloadTokensDao;
+  private readonly uploads: UploadStore;
+  private readonly embedMaxBytes: number;
+  private readonly embedTotalBytes: number;
   private readonly downloadBaseUrl: string;
   private readonly emailDomain: string;
   private readonly buildMime: (input: RawMimeInput) => Promise<Buffer>;
@@ -101,6 +110,9 @@ export class EmailService {
     this.objectStore = deps.objectStore;
     this.bodies = deps.bodies;
     this.tokensDao = deps.tokensDao;
+    this.uploads = deps.uploads;
+    this.embedMaxBytes = deps.embedMaxBytes ?? DEFAULT_EMBED_ATTACHMENT_BYTES;
+    this.embedTotalBytes = deps.embedTotalBytes ?? DEFAULT_EMBED_TOTAL_BYTES;
     this.downloadBaseUrl = deps.downloadBaseUrl;
     this.emailDomain = normalizeDomain(deps.emailDomain);
     this.buildMime = deps.buildMime ?? buildRawMime;
@@ -135,33 +147,38 @@ export class EmailService {
       throw emailErrors.invalidRequest('An email body (text or html) is required.');
     }
 
-    const processed = this.validateAttachments(request.attachments);
+    const attachments = await this.resolveAttachments(request.attachments);
 
-    // Allocate the id up front: it namespaces any large-attachment S3 keys and correlates
+    // Allocate the id up front: it namespaces the attachments' permanent keys and correlates
     // the token rows, and it must appear in the (best-effort) metadata row later.
     const id = this.generateId();
     const nowDate = this.now();
 
-    // Route each attachment: embed small ones in the MIME, upload large ones + mint a link.
-    // Remember where each large one landed (by request index) so its descriptor can point there.
-    const embed: RawMimeAttachment[] = [];
-    const large: ProcessedAttachment[] = [];
-    const largeIndexes: number[] = [];
-    processed.forEach((attachment, index) => {
-      if (attachment.sizeBytes > MAX_EMBED_ATTACHMENT_BYTES) {
-        large.push(attachment);
-        largeIndexes.push(index);
-      } else {
-        embed.push({
-          filename: attachment.filename,
-          contentType: attachment.contentType,
-          contentBase64: attachment.contentBase64,
-        });
+    // Copy every upload to its permanent key first — the one copy the reader, a download link,
+    // and the row's descriptor all point at. Write-before-send: a failure here throws (no send).
+    await mapBounded(attachments, S3_CONCURRENCY, async (attachment, index) => {
+      const copied = await this.uploads.copy(
+        uploadKey(attachment.uploadId),
+        sentAttachmentKey(id, index),
+      );
+      if (!copied) {
+        throw uploadNotFound(attachment.uploadId);
       }
     });
-    const uploaded = await this.uploadLargeAttachments(large, id, nowDate);
-    const links = uploaded.map((u) => u.link);
-    const linkedKeys = new Map(largeIndexes.map((index, i) => [index, uploaded[i].s3Key]));
+    // Embedded bytes come from the upload itself: an MCP role without the read tools can read
+    // its own uploads, but not the sent attachments.
+    const embed: RawMimeAttachment[] = await mapBounded(
+      attachments.filter((attachment) => attachment.embed),
+      S3_CONCURRENCY,
+      async (attachment) => ({
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        contentBase64: (await this.uploads.getBytes(uploadKey(attachment.uploadId))).toString(
+          'base64',
+        ),
+      }),
+    );
+    const links = await this.mintDownloadLinks(attachments, id, nowDate);
     const body = appendDownloadLinks(
       {
         ...(text !== undefined ? { text } : {}),
@@ -188,14 +205,12 @@ export class EmailService {
     const sentAt = nowDate.toISOString();
     const rawS3Key = sentRawKey(id);
 
-    // Write-before-send (#29), FAIL-CLOSED: archive the EXACT composed MIME, a downloadable
-    // copy of every embedded attachment, and the body (inline, or `bodies/sent/<id>.json`),
-    // then record the attempt as `status:'sending'` — all
-    // BEFORE SES. A failure in any throws (no send), so we never send a message we couldn't
-    // archive + record; the caller can retry with a fresh id. Orphan objects from a later
-    // failure are harmless (RETAINed).
+    // Write-before-send (#29), FAIL-CLOSED: with the attachments already copied (above),
+    // archive the EXACT composed MIME and the body (inline, or `bodies/sent/<id>.json`), then
+    // record the attempt as `status:'sending'` — all BEFORE SES. A failure in any throws (no
+    // send), so we never send a message we couldn't archive + record; the caller can retry with
+    // a fresh id. Orphan objects from a later failure are harmless (RETAINed).
     await this.objectStore.put(rawS3Key, raw);
-    const attachments = await this.storeAttachmentCopies(processed, linkedKeys, id);
     const record: CreateSentEmailInput = {
       id,
       from,
@@ -204,11 +219,17 @@ export class EmailService {
       bcc,
       subject: request.subject ?? '',
       sentAt,
-      attachmentCount: processed.length,
+      attachmentCount: attachments.length,
       sizeBytes: raw.length,
       status: 'sending',
       rawS3Key,
-      attachments,
+      attachments: attachments.map((attachment, index) => ({
+        id: String(index),
+        filename: attachment.filename,
+        contentType: attachment.contentType,
+        sizeBytes: attachment.sizeBytes,
+        s3Key: sentAttachmentKey(id, index),
+      })),
     };
     // The body exactly as sent (download links included), so opening it never re-parses the
     // archive — sized against the rest of the row, which the send path does not cap.
@@ -260,63 +281,32 @@ export class EmailService {
   }
 
   /**
-   * Describe every attachment for the row, in request order. Embedded ones exist only inside
-   * the MIME, so each gets its own copy at `attachments/sent/<id>/<index>` (a presignable object
-   * — re-extracting from the archive per download would mean a full MIME parse each time);
-   * linked ones already have an upload, so their descriptor reuses that key (no second copy).
+   * Mint a download token for each linked (not embedded) attachment and return the links to
+   * append to the body. A token points at the attachment's permanent copy, so the link works
+   * for the token's lifetime while the sender's own access (via the Sent folder) never expires.
+   * Token writes happen BEFORE the SES send (the links must be in the MIME); a later send
+   * failure leaves harmless orphans that expire with the token TTL.
    */
-  private async storeAttachmentCopies(
-    processed: ProcessedAttachment[],
-    linkedKeys: ReadonlyMap<number, string>,
-    emailId: string,
-  ): Promise<SentAttachmentDescriptor[]> {
-    const descriptors: SentAttachmentDescriptor[] = [];
-    for (let index = 0; index < processed.length; index += 1) {
-      const attachment = processed[index];
-      let s3Key = linkedKeys.get(index);
-      if (s3Key === undefined) {
-        s3Key = sentAttachmentKey(emailId, index);
-        await this.objectStore.put(s3Key, attachment.bytes);
-      }
-      descriptors.push({
-        id: String(index),
-        filename: attachment.filename,
-        contentType: attachment.contentType,
-        sizeBytes: attachment.sizeBytes,
-        s3Key,
-      });
-    }
-    return descriptors;
-  }
-
-  /**
-   * Upload each large attachment to S3, mint a download token per file, and return the
-   * links to inject into the body (with each upload's key, for the row's descriptor). Uploads/token writes happen BEFORE the SES send (the
-   * links must be in the MIME); a later send failure leaves harmless orphans that expire
-   * with the token TTL. `generateToken`/`now` are injected for deterministic tests.
-   */
-  private async uploadLargeAttachments(
-    large: ProcessedAttachment[],
+  private async mintDownloadLinks(
+    attachments: readonly ResolvedAttachment[],
     emailId: string,
     nowDate: Date,
-  ): Promise<{ link: DownloadLink; s3Key: string }[]> {
-    if (large.length === 0) {
-      return [];
-    }
+  ): Promise<DownloadLink[]> {
     const createdAt = nowDate.toISOString();
     const expiresMs = nowDate.getTime() + DOWNLOAD_TOKEN_TTL_SECONDS * 1000;
     const expiresAt = new Date(expiresMs).toISOString();
     const ttl = Math.floor(expiresMs / 1000);
 
-    const uploaded: { link: DownloadLink; s3Key: string }[] = [];
-    for (let index = 0; index < large.length; index += 1) {
-      const attachment = large[index];
+    const links: DownloadLink[] = [];
+    for (let index = 0; index < attachments.length; index += 1) {
+      const attachment = attachments[index];
+      if (attachment.embed) {
+        continue;
+      }
       const token = this.generateToken();
-      const s3Key = outboundAttachmentKey(emailId, index);
-      await this.objectStore.put(s3Key, attachment.bytes);
       await this.tokensDao.createDownloadToken({
         token,
-        s3Key,
+        s3Key: sentAttachmentKey(emailId, index),
         filename: attachment.filename,
         contentType: attachment.contentType,
         sizeBytes: attachment.sizeBytes,
@@ -327,16 +317,13 @@ export class EmailService {
         revoked: false,
         downloadCount: 0,
       });
-      uploaded.push({
-        link: {
-          filename: attachment.filename,
-          sizeBytes: attachment.sizeBytes,
-          url: downloadUrl(this.downloadBaseUrl, token),
-        },
-        s3Key,
+      links.push({
+        filename: attachment.filename,
+        sizeBytes: attachment.sizeBytes,
+        url: downloadUrl(this.downloadBaseUrl, token),
       });
     }
-    return uploaded;
+    return links;
   }
 
   /** Enforce "from any address under the configured domain" — an explicit 400, not a 500 from SES. */
@@ -357,58 +344,66 @@ export class EmailService {
     return address;
   }
 
-  private validateAttachments(attachments: SendEmailRequest['attachments']): ProcessedAttachment[] {
-    if (attachments === undefined || attachments.length === 0) {
+  /**
+   * Resolve each attachment reference to what was really uploaded (a HEAD — never the client's
+   * word) and decide embed vs link, first fit in request order: a file is embedded when it is at
+   * most `embedMaxBytes` and still fits the message's remaining `embedTotalBytes` — so a small
+   * file after a linked one can still be embedded.
+   */
+  private async resolveAttachments(
+    refs: SendEmailRequest['attachments'],
+  ): Promise<ResolvedAttachment[]> {
+    if (refs === undefined || refs.length === 0) {
       return [];
     }
-    if (attachments.length > MAX_ATTACHMENTS) {
+    if (!Array.isArray(refs) || refs.length > MAX_ATTACHMENTS) {
       throw emailErrors.invalidRequest(
         `A message may have at most ${MAX_ATTACHMENTS} attachments.`,
       );
     }
-    let totalBytes = 0;
-    const normalized: ProcessedAttachment[] = [];
-    for (const attachment of attachments) {
-      const filename = typeof attachment.filename === 'string' ? attachment.filename.trim() : '';
-      if (filename.length === 0) {
-        throw emailErrors.invalidRequest('Each attachment requires a "filename".');
-      }
-      const contentType =
-        typeof attachment.contentType === 'string' ? attachment.contentType.trim() : '';
-      if (contentType.length === 0) {
-        throw emailErrors.invalidRequest(`Attachment "${filename}" requires a "contentType".`);
-      }
-      const contentBase64 =
-        typeof attachment.contentBase64 === 'string'
-          ? attachment.contentBase64.replace(/\s+/g, '')
-          : '';
-      const decoded = Buffer.from(contentBase64, 'base64');
-      // Canonical base64 only: decode then re-encode must round-trip. This rejects
-      // non-alphabet characters, bad padding, and non-multiple-of-4 lengths that
-      // Buffer.from would otherwise silently drop (corrupting the attachment).
-      if (contentBase64.length === 0 || decoded.toString('base64') !== contentBase64) {
+    const uploadIds = refs.map((ref, index) => {
+      const uploadId = (ref as { uploadId?: unknown } | undefined)?.uploadId;
+      if (!isValidUploadId(uploadId)) {
         throw emailErrors.invalidRequest(
-          `Attachment "${filename}" must have valid base64 content.`,
+          `"attachments[${index}].uploadId" must be the id of an attachment upload.`,
         );
       }
-      totalBytes += decoded.length;
-      // The whole request (embedded + linked bytes) still arrives base64 in one JSON body,
-      // so the total cap is the binding limit regardless of how each attachment is routed.
-      if (totalBytes > MAX_ATTACHMENT_TOTAL_BYTES) {
-        throw emailErrors.invalidRequest(
-          `Total attachment size exceeds ${MAX_ATTACHMENT_TOTAL_BYTES} bytes.`,
-        );
+      return uploadId;
+    });
+    const uploads = await mapBounded(uploadIds, S3_CONCURRENCY, async (uploadId) => {
+      const uploaded = await this.uploads.head(uploadKey(uploadId));
+      if (uploaded === null) {
+        throw uploadNotFound(uploadId);
       }
-      normalized.push({
-        filename,
-        contentType,
-        contentBase64,
-        bytes: decoded,
-        sizeBytes: decoded.length,
-      });
+      if (uploaded.sizeBytes > MAX_UPLOAD_BYTES) {
+        throw emailErrors.invalidRequest(`Attachment "${uploaded.filename}" is too large.`);
+      }
+      return uploaded;
+    });
+    const resolved: ResolvedAttachment[] = [];
+    let embeddedBytes = 0;
+    for (let index = 0; index < uploads.length; index += 1) {
+      const uploaded = uploads[index] as UploadedObject;
+      const embed =
+        uploaded.sizeBytes <= this.embedMaxBytes &&
+        embeddedBytes + uploaded.sizeBytes <= this.embedTotalBytes;
+      if (embed) {
+        embeddedBytes += uploaded.sizeBytes;
+      }
+      resolved.push({ uploadId: uploadIds[index] as string, ...uploaded, embed });
     }
-    return normalized;
+    return resolved;
   }
+}
+
+/** How many uploads a send HEADs, copies, or reads at once. */
+const S3_CONCURRENCY = 5;
+
+/** An upload that isn't there: never uploaded, or swept since. The client can upload again. */
+function uploadNotFound(uploadId: string): Error {
+  return emailErrors.invalidRequest(
+    `Attachment upload "${uploadId}" was not found — it may never have been uploaded, or it expired. Upload it again.`,
+  );
 }
 
 /** Max chars of a `send_failed` reason kept on the row — bounds an unexpectedly verbose SES error. */
@@ -423,8 +418,9 @@ export function sentRawKey(id: string): string {
 }
 
 /**
- * S3 key for the downloadable copy of a sent message's embedded attachment, by its index in the
- * send request. Opaque (never the filename); mirrors the inbound `attachments/inbound/<id>/<part>`.
+ * S3 key for a sent message's attachment (embedded or linked), by its index in the send request:
+ * the permanent copy of its upload, behind both the sender's download and a recipient's link.
+ * Opaque (never the filename); mirrors the inbound `attachments/inbound/<id>/<part>`.
  */
 export function sentAttachmentKey(id: string, index: number): string {
   return `attachments/sent/${id}/${index}`;

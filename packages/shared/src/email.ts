@@ -3,21 +3,37 @@
  * `send_email` tool (#7, a thin wrapper over the same service), and the React app
  * (compose/send). One request shape carries the message; the service validates it.
  *
- * Small attachments are embedded in the MIME as base64 (SES SendRawEmail). The
- * binding size ceiling is API Gateway's 10 MB request-body limit — base64 inflates
- * bytes ~1.37×, so the decoded-attachment cap is kept well under that (anything
- * larger is the Phase-3 large-attachment token flow, #14). SES itself caps a
- * message at 40 MB.
+ * Attachment bytes never travel in the JSON request. The client first creates an upload
+ * (`POST /attachments/uploads`, or the MCP `create_attachment_upload` tool), PUTs the file
+ * straight to S3 with the presigned URL it gets back, and then references the upload by id.
+ * At send time small attachments are embedded in the MIME (SES SendRawEmail); the rest are
+ * delivered as `GET /d/{token}` download links.
  */
 
-/** An attachment embedded in the outgoing message. `contentBase64` is the raw bytes, base64-encoded. */
-export interface EmailAttachment {
+/** An attachment to send: a finished upload, referenced by the id its upload returned. */
+export interface EmailAttachmentRef {
+  readonly uploadId: string;
+}
+
+/** Ask for a presigned URL to upload one attachment straight to S3. */
+export interface CreateAttachmentUploadRequest {
   /** File name shown to the recipient. */
   readonly filename: string;
-  /** MIME content type, e.g. `application/pdf`. */
-  readonly contentType: string;
-  /** Attachment bytes, base64-encoded. */
-  readonly contentBase64: string;
+  /** MIME content type, e.g. `application/pdf`; `application/octet-stream` when omitted. */
+  readonly contentType?: string;
+  /** Exact size of the file in bytes — the upload must be exactly this long. */
+  readonly sizeBytes: number;
+}
+
+/** Where and how to PUT the file. The upload is usable in a send until it expires. */
+export interface CreateAttachmentUploadResponse {
+  /** Reference this in `SendEmailRequest.attachments` once the PUT has succeeded. */
+  readonly uploadId: string;
+  /** Presigned S3 URL: PUT the raw file bytes here (no auth header, no extra fields). */
+  readonly uploadUrl: string;
+  readonly uploadMethod: 'PUT';
+  /** When the presigned URL stops accepting the upload, ISO-8601. */
+  readonly expiresAt: string;
 }
 
 /**
@@ -39,7 +55,8 @@ export interface SendEmailRequest {
   readonly text?: string;
   /** HTML body. At least one of `text` / `html` is required. */
   readonly html?: string;
-  readonly attachments?: readonly EmailAttachment[];
+  /** Finished uploads to attach, in order. */
+  readonly attachments?: readonly EmailAttachmentRef[];
 }
 
 /** Result of a successful send. */
@@ -52,12 +69,11 @@ export interface SendEmailResponse {
   readonly sentAt: string;
 }
 
-/**
- * Max total size of all attachments (decoded bytes). Deliberately below API
- * Gateway's 10 MB request-body limit once base64-inflated (~1.37×) — a larger
- * payload can't reach the Lambda through the JSON path anyway.
- */
-export const MAX_ATTACHMENT_TOTAL_BYTES = 7 * 1024 * 1024;
+/** Max size of one uploaded attachment. Larger than any provider accepts embedded, so it is linked. */
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
+/** How long a presigned upload URL accepts the PUT. */
+export const UPLOAD_URL_TTL_SECONDS = 15 * 60;
 
 /** Max number of attachments on one message. */
 export const MAX_ATTACHMENTS = 20;
@@ -69,14 +85,16 @@ export const MAX_RECIPIENTS = 50;
 export const MAX_RAW_MESSAGE_BYTES = 40 * 1024 * 1024;
 
 /**
- * Embed-vs-link boundary for outbound attachments (#14). An attachment whose decoded
- * size is at most this many bytes is embedded in the MIME (SES serves it); anything
- * LARGER is uploaded to S3 and delivered as a `GET /d/{token}` download link, so the
- * recipient's provider isn't asked to accept a bloated message. Kept under
- * {@link MAX_ATTACHMENT_TOTAL_BYTES} — the whole request (link + embedded bytes) still
- * arrives base64 in one JSON body, so API Gateway's 10 MB limit remains the hard ceiling.
+ * Default embed-vs-link boundary for outbound attachments (#14), per file. An attachment at
+ * most this size is embedded in the MIME (SES serves it) — as long as the message's embedded
+ * total stays within {@link DEFAULT_EMBED_TOTAL_BYTES}; anything else is delivered as a
+ * `GET /d/{token}` download link, so the recipient's provider isn't asked to accept a bloated
+ * message. Both are deploy-configurable (`attachments` in the FreeMail config).
  */
-export const MAX_EMBED_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+export const DEFAULT_EMBED_ATTACHMENT_BYTES = 3 * 1024 * 1024;
+
+/** Default cap on the embedded attachments of one message (see {@link DEFAULT_EMBED_ATTACHMENT_BYTES}). */
+export const DEFAULT_EMBED_TOTAL_BYTES = 10 * 1024 * 1024;
 
 /**
  * How long an outbound large-attachment download link stays valid. Server-authoritative:

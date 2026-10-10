@@ -28,6 +28,14 @@ describe('per-Lambda configs are narrow', () => {
     });
   });
 
+  it('the MCP handler reads the optional embed limits as byte counts', () => {
+    expect(getMcpConfig(MCP_ENV).embedMaxBytes).toBeUndefined();
+    const config = getMcpConfig({ ...MCP_ENV, EMBED_MAX_BYTES: '1024', EMBED_TOTAL_BYTES: '4096' });
+    expect(config.embedMaxBytes).toBe(1024);
+    expect(config.embedTotalBytes).toBe(4096);
+    expect(() => getMcpConfig({ ...MCP_ENV, EMBED_TOTAL_BYTES: '0' })).toThrow(/EMBED_TOTAL_BYTES/);
+  });
+
   it('the authorizer needs only its two read-only tables', () => {
     expect(getAuthorizerConfig({ AUTH_TABLE: 'auth', API_KEYS_TABLE: 'keys' })).toEqual({
       authTable: 'auth',

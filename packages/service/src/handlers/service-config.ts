@@ -11,7 +11,7 @@
  * `authorizer-config.ts` — one rule for all four, rather than three plus an exception.
  */
 import { z } from 'zod';
-import { envString, parseEnv } from '../utils/env-config.js';
+import { envPositiveInt, envString, parseEnv } from '../utils/env-config.js';
 
 /** Validated, camel-cased view of the REST Lambda's environment. */
 export interface ServiceConfig {
@@ -33,6 +33,10 @@ export interface ServiceConfig {
   readonly downloadBaseUrl: string;
   /** SES configuration set for suppression + bounce/complaint tracking. Optional. */
   readonly sesConfigurationSet: string | undefined;
+  /** Embed an attachment at most this size (bytes); undefined → the default. */
+  readonly embedMaxBytes: number | undefined;
+  /** Cap on one message's embedded attachments (bytes); undefined → the default. */
+  readonly embedTotalBytes: number | undefined;
 }
 
 const ENV_SCHEMA = z.object({
@@ -45,6 +49,8 @@ const ENV_SCHEMA = z.object({
   EMAIL_DOMAIN: envString(),
   DOWNLOAD_BASE_URL: envString(),
   SES_CONFIGURATION_SET: envString().optional(),
+  EMBED_MAX_BYTES: envPositiveInt().optional(),
+  EMBED_TOTAL_BYTES: envPositiveInt().optional(),
 });
 
 let cached: ServiceConfig | undefined;
@@ -76,5 +82,7 @@ export function readServiceConfig(env: NodeJS.ProcessEnv = process.env): Service
     emailDomain: parsed.EMAIL_DOMAIN,
     downloadBaseUrl: parsed.DOWNLOAD_BASE_URL,
     sesConfigurationSet: parsed.SES_CONFIGURATION_SET,
+    embedMaxBytes: parsed.EMBED_MAX_BYTES,
+    embedTotalBytes: parsed.EMBED_TOTAL_BYTES,
   };
 }

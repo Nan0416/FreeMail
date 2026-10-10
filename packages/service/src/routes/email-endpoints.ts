@@ -12,12 +12,17 @@
  * presence, size caps — live in `EmailService`, and list defaulting/clamping lives in
  * `parseListEmailsQuery`, so REST and MCP can never drift apart.
  */
-import type { EmailAttachment, SendEmailRequest } from '@freemail/shared';
+import type {
+  CreateAttachmentUploadRequest,
+  EmailAttachmentRef,
+  SendEmailRequest,
+} from '@freemail/shared';
 import { Router } from 'express';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { emailErrors } from '../utils/errors.js';
 import { parseListEmailsQuery } from '../utils/list-query.js';
 import type { EmailReadService, ListEmailsServiceRequest } from '../services/email-read-service.js';
+import type { AttachmentUploadService } from '../services/attachment-upload-service.js';
 import type { EmailService } from '../services/email-service.js';
 import { requireAccessScheme } from '../middleware/auth-middleware.js';
 import { requireJsonContentType } from '../middleware/json-content-type.js';
@@ -35,8 +40,28 @@ const logger = getLogger('EmailEndpoints');
 export class EmailEndpoints implements Endpoints {
   private readonly router: Router;
 
-  constructor(emailService: EmailService, readService: EmailReadService) {
+  constructor(
+    emailService: EmailService,
+    readService: EmailReadService,
+    uploadService: AttachmentUploadService,
+  ) {
     this.router = Router();
+
+    // Step one of sending an attachment: a presigned PUT straight to S3 (the bytes never come
+    // through here). Dual-scheme like the send it serves: NO requireAccessScheme.
+    this.router.post(
+      '/attachments/uploads',
+      requireJsonContentType,
+      async (req: Request, res: Response, next: NextFunction) => {
+        try {
+          const request = parseCreateUploadBody(requireBody(req));
+          logger.info('POST /attachments/uploads.');
+          res.status(201).json(await uploadService.create(request));
+        } catch (err) {
+          next(err);
+        }
+      },
+    );
 
     // Dual-scheme by design: NO requireAccessScheme here.
     this.router.post(
@@ -180,7 +205,7 @@ function optionalStringArray(body: Record<string, unknown>, field: string): stri
   return value as string[];
 }
 
-function optionalAttachments(body: Record<string, unknown>): EmailAttachment[] | undefined {
+function optionalAttachments(body: Record<string, unknown>): EmailAttachmentRef[] | undefined {
   const value = body.attachments;
   if (value === undefined) {
     return undefined;
@@ -193,19 +218,29 @@ function optionalAttachments(body: Record<string, unknown>): EmailAttachment[] |
       throw emailErrors.invalidRequest(`"attachments[${index}]" must be an object.`);
     }
     const record = item as Record<string, unknown>;
-    if (
-      typeof record.filename !== 'string' ||
-      typeof record.contentType !== 'string' ||
-      typeof record.contentBase64 !== 'string'
-    ) {
+    if (typeof record.uploadId !== 'string') {
       throw emailErrors.invalidRequest(
-        `"attachments[${index}]" must have string filename, contentType, and contentBase64.`,
+        `"attachments[${index}]" must be { "uploadId": ... } — create an upload first.`,
       );
     }
-    return {
-      filename: record.filename,
-      contentType: record.contentType,
-      contentBase64: record.contentBase64,
-    };
+    return { uploadId: record.uploadId };
   });
+}
+
+/** `{ filename, contentType?, sizeBytes }` — shape only; the upload service validates values. */
+function parseCreateUploadBody(body: Record<string, unknown>): CreateAttachmentUploadRequest {
+  if (typeof body.filename !== 'string') {
+    throw emailErrors.invalidRequest('"filename" must be a string.');
+  }
+  if (body.contentType !== undefined && typeof body.contentType !== 'string') {
+    throw emailErrors.invalidRequest('"contentType" must be a string.');
+  }
+  if (typeof body.sizeBytes !== 'number') {
+    throw emailErrors.invalidRequest('"sizeBytes" must be a number.');
+  }
+  return {
+    filename: body.filename,
+    ...(body.contentType !== undefined ? { contentType: body.contentType } : {}),
+    sizeBytes: body.sizeBytes,
+  };
 }

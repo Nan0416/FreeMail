@@ -22,6 +22,7 @@ import {
 } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { Construct } from 'constructs';
+import type { AttachmentsConfig } from '@freemail/shared/config';
 import type { CustomDomainProps } from './web.js';
 
 const HANDLERS_DIR = join(
@@ -71,6 +72,26 @@ export interface ApiConstructProps {
    * request origin.
    */
   readonly appOrigin: string;
+  /** Deploy-configured attachment embed limits; absent → the service's defaults. */
+  readonly attachments?: AttachmentsConfig;
+}
+
+/**
+ * The send Lambdas' timeout: a send HEADs, copies, and (for small files) reads up to 20 uploads
+ * of up to 100 MB each before calling SES. Just under the HTTP API's 30 s integration cap.
+ */
+const SEND_TIMEOUT = Duration.seconds(29);
+
+/** The embed limits as the send Lambdas' environment (absent → the service's defaults). */
+function embedEnv(attachments: AttachmentsConfig | undefined): Record<string, string> {
+  return {
+    ...(attachments?.embedMaxBytes !== undefined
+      ? { EMBED_MAX_BYTES: String(attachments.embedMaxBytes) }
+      : {}),
+    ...(attachments?.embedTotalBytes !== undefined
+      ? { EMBED_TOTAL_BYTES: String(attachments.embedTotalBytes) }
+      : {}),
+  };
 }
 
 /**
@@ -139,6 +160,7 @@ export class ApiConstruct extends Construct {
 
     this.restHandler = this.nodeFunction('RestHandler', 'service-handler.ts', {
       description: 'FreeMail REST API (auth + app routes).',
+      timeout: SEND_TIMEOUT,
       memorySize: 1024, // more vCPU so the scrypt hash on login stays sub-second
       environment: {
         AUTH_TABLE: props.authTable.tableName,
@@ -149,6 +171,7 @@ export class ApiConstruct extends Construct {
         QUARANTINE_BUCKET: props.quarantineBucket.bucketName,
         EMAIL_DOMAIN: props.emailDomain,
         SES_CONFIGURATION_SET: props.sesConfigurationSetName,
+        ...embedEnv(props.attachments),
         // Public base for `/d/{token}` links — the API's own endpoint (no bucket exposure).
         DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
       },
@@ -164,17 +187,23 @@ export class ApiConstruct extends Construct {
     // inbound MIME only for a legacy row with no stored body — scoped to these prefixes only.
     props.mailBucket.grantRead(this.restHandler, 'inbound/*');
     props.mailBucket.grantRead(this.restHandler, 'attachments/inbound/*');
-    // Outbound large attachments: the send route writes them, GET /d/{token} presigns them.
-    props.mailBucket.grantReadWrite(this.restHandler, 'attachments/outbound/*');
+    // Legacy linked attachments (before direct uploads): GET /d/{token} and the attachment
+    // route still presign them. Nothing writes here any more.
+    props.mailBucket.grantRead(this.restHandler, 'attachments/outbound/*');
     // Sent raw MIME archive (#29): the send route writes it; the read routes presign it as the
     // .eml download and re-parse it only for a legacy row with no stored body.
     props.mailBucket.grantReadWrite(this.restHandler, 'sent/*');
-    // Sent embedded-attachment copies: the send route writes them; the attachment route
-    // presigns them (linked ones are presigned from attachments/outbound/*, granted above).
+    // Sent attachments (embedded or linked): the send route copies each upload here; the
+    // attachment route and GET /d/{token} presign them.
     props.mailBucket.grantReadWrite(this.restHandler, 'attachments/sent/*');
     // Stored bodies: the send route writes a large sent body; the read route loads any
     // stored body (inbound bodies are written by the parser).
     props.mailBucket.grantPut(this.restHandler, 'bodies/sent/*');
+    // Attachment uploads: presign the browser's PUT (the URL is signed with this role), then
+    // HEAD the finished upload, copy it to attachments/sent/* (granted above), and read a small
+    // one's bytes to embed at send.
+    props.mailBucket.grantPut(this.restHandler, 'uploads/*');
+    props.mailBucket.grantRead(this.restHandler, 'uploads/*');
     props.mailBucket.grantRead(this.restHandler, 'bodies/*');
     // Errors-folder originals: the raw route presigns their quarantined copies.
     props.quarantineBucket.grantRead(this.restHandler);
@@ -184,39 +213,48 @@ export class ApiConstruct extends Construct {
 
     // MCP server: its own handler, but reuses the same EmailService (send) and, when
     // inbound is enabled, the same EmailReadService (#13 read tools). It gets the
-    // emails-table write + SES send grants + (for large attachments) the download-tokens
-    // table + outbound prefix; the read grants are added ONLY when inbound is enabled.
+    // emails-table write + SES send grants + the upload and sent-attachment prefixes + (for
+    // linked attachments) the download-tokens table; the read grants are added ONLY when
+    // inbound is enabled.
     // It does NOT touch auth/keys tables or the signing key — auth is the authorizer's job.
     this.mcpHandler = this.nodeFunction('McpHandler', 'mcp.ts', {
       description: 'FreeMail MCP server (send_email + read tools).',
       memorySize: 512,
+      timeout: SEND_TIMEOUT,
       environment: {
         EMAILS_TABLE: props.emailsTable.tableName,
         DOWNLOAD_TOKENS_TABLE: props.downloadTokensTable.tableName,
         MAIL_BUCKET: props.mailBucket.bucketName,
         EMAIL_DOMAIN: props.emailDomain,
         SES_CONFIGURATION_SET: props.sesConfigurationSetName,
+        ...embedEnv(props.attachments),
         DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
         // Gates the read tools (#13); the handler treats only exactly 'true' as enabled.
         INBOUND_ENABLED: String(props.inboundEnabled),
       },
     });
     props.emailsTable.grantWriteData(this.mcpHandler);
-    // Send-only: mint tokens + upload the bytes; the MCP handler never serves downloads.
+    // Send-only: mint tokens for linked attachments; the MCP handler never serves downloads.
     props.downloadTokensTable.grantWriteData(this.mcpHandler);
-    props.mailBucket.grantWrite(this.mcpHandler, 'attachments/outbound/*');
     // Sent raw MIME archive (#29): send_email writes it. Write-only here — reading it back is
     // the get_email path, granted below only when inbound (and thus the read tools) is enabled.
     props.mailBucket.grantWrite(this.mcpHandler, 'sent/*');
-    // Sent embedded-attachment copies: send_email writes them (read granted below, like sent/*).
+    // Sent attachments: send_email copies each upload here. Write-only — the embed bytes are
+    // read from uploads/*; reading these back is a read tool, granted below like sent/*.
     props.mailBucket.grantWrite(this.mcpHandler, 'attachments/sent/*');
     // A large sent body: send_email writes it (read granted below, with the read tools).
     props.mailBucket.grantPut(this.mcpHandler, 'bodies/sent/*');
+    // Attachment uploads, as for REST: presign the agent's PUT, then HEAD, copy, and read a
+    // small one's bytes to embed at send. (`grantRead` also lists the bucket's key names — what
+    // makes a HEAD on a missing upload a 404 rather than a 403 — but reads no other object.)
+    props.mailBucket.grantPut(this.mcpHandler, 'uploads/*');
+    props.mailBucket.grantRead(this.mcpHandler, 'uploads/*');
     this.grantSesSend(this.mcpHandler, props.emailDomain, props.sesConfigurationSetName);
     // #13 read tools: read-only access scoped to exactly what EmailReadService touches —
     // the emails table (list/get), stored bodies, the inbound raw MIME + extracted-attachment
     // prefixes and the sent raw MIME archive (#29) (legacy body re-parse + presigns), and the
-    // sent attachments — embedded copies + linked large uploads — for get_email_attachment_url.
+    // sent attachments (plus legacy linked ones under attachments/outbound/*) for
+    // get_email_attachment_url.
     // Added only when inbound is enabled (fail-closed, gates get_email too).
     if (props.inboundEnabled) {
       props.emailsTable.grantReadData(this.mcpHandler);
@@ -268,6 +306,8 @@ export class ApiConstruct extends Construct {
     // Send email — dual-scheme (Bearer human OR x-api-key agent), so it's behind
     // the authorizer but the handler does NOT restrict it to the access scheme.
     this.addRestRoute('/emails', HttpMethod.POST, { authorized: true });
+    // Step one of an attachment: a presigned PUT straight to S3. Dual-scheme, like send.
+    this.addRestRoute('/attachments/uploads', HttpMethod.POST, { authorized: true });
 
     // Read the mailbox (access-token only — the handler enforces the scheme): list the
     // merged timeline, read one message, and mint a presigned download URL for an attachment
@@ -390,6 +430,7 @@ export class ApiConstruct extends Construct {
       description: string;
       environment: Record<string, string>;
       memorySize?: number;
+      timeout?: Duration;
     },
   ): NodejsFunction {
     return new NodejsFunction(this, id, {
@@ -397,7 +438,7 @@ export class ApiConstruct extends Construct {
       handler: 'handler',
       runtime: Runtime.NODEJS_22_X,
       architecture: Architecture.ARM_64,
-      timeout: Duration.seconds(10),
+      timeout: props.timeout ?? Duration.seconds(10),
       memorySize: props.memorySize ?? 256,
       description: props.description,
       environment: props.environment,

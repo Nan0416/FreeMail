@@ -238,11 +238,24 @@ SES receipt rule → writes raw MIME to the mail S3 bucket → a parser Lambda e
 
 ## 8. Attachments
 
-- **Small attachments (≤ 3 MB each)** are embedded directly in the outgoing MIME message.
-- **Larger attachments (> 3 MB)** are uploaded to S3 and replaced with a **token-download link** in the email body — `GET /d/{token}`, which validates the token and 302-redirects to a short-lived presigned S3 URL. Links are valid for **30 days**.
-- **Each send is capped at ~7 MB total.** The whole request (subject, body, and all attachment bytes) arrives base64-encoded in a single API Gateway request body, so the practical ceiling is ~7 MB decoded — well under API Gateway's 10 MB limit.
+Attachment bytes never travel through the API. Sending a file is two steps:
 
-**Not yet shipped:** sending **truly large files (> 10 MB)** needs a direct-to-S3 upload path that bypasses the API Gateway body limit — that's tracked as [#34](https://github.com/Nan0416/FreeMail/issues/34) and is **not** available today. A download-token **revoke** endpoint is [#35](https://github.com/Nan0416/FreeMail/issues/35). Don't assume a size ceiling beyond the ~7 MB per-send budget.
+1. **Create an upload** — `POST /attachments/uploads` with `{ "filename", "contentType", "sizeBytes" }` (the web app does this for you; agents use the MCP tool `create_attachment_upload`). The response carries an `uploadId` and a presigned `uploadUrl`.
+2. **PUT the file to `uploadUrl`** — straight to S3, with no credentials beyond the URL itself. The URL is valid for **15 minutes** and only for exactly the declared size. Then reference the file in the send: `"attachments": [{ "uploadId": "…" }]`.
+
+When the message is sent, each upload is copied to permanent storage and then:
+
+- **Small files are embedded** in the outgoing MIME — each file up to **3 MB**, and up to **10 MB embedded per message** in total. Files are considered in order; one that would push the embedded total past 10 MB is linked instead, and a smaller one after it can still be embedded.
+- **Larger files become a token-download link** in the email body — `GET /d/{token}`, which validates the token and 302-redirects to a short-lived presigned S3 URL. Recipients' links are valid for **30 days**. Your own copy in **Sent** never expires.
+- **Limits:** up to **20 attachments** per message, each up to **100 MB**. An upload that is never sent is deleted after a day.
+
+To change the embed thresholds, add an optional `attachments` block to `freemail-config.json` and redeploy (values in bytes; per-file ≤ 15 MB, per-message ≤ 20 MB, since SES caps a message at 40 MB after base64):
+
+```jsonc
+"attachments": { "embedMaxBytes": 3145728, "embedTotalBytes": 10485760 }
+```
+
+A download-token **revoke** endpoint is [#35](https://github.com/Nan0416/FreeMail/issues/35).
 
 ## 9. Connect an agent
 
@@ -265,7 +278,9 @@ Agents send email through the MCP server — no browser, no cookies:
 }
 ```
 
-The MCP server is stateless (Streamable HTTP), so no session setup is required. **`send_email`** is always available; when **inbound is enabled**, the read tools **`list_emails`**, **`get_email`**, and **`get_email_attachment_url`** are also registered, so agents can read received mail and mint short-lived presigned attachment download URLs. Received email is untrusted external content — the read tools return it marked as data (with a `trust` field and a delimited text frame), not as instructions to the agent. With inbound disabled, only `send_email` is offered.
+To attach a file, first call **`create_attachment_upload`** with `{ "filename", "contentType", "sizeBytes" }`, PUT the file's bytes to the returned `uploadUrl` (an ordinary HTTPS PUT, no API key needed), then pass `"attachments": [{ "uploadId": "<from the tool>" }]` to `send_email`. File bytes are never sent through MCP.
+
+The MCP server is stateless (Streamable HTTP), so no session setup is required. **`send_email`** and **`create_attachment_upload`** are always available; when **inbound is enabled**, the read tools **`list_emails`**, **`get_email`**, and **`get_email_attachment_url`** are also registered, so agents can read received mail and mint short-lived presigned attachment download URLs. Received email is untrusted external content — the read tools return it marked as data (with a `trust` field and a delimited text frame), not as instructions to the agent. With inbound disabled, only `send_email` and `create_attachment_upload` are offered.
 
 ## 10. Troubleshooting
 

@@ -46,6 +46,7 @@ export const JSON_REQUIRED_ROUTES: ReadonlySet<string> = new Set([
   'POST /auth/logout',
   'POST /keys',
   'POST /emails',
+  'POST /attachments/uploads',
 ]);
 
 export function requireJsonContentType(req: Request, _res: Response, next: NextFunction): void {

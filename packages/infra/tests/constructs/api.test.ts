@@ -142,15 +142,80 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('exposes 14 routes: 4 public (3 auth + download) + 10 protected (me + 3 keys + send + 4 reads + mcp)', () => {
+  it('exposes 15 routes: 4 public (3 auth + download) + 11 protected (me + 3 keys + send + upload + 4 reads + mcp)', () => {
     const template = synth();
     // 3 auth routes, not 4: #42 folded enrollment into login and dropped /auth/set-password.
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 14);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 15);
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const authorizationTypes = routes.map((r) => r.Properties.AuthorizationType);
     // The public GET /d/{token} download is unauthenticated (the token is the capability).
-    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(10);
+    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(11);
     expect(authorizationTypes.filter((t) => t !== 'CUSTOM')).toHaveLength(4);
+  });
+
+  it('registers POST /attachments/uploads behind the authorizer', () => {
+    const routes = Object.values(synth().findResources('AWS::ApiGatewayV2::Route'));
+    const upload = routes.find((r) => r.Properties.RouteKey === 'POST /attachments/uploads');
+    expect(upload?.Properties.AuthorizationType).toBe('CUSTOM');
+  });
+
+  it('lets both send paths presign, read, and copy uploads (uploads/*)', () => {
+    const template = synth();
+    for (const description of [REST_DESCRIPTION, MCP_DESCRIPTION]) {
+      expect(roleGrantsOnPrefix(template, description, 's3:PutObject', 'uploads/*')).toBe(true);
+      expect(roleGrantsOnPrefix(template, description, 's3:GetObject', 'uploads/*')).toBe(true);
+    }
+  });
+
+  it('writes nothing to the legacy attachments/outbound/* prefix — REST only presigns old links', () => {
+    const template = synth();
+    expect(
+      roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'attachments/outbound/*'),
+    ).toBe(true);
+    for (const description of [REST_DESCRIPTION, MCP_DESCRIPTION]) {
+      expect(
+        roleGrantsOnPrefix(template, description, 's3:PutObject', 'attachments/outbound/*'),
+      ).toBe(false);
+    }
+  });
+
+  it('gives both send paths 29 s (copying uploads), just under the HTTP API cap', () => {
+    const template = synth();
+    for (const description of [REST_DESCRIPTION, MCP_DESCRIPTION]) {
+      template.hasResourceProperties('AWS::Lambda::Function', {
+        Description: description,
+        Timeout: 29,
+      });
+    }
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Description: 'FreeMail Lambda authorizer (access tokens + API keys).',
+      Timeout: 10,
+    });
+  });
+
+  it('passes deploy-configured embed limits to both send paths, and nothing when unset', () => {
+    const configured = Template.fromStack(
+      new FreeMailStack(new App(), 'TestStack', {
+        config: { ...config, attachments: { embedMaxBytes: 1048576, embedTotalBytes: 5242880 } },
+      }),
+    );
+    for (const description of [REST_DESCRIPTION, MCP_DESCRIPTION]) {
+      configured.hasResourceProperties('AWS::Lambda::Function', {
+        Description: description,
+        Environment: {
+          Variables: Match.objectLike({ EMBED_MAX_BYTES: '1048576', EMBED_TOTAL_BYTES: '5242880' }),
+        },
+      });
+      synth().hasResourceProperties('AWS::Lambda::Function', {
+        Description: description,
+        Environment: {
+          Variables: Match.objectLike({
+            EMBED_MAX_BYTES: Match.absent(),
+            EMBED_TOTAL_BYTES: Match.absent(),
+          }),
+        },
+      });
+    }
   });
 
   it('registers GET /emails/{id}/raw behind the authorizer', () => {
@@ -237,15 +302,18 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('with inbound OFF, the MCP role is send-only — no email-table read, no mail-bucket read', () => {
+  it('with inbound OFF, the MCP role is send-only — no email-table read, no mail read', () => {
     // Inbound disabled → the read tools are never registered, so the MCP handler must not
-    // hold read grants: no s3:GetObject and no DynamoDB read actions. Its send-path write
-    // grants (outbound attachment PutObject, emails-table write) remain.
-    const actions = roleActions(synth(), MCP_DESCRIPTION);
+    // hold read grants: no DynamoDB read actions, and s3:GetObject only on its own pending
+    // uploads (read back at send). Its send-path write grants remain.
+    const template = synth();
+    const actions = roleActions(template, MCP_DESCRIPTION);
     expect(actions).toContain('s3:PutObject');
-    expect(actions.some((a) => a.startsWith('s3:GetObject'))).toBe(false);
     expect(actions).not.toContain('dynamodb:GetItem');
     expect(actions).not.toContain('dynamodb:Query');
+    for (const prefix of ['inbound/*', 'sent/*', 'bodies/*', 'attachments/sent/*']) {
+      expect(roleGrantsOnPrefix(template, MCP_DESCRIPTION, 's3:GetObject', prefix)).toBe(false);
+    }
   });
 
   it('with inbound ON, grants the MCP role read-only email + inbound-prefix access and sets INBOUND_ENABLED=true', () => {

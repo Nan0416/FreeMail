@@ -4,8 +4,8 @@ import StarterKit from '@tiptap/starter-kit';
 import { Placeholder } from '@tiptap/extensions';
 import {
   MAX_ATTACHMENTS,
-  MAX_ATTACHMENT_TOTAL_BYTES,
-  type EmailAttachment,
+  MAX_UPLOAD_BYTES,
+  type EmailAttachmentRef,
   type SendEmailRequest,
 } from '@freemail/shared';
 import { Maximize2, Minimize2, Minus, Paperclip, Trash2, Type, X } from 'lucide-react';
@@ -44,22 +44,16 @@ type WindowMode = 'normal' | 'minimized' | 'maximized';
 
 const AUTOSAVE_MS = 800;
 
-/** Read a File into a base64 string (no `data:` prefix), as the API's `contentBase64` expects. */
-function fileToAttachment(file: File): Promise<EmailAttachment> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Could not read "${file.name}".`));
-    reader.onload = () => {
-      const result = String(reader.result);
-      const comma = result.indexOf(',');
-      resolve({
-        filename: file.name,
-        contentType: file.type || 'application/octet-stream',
-        contentBase64: comma >= 0 ? result.slice(comma + 1) : result,
-      });
-    };
-    reader.readAsDataURL(file);
-  });
+/**
+ * Reuse a finished upload for this long when Send is pressed again (a rejected recipient, say).
+ * The server sweeps an unsent upload after a day at the earliest.
+ */
+const UPLOAD_REUSE_MS = 12 * 60 * 60 * 1000;
+
+/** A file already uploaded from this window: its upload id, and when it was uploaded. */
+interface FinishedUpload {
+  readonly uploadId: string;
+  readonly uploadedAt: number;
 }
 
 /**
@@ -84,9 +78,13 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   const [showToolbar, setShowToolbar] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** While attachments upload: "Uploading 2 of 3…" on the send button. */
+  const [progress, setProgress] = useState<string | null>(null);
   // The re-entrancy guard. `busy` drives the UI but only lands on the next render, so
   // a second ⌘↵ in the same tick would still see it false and send twice.
   const sending = useRef(false);
+  /** Files already uploaded from this window, so a retried send doesn't upload them again. */
+  const uploaded = useRef(new WeakMap<File, FinishedUpload>());
   const [savedAt, setSavedAt] = useState<Date | null>(props.init.draftId ? new Date() : null);
   const fileInput = useRef<HTMLInputElement>(null);
   const toInput = useRef<HTMLInputElement>(null);
@@ -212,11 +210,16 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
       setError(`At most ${MAX_ATTACHMENTS} attachments are allowed.`);
       return;
     }
-    const totalBytes = files.reduce((sum, file) => sum + file.size, 0);
-    if (totalBytes > MAX_ATTACHMENT_TOTAL_BYTES) {
+    const empty = files.find((file) => file.size === 0);
+    if (empty) {
+      setError(`"${empty.name}" is empty — remove it or attach another file.`);
+      return;
+    }
+    const tooLarge = files.find((file) => file.size > MAX_UPLOAD_BYTES);
+    if (tooLarge) {
       setError(
-        `Attachments total ${formatBytes(totalBytes)} — the limit is ` +
-          `${MAX_ATTACHMENT_TOTAL_BYTES / (1024 * 1024)} MB.`,
+        `"${tooLarge.name}" is ${formatBytes(tooLarge.size)} — the limit is ` +
+          `${MAX_UPLOAD_BYTES / (1024 * 1024)} MB per attachment.`,
       );
       return;
     }
@@ -224,7 +227,26 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     sending.current = true;
     setBusy(true);
     try {
-      const attachments = await Promise.all(files.map(fileToAttachment));
+      // Each file goes straight to S3 (a presigned PUT); the send references it by upload id.
+      const attachments: EmailAttachmentRef[] = [];
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        const previous = uploaded.current.get(file);
+        if (previous && Date.now() - previous.uploadedAt < UPLOAD_REUSE_MS) {
+          attachments.push({ uploadId: previous.uploadId });
+          continue;
+        }
+        setProgress(`Uploading ${index + 1} of ${files.length}…`);
+        const upload = await auth.client.createUpload({
+          filename: file.name,
+          contentType: file.type || 'application/octet-stream',
+          sizeBytes: file.size,
+        });
+        await auth.client.putUpload(upload.uploadUrl, file);
+        uploaded.current.set(file, { uploadId: upload.uploadId, uploadedAt: Date.now() });
+        attachments.push({ uploadId: upload.uploadId });
+      }
+      setProgress(null);
       const request: SendEmailRequest = {
         from: from.trim(),
         ...(fromName.trim() ? { fromName: fromName.trim() } : {}),
@@ -248,6 +270,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     } finally {
       sending.current = false;
       setBusy(false);
+      setProgress(null);
     }
   }
 
@@ -433,7 +456,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
 
         <footer className="flex shrink-0 items-center gap-1 border-t px-3 py-2">
           <Button size="sm" onClick={() => void send()} disabled={busy} className="px-4">
-            {busy ? 'Sending…' : 'Send'}
+            {busy ? (progress ?? 'Sending…') : 'Send'}
           </Button>
           <span className="ml-1 hidden text-[11px] text-muted-foreground sm:inline">⌘↵</span>
           <WindowButton

@@ -32,6 +32,7 @@ import { z } from 'zod';
 import { EmailError } from '../utils/errors.js';
 import { parseListEmailsQuery } from '../utils/list-query.js';
 import type { EmailReadService } from '../services/email-read-service.js';
+import type { AttachmentUploadService } from '../services/attachment-upload-service.js';
 import type { EmailService } from '../services/email-service.js';
 import { detailTrust, frameUntrusted, listTrust } from '../utils/untrusted-frame.js';
 
@@ -41,6 +42,8 @@ export const MCP_SERVER_VERSION = '0.1.0';
 /** Dependencies for {@link buildMcpServer}. Read tools register only when inbound is enabled. */
 export interface McpServerDeps {
   readonly emailService: EmailService;
+  /** Backs `create_attachment_upload` — registered whenever `send_email` is. */
+  readonly uploadService: AttachmentUploadService;
   /** Present + `inboundEnabled` → the read tools are registered over this service. */
   readonly readService?: EmailReadService | undefined;
   /** Gate: the read tools are advertised only when inbound is enabled. Fail-closed. */
@@ -74,13 +77,39 @@ const sendEmailInputSchema = {
   attachments: z
     .array(
       z.object({
-        filename: z.string().describe('File name shown to the recipient.'),
-        contentType: z.string().describe('MIME content type, e.g. application/pdf.'),
-        contentBase64: z.string().describe('Attachment bytes, base64-encoded.'),
+        uploadId: z
+          .string()
+          .describe('The uploadId from create_attachment_upload, after the PUT succeeded.'),
       }),
     )
     .optional()
-    .describe('Small attachments, embedded in the message.'),
+    .describe(
+      'Attachments, by upload. For each file: call create_attachment_upload, PUT the bytes to ' +
+        'its uploadUrl, then list its uploadId here. Small files are embedded in the message; ' +
+        'large ones are delivered as a download link.',
+    ),
+};
+
+const createUploadInputSchema = {
+  filename: z.string().describe('File name shown to the recipient.'),
+  contentType: z
+    .string()
+    .optional()
+    .describe('MIME content type, e.g. application/pdf (default application/octet-stream).'),
+  sizeBytes: z
+    .number()
+    .describe('Exact file size in bytes (at most 100 MB). The PUT must send exactly this many.'),
+};
+
+const createUploadOutputSchema = {
+  uploadId: z.string().describe('Pass as { uploadId } in send_email.attachments.'),
+  uploadUrl: z
+    .string()
+    .describe(
+      'Presigned S3 URL. HTTP PUT the raw file bytes here — no auth header, no extra fields.',
+    ),
+  uploadMethod: z.literal('PUT'),
+  expiresAt: z.string().describe('When the URL stops accepting the upload, ISO-8601.'),
 };
 
 const sendEmailOutputSchema = {
@@ -176,6 +205,38 @@ function toolErrorResult(error: unknown, genericMessage: string, logLabel: strin
   }
   console.error(logLabel, error);
   return { isError: true, content: [{ type: 'text', text: genericMessage }] };
+}
+
+/** `create_attachment_upload`: a presigned PUT for one attachment, over {@link AttachmentUploadService}. */
+export async function handleCreateUpload(
+  uploadService: AttachmentUploadService,
+  args: { filename: string; contentType?: string | undefined; sizeBytes: number },
+): Promise<CallToolResult> {
+  try {
+    const upload = await uploadService.create({
+      filename: args.filename,
+      ...(args.contentType !== undefined ? { contentType: args.contentType } : {}),
+      sizeBytes: args.sizeBytes,
+    });
+    return {
+      content: [
+        {
+          type: 'text',
+          text:
+            `Upload ${upload.uploadId} created. PUT exactly ${args.sizeBytes} bytes of the file ` +
+            `to uploadUrl (expires ${upload.expiresAt}), then pass { "uploadId": ` +
+            `"${upload.uploadId}" } in send_email.attachments.`,
+        },
+      ],
+      structuredContent: { ...upload },
+    };
+  } catch (error) {
+    return toolErrorResult(
+      error,
+      'Failed to create the upload due to an internal error.',
+      'create_attachment_upload tool: unexpected failure',
+    );
+  }
 }
 
 /**
@@ -367,7 +428,8 @@ function inboundDetailInner(email: EmailDetail): string {
 }
 
 /**
- * Build a fresh MCP server. `send_email` is always registered; the read tools
+ * Build a fresh MCP server. `send_email` and `create_attachment_upload` are always
+ * registered; the read tools
  * (`list_emails`, `get_email`, `get_email_attachment_url`) are registered ONLY when
  * inbound is enabled AND a read service is supplied (fail-closed) — so with inbound
  * off, they never appear in `tools/list`.
@@ -384,6 +446,19 @@ export function buildMcpServer(deps: McpServerDeps): McpServer {
       outputSchema: sendEmailOutputSchema,
     },
     (args) => handleSendEmail(deps.emailService, args),
+  );
+  server.registerTool(
+    'create_attachment_upload',
+    {
+      title: 'Create attachment upload',
+      description:
+        'Step one of attaching a file to send_email: returns a presigned S3 URL. HTTP PUT the ' +
+        'raw file bytes to uploadUrl (exactly sizeBytes, no auth header), then pass the ' +
+        'returned uploadId in send_email.attachments. File bytes never go in a tool argument.',
+      inputSchema: createUploadInputSchema,
+      outputSchema: createUploadOutputSchema,
+    },
+    (args) => handleCreateUpload(deps.uploadService, args),
   );
 
   if (deps.inboundEnabled && deps.readService) {

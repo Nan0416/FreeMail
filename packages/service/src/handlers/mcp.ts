@@ -53,6 +53,7 @@ function buildHandler(): ApiGatewayHandler {
   const deps = new McpDependencyFactory(getMcpConfig()).build();
   const serverDeps: McpServerDeps = {
     emailService: deps.emailService,
+    uploadService: deps.uploadService,
     inboundEnabled: deps.inboundEnabled,
     ...(deps.readService ? { readService: deps.readService } : {}),
   };

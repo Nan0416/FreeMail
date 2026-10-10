@@ -89,6 +89,136 @@ describe('ComposeWindow — sending', () => {
   });
 });
 
+describe('ComposeWindow — attachments', () => {
+  const S3_URL = 'https://mail-bucket.s3.us-east-1.amazonaws.com/uploads/U1?X-Amz-Signature=s';
+
+  function uploadingApi() {
+    return vi.fn<typeof fetch>(async (url) => {
+      if (String(url).startsWith('https://mail-bucket.s3.')) {
+        return new Response(null, { status: 200 });
+      }
+      if (pathOf(url) === '/me') {
+        return json(200, { subject: 'owner' });
+      }
+      if (pathOf(url) === '/attachments/uploads') {
+        return json(201, {
+          uploadId: 'U1',
+          uploadUrl: S3_URL,
+          uploadMethod: 'PUT',
+          expiresAt: '2026-10-10T00:15:00.000Z',
+        });
+      }
+      return json(200, { id: 'm1', messageId: 'ses-123', sentAt: '2026-07-17T00:00:00.000Z' });
+    });
+  }
+
+  function attach(file: File) {
+    fireEvent.change(screen.getByLabelText('Attach files', { selector: 'input' }), {
+      target: { files: [file] },
+    });
+  }
+
+  it('uploads each file straight to S3, then sends only its upload id', async () => {
+    const compose = renderCompose(
+      { from: 'me@x.com', to: 'a@y.com', html: '<p>see attached</p>' },
+      uploadingApi(),
+    );
+    const file = new File(['%PDF-1.7'], 'report.pdf', { type: 'application/pdf' });
+    attach(file);
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(compose.onClose).toHaveBeenCalled());
+    const [[, createInit]] = callsTo(compose.fetchImpl, '/attachments/uploads', 'POST');
+    expect(JSON.parse(String(createInit?.body))).toEqual({
+      filename: 'report.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: file.size,
+    });
+    const puts = compose.fetchImpl.mock.calls.filter(([url]) => url === S3_URL);
+    expect(puts).toHaveLength(1);
+    expect(puts[0][1]?.method).toBe('PUT');
+    expect(puts[0][1]?.body).toBe(file);
+    const [[, sendInit]] = callsTo(compose.fetchImpl, '/emails', 'POST');
+    expect(JSON.parse(String(sendInit?.body)).attachments).toEqual([{ uploadId: 'U1' }]);
+  });
+
+  it('refuses a file over 100 MB before uploading anything', async () => {
+    const compose = renderCompose(
+      { from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' },
+      uploadingApi(),
+    );
+    const huge = new File(['x'], 'huge.bin');
+    Object.defineProperty(huge, 'size', { value: 100 * 1024 * 1024 + 1 });
+    attach(huge);
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('limit is 100 MB per attachment');
+    expect(callsTo(compose.fetchImpl, '/attachments/uploads')).toHaveLength(0);
+    expect(callsTo(compose.fetchImpl, '/emails')).toHaveLength(0);
+  });
+
+  it('reuses a finished upload when Send is pressed again after a rejected send', async () => {
+    const fetchImpl = uploadingApi();
+    const base = fetchImpl.getMockImplementation();
+    let sends = 0;
+    fetchImpl.mockImplementation(async (url, init) => {
+      if (pathOf(url) === '/emails' && init?.method === 'POST') {
+        sends += 1;
+        if (sends === 1) {
+          return json(400, { error: 'invalid_request', message: 'Bad recipient.' });
+        }
+      }
+      return base!(url, init);
+    });
+    const compose = renderCompose({ from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' }, fetchImpl);
+    attach(new File(['%PDF'], 'report.pdf', { type: 'application/pdf' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Bad recipient.');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(compose.onClose).toHaveBeenCalled());
+    expect(callsTo(fetchImpl, '/attachments/uploads')).toHaveLength(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => url === S3_URL)).toHaveLength(1);
+    const sendBodies = callsTo(fetchImpl, '/emails', 'POST').map(([, init]) =>
+      JSON.parse(String(init?.body)),
+    );
+    expect(sendBodies.map((body) => body.attachments)).toEqual([
+      [{ uploadId: 'U1' }],
+      [{ uploadId: 'U1' }],
+    ]);
+  });
+
+  it('refuses an empty file before uploading anything', async () => {
+    const compose = renderCompose(
+      { from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' },
+      uploadingApi(),
+    );
+    attach(new File([], 'empty.txt', { type: 'text/plain' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('"empty.txt" is empty');
+    expect(callsTo(compose.fetchImpl, '/attachments/uploads')).toHaveLength(0);
+  });
+
+  it('keeps the window open when an upload fails', async () => {
+    const fetchImpl = uploadingApi();
+    const base = fetchImpl.getMockImplementation();
+    fetchImpl.mockImplementation(async (url, init) =>
+      String(url).startsWith('https://mail-bucket.s3.')
+        ? new Response(null, { status: 403 })
+        : base!(url, init),
+    );
+    const compose = renderCompose({ from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' }, fetchImpl);
+    attach(new File(['x'], 'a.txt', { type: 'text/plain' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be uploaded');
+    expect(callsTo(compose.fetchImpl, '/emails')).toHaveLength(0);
+    expect(compose.onClose).not.toHaveBeenCalled();
+  });
+});
+
 describe('ComposeWindow — send is not re-entrant', () => {
   it('sends once when ⌘↵ is pressed again while a send is in flight', async () => {
     let release: () => void = () => {};
