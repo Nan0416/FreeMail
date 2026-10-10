@@ -1,19 +1,20 @@
 /**
  * The read side of the mailbox: list the merged sent/inbound timeline, read one message,
- * and mint a presigned download URL for one attachment. Injectable (repo + presigner +
- * raw-MIME source + clock + parser) so every branch is testable without AWS, and so #13's
- * MCP read tools can reuse this exact service — the REST routes are thin adapters, mirroring
- * how #6's send route and #7's MCP tool share one {@link EmailService}.
+ * and mint a presigned download URL for one attachment. Injectable (repo + presigner + body
+ * store + raw-MIME source + clock + parser) so every branch is testable without AWS, and so
+ * #13's MCP read tools can reuse this exact service — the REST routes are thin adapters,
+ * mirroring how #6's send route and #7's MCP tool share one {@link EmailService}.
  *
- * Bodies: the DDB index stores only a snippet, so a message's full body is materialized on
- * demand by re-parsing its raw MIME through #10's `parseInbound` (with a no-op attachment
- * sink) — inheriting ALL of #10's untrusted-MIME hardening (node/body/size caps). For INBOUND
- * mail we only re-parse rows the stored verdicts already mark exposable (fail-closed via the
- * same `decideExposure` gate), so a quarantined message never re-parses and never yields a
- * body. For SENT mail (#29) the archived MIME is our OWN outgoing message (no spam/virus
- * verdict, always exposable), so the sent branch re-parses with `assumeExposed` and skips the
- * verdict gate; a legacy sent row lacking the archive stays envelope-only. HTML is returned
- * RAW as data — the client owns safe rendering (#12).
+ * Bodies: a message's decoded body is stored when it is ingested or sent — inline in the row,
+ * or in S3 for a large one — so opening it is a row read, never a raw-MIME parse. INBOUND mail
+ * is still gated on the stored verdicts (fail-closed via `decideExposure`): only an exposable
+ * message ever has a stored body, and a quarantined one yields none. HTML is returned RAW as
+ * data — the client owns safe rendering (#12).
+ *
+ * Legacy rows (written before bodies were stored) fall back to the old path: re-parse the raw
+ * MIME through #10's `parseInbound` (no-op attachment sink, same untrusted-MIME hardening),
+ * with `assumeExposed` for our own sent archive. Inbound raw MIME expires after
+ * {@link INBOUND_RAW_RETENTION_DAYS} days, after which such a row reads envelope-only.
  */
 import type { Readable } from 'node:stream';
 import {
@@ -35,7 +36,9 @@ import {
   type GetEmailOutput,
   type InboundAttachmentDescriptor,
 } from '../data/emails-dao.js';
+import { INBOUND_RAW_RETENTION_DAYS } from '@freemail/shared/storage';
 import type { AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
+import type { MailBodyContent, MailBodyStore } from '../facades/s3-mail-body-store.js';
 import {
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_TOTAL_BYTES,
@@ -60,8 +63,9 @@ import { contentDispositionForDownload } from '../utils/content-disposition.js';
 import { decodeEmailRef, encodeEmailRef } from '../utils/email-ref.js';
 import { emailErrors } from '../utils/errors.js';
 import { listEmailsPage } from '../utils/list-merge.js';
+import { loadEmailBody } from './email-body-storage.js';
 
-/** The raw-MIME source the reader re-parses bodies from — satisfied by the inbound S3 store. */
+/** The raw-MIME source legacy rows re-parse their bodies from — satisfied by the inbound S3 store. */
 export interface RawMimeSource {
   getStream(key: string): Promise<Readable>;
 }
@@ -77,6 +81,8 @@ export type ParseInbound = (
 export interface EmailReadServiceDeps {
   readonly emailsDao: EmailsDao;
   readonly presigner: AttachmentPresigner;
+  /** Reads bodies stored outside the row (`bodies/...`). */
+  readonly bodies: MailBodyStore;
   readonly rawMime: RawMimeSource;
   readonly now?: () => Date;
   readonly parse?: ParseInbound;
@@ -104,8 +110,13 @@ const READ_PARSE_LIMITS: ParseLimits = {
   maxTextBodyBytes: MAX_TEXT_BODY_BYTES,
   maxHtmlBodyBytes: MAX_HTML_BODY_BYTES,
   maxTotalBodyBytes: MAX_TOTAL_BODY_BYTES,
-  maxSnippetSourceBytes: MAX_READ_BODY_BYTES,
+  maxRetainedBodyChars: MAX_READ_BODY_BYTES,
 };
+
+/** S3's error name for a missing object — an expired raw message on the legacy path. */
+const NO_SUCH_KEY = 'NoSuchKey';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** A no-op attachment sink: the reader re-parses only for the body, never re-storing attachments. */
 const NOOP_SINK: AttachmentSink = {
@@ -146,6 +157,7 @@ export interface GetRawUrlServiceRequest {
 export class EmailReadService {
   private readonly emailsDao: EmailsDao;
   private readonly presigner: AttachmentPresigner;
+  private readonly bodies: MailBodyStore;
   private readonly rawMime: RawMimeSource;
   private readonly now: () => Date;
   private readonly parse: ParseInbound;
@@ -153,6 +165,7 @@ export class EmailReadService {
   constructor(deps: EmailReadServiceDeps) {
     this.emailsDao = deps.emailsDao;
     this.presigner = deps.presigner;
+    this.bodies = deps.bodies;
     this.rawMime = deps.rawMime;
     this.now = deps.now ?? (() => new Date());
     this.parse = deps.parse ?? parseInbound;
@@ -221,7 +234,7 @@ export class EmailReadService {
    */
   async getRawUrl(request: GetRawUrlServiceRequest): Promise<RawEmailDownloadResponse> {
     const row = await this.loadRow(request.handle);
-    const key = rawDownloadKey(row);
+    const key = rawDownloadKey(row, this.now());
     if (key === undefined) {
       throw emailErrors.notFound('The original message is not available.');
     }
@@ -247,57 +260,72 @@ export class EmailReadService {
     return row;
   }
 
-  /** Materialize a message's body from its raw MIME; `{}` when not exposable / no archive. */
+  /** The body to return for a message; `{}` when it is not exposable or has none. */
   private async materializeBody(
     row: GetEmailOutput,
     envelopeBytes: number,
   ): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
+    if (row.direction === 'inbound') {
+      // Gate on the STORED verdicts first — a non-exposable row never yields a body, whatever
+      // it carries (ingest stores none for one, so this is defense in depth).
+      const exposure = decideExposure(
+        { spamVerdict: row.spamVerdict, virusVerdict: row.virusVerdict },
+        row.parseStatus,
+      );
+      if (!exposure.exposeContent) {
+        return {};
+      }
+    }
+    if (row.body !== undefined) {
+      const content = await loadEmailBody(this.bodies, row.body);
+      return content === null ? {} : fitToResponse(content, envelopeBytes);
+    }
+    return this.legacyBody(row, envelopeBytes);
+  }
+
+  /**
+   * A row written before bodies were stored: re-parse its raw MIME, as the reader used to.
+   * Our own sent archive is permanent and always exposable (`assumeExposed`); a legacy sent
+   * row without one (pre-#29) stays envelope-only. Inbound raw MIME expires, so once it is
+   * gone the row reads envelope-only too.
+   */
+  private async legacyBody(
+    row: GetEmailOutput,
+    envelopeBytes: number,
+  ): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
     if (row.direction === 'sent') {
-      // Our own outgoing MIME — always exposable, so skip the inbound verdict gate. A legacy
-      // sent row (pre-#29) has no archive → envelope-only, exactly as before.
       if (!row.rawS3Key) {
         return {};
       }
       return this.parseBody(row.rawS3Key, envelopeBytes, { assumeExposed: true });
     }
-    // Inbound: gate on the STORED verdicts first — a non-exposable row is never re-parsed.
-    const exposure = decideExposure(
-      { spamVerdict: row.spamVerdict, virusVerdict: row.virusVerdict },
-      row.parseStatus,
-    );
-    if (!exposure.exposeContent) {
-      return {};
-    }
     return this.parseBody(row.rawS3Key, envelopeBytes, {});
   }
 
   /**
-   * Re-parse a raw MIME object into a body fitted to the response budget. Shared by the inbound
-   * (verdict-gated) and sent (`assumeExposed`) paths; `parsed.exposed` is the defense-in-depth
-   * fail-closed — a corrupt/parse-failed archive yields no body rather than throwing.
+   * Re-parse a raw MIME object into a body fitted to the response budget. `parsed.exposed` is
+   * the defense-in-depth fail-closed — a corrupt/parse-failed archive yields no body rather
+   * than throwing — and an expired (deleted) object yields none either.
    */
   private async parseBody(
     rawS3Key: string,
     envelopeBytes: number,
     options: ParseOptions,
   ): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
-    const stream = await this.rawMime.getStream(rawS3Key);
+    let stream: Readable;
+    try {
+      stream = await this.rawMime.getStream(rawS3Key);
+    } catch (err) {
+      if (err instanceof Error && err.name === NO_SUCH_KEY) {
+        return {};
+      }
+      throw err;
+    }
     const parsed = await this.parse(stream, NOOP_SINK, READ_PARSE_LIMITS, options);
     if (!parsed.exposed) {
       return {};
     }
-    // Bound the returned body in real UTF-8 bytes (the parser retains by char count) and
-    // hard-cap the JSON-escaped payload so a hostile body can't exceed the Lambda response
-    // budget — combined with the already-measured envelope. See fitBodyToBudget.
-    const fitted = fitBodyToBudget(parsed.textBody, parsed.htmlBody, {
-      partCapBytes: MAX_READ_BODY_BYTES,
-      serializedBudgetBytes: Math.max(0, MAX_EMAIL_RESPONSE_BYTES - envelopeBytes),
-    });
-    return {
-      ...(fitted.text !== undefined ? { text: fitted.text } : {}),
-      ...(fitted.html !== undefined ? { html: fitted.html } : {}),
-      ...(fitted.truncated ? { bodyTruncated: true } : {}),
-    };
+    return fitToResponse({ text: parsed.textBody, html: parsed.htmlBody }, envelopeBytes);
   }
 
   private toListItem(row: EmailSummary): EmailListItem {
@@ -351,7 +379,7 @@ export class EmailReadService {
         date: row.sentAt,
         ...(row.status !== undefined ? { status: row.status } : {}),
         ...body,
-        rawAvailable: rawDownloadKey(row) !== undefined,
+        rawAvailable: rawDownloadKey(row, this.now()) !== undefined,
         attachments: rowAttachments(row).map(publicDescriptor),
         hasAttachments: row.attachmentCount > 0,
         attachmentCount: row.attachmentCount,
@@ -369,7 +397,7 @@ export class EmailReadService {
       date: row.receivedAt,
       ...(row.headerDate !== undefined ? { headerDate: row.headerDate } : {}),
       ...body,
-      rawAvailable: rawDownloadKey(row) !== undefined,
+      rawAvailable: rawDownloadKey(row, this.now()) !== undefined,
       attachments: row.attachments.map(publicDescriptor),
       hasAttachments: row.hasAttachments,
       attachmentCount: row.attachmentCount,
@@ -393,11 +421,38 @@ function rowAttachments(row: GetEmailOutput): readonly InboundAttachmentDescript
  * the same gate as attachments, so a download never hands out bytes the scan flagged or skipped
  * (spam-flagged and parse-failed-but-clean mail stay downloadable: the original is the point).
  */
-function rawDownloadKey(row: GetEmailOutput): string | undefined {
+function rawDownloadKey(row: GetEmailOutput, now: Date): string | undefined {
   if (row.direction === 'sent') {
     return row.rawS3Key || undefined;
   }
-  return row.virusVerdict === 'PASS' ? row.rawS3Key : undefined;
+  if (row.virusVerdict !== 'PASS') {
+    return undefined;
+  }
+  // SES's raw inbound MIME is staging: it expires after the retention window (the mail
+  // bucket's lifecycle rule), so the original is offered only while it still exists.
+  const ageMs = now.getTime() - Date.parse(row.receivedAt);
+  return ageMs < INBOUND_RAW_RETENTION_DAYS * DAY_MS ? row.rawS3Key : undefined;
+}
+
+/**
+ * Bound a body in real UTF-8 bytes (the parser retains by char count) and hard-cap the
+ * JSON-escaped payload so a hostile body can't exceed the Lambda response budget — combined
+ * with the already-measured envelope. See fitBodyToBudget. A body cut at storage time stays
+ * flagged truncated.
+ */
+function fitToResponse(
+  content: MailBodyContent,
+  envelopeBytes: number,
+): { text?: string; html?: string; bodyTruncated?: boolean } {
+  const fitted = fitBodyToBudget(content.text, content.html, {
+    partCapBytes: MAX_READ_BODY_BYTES,
+    serializedBudgetBytes: Math.max(0, MAX_EMAIL_RESPONSE_BYTES - envelopeBytes),
+  });
+  return {
+    ...(fitted.text !== undefined ? { text: fitted.text } : {}),
+    ...(fitted.html !== undefined ? { html: fitted.html } : {}),
+    ...(fitted.truncated || content.truncated ? { bodyTruncated: true } : {}),
+  };
 }
 
 /** Characters that are unsafe in a filename on common filesystems — replaced, not dropped. */

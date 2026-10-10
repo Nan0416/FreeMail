@@ -1,11 +1,12 @@
 /**
  * Orchestrates one inbound message: validate the event key → HEAD (size gate +
- * trusted receipt time) → stream-parse (attachments to S3) → conditional-put the DDB
- * row as the final commit marker. Everything is behind injected ports (S3 object
- * store + emails repo) so the whole flow is testable with fakes and no AWS.
+ * trusted receipt time) → stream-parse (attachments to S3) → store the decoded body (inline
+ * or S3) → conditional-put the DDB row as the final commit marker. Everything is behind
+ * injected ports (S3 object store, body store, emails repo) so the whole flow is testable
+ * with fakes and no AWS.
  *
- * Ordering guarantees idempotency + no partial publish: attachments are written to
- * deterministic keys FIRST, then the row is conditionally put last. A redelivery
+ * Ordering guarantees idempotency + no partial publish: attachments and a large body are
+ * written to deterministic keys FIRST, then the row is conditionally put last. A redelivery
  * overwrites the same attachment objects and finds the row present (no-op). A handled
  * failure (bad key / oversize / malformed / over-limit) writes a bounded
  * quarantine/parse-status row with NO attachment descriptors — so any objects written
@@ -13,8 +14,14 @@
  * API serves) — and best-effort deletes them. Only an infra failure (S3/DDB) throws,
  * so the async invocation retries and eventually DLQs.
  */
-import type { EmailsDao, CreateInboundEmailInput, InboundVerdict } from '../data/emails-dao.js';
+import type {
+  EmailsDao,
+  CreateInboundEmailInput,
+  InboundVerdict,
+  StoredEmailBody,
+} from '../data/emails-dao.js';
 import type { InboundObjectStore } from '../facades/s3-inbound-object-store.js';
+import type { MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { validateInboundEventKey } from '../utils/event-key.js';
 import { MAX_RAW_MESSAGE_BYTES } from '../utils/inbound-limits.js';
 import { parseInbound, type AttachmentSink, type ParsedInbound } from '../utils/inbound-parse.js';
@@ -24,7 +31,8 @@ import {
   snippetFromHtml,
   snippetFromText,
 } from '../utils/sanitize.js';
-import { decideExposure } from '../utils/verdicts.js';
+import { decideExposure, type Exposure } from '../utils/verdicts.js';
+import { bodyKey, storeEmailBody } from './email-body-storage.js';
 
 /** Extracted attachments live OUTSIDE the `inbound/` trigger prefix so writes never re-invoke the parser. */
 export const ATTACHMENTS_PREFIX = 'attachments/inbound/';
@@ -51,6 +59,7 @@ export class InboundProcessor {
   constructor(
     private readonly store: InboundObjectStore,
     private readonly emails: EmailsDao,
+    private readonly bodies: MailBodyStore,
   ) {}
 
   /** Process the object identified by a raw (still-encoded) S3 event key. */
@@ -101,7 +110,18 @@ export class InboundProcessor {
       // written this attempt is unreachable — best-effort delete it anyway.
       await this.cleanup(writtenKeys);
     }
-    return this.commit(this.record(base, parsed), key.messageId);
+    const exposure = decideExposure(parsed.verdicts, parsed.parseStatus);
+    // Store the body only when content is exposable, exactly like the snippet and attachments:
+    // a quarantined (virus / parse-failed) message keeps nothing readable.
+    const body = exposure.exposeContent
+      ? await storeEmailBody(
+          this.bodies,
+          bodyKey('inbound', key.messageId),
+          parsed.textBody,
+          parsed.htmlBody,
+        )
+      : undefined;
+    return this.commit(this.record(base, parsed, exposure, body), key.messageId);
   }
 
   /** Conditional-put the row (the commit marker) and map the outcome. */
@@ -148,8 +168,12 @@ export class InboundProcessor {
     };
   }
 
-  private record(base: RecordBase, parsed: ParsedInbound): CreateInboundEmailInput {
-    const exposure = decideExposure(parsed.verdicts, parsed.parseStatus);
+  private record(
+    base: RecordBase,
+    parsed: ParsedInbound,
+    exposure: Exposure,
+    body: StoredEmailBody | undefined,
+  ): CreateInboundEmailInput {
     const snippet = exposure.exposeContent ? this.snippet(parsed) : undefined;
     return {
       id: base.messageId,
@@ -171,6 +195,7 @@ export class InboundProcessor {
       quarantined: exposure.quarantined,
       rawS3Key: base.rawS3Key,
       sizeBytes: base.sizeBytes,
+      body,
     };
   }
 

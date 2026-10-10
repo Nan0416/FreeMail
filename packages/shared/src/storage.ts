@@ -47,3 +47,13 @@ export const EMAIL_LIST_INDEX_ATTRIBUTES = [
 
 /** One attribute projected into the list index. */
 export type EmailListIndexAttribute = (typeof EMAIL_LIST_INDEX_ATTRIBUTES)[number];
+
+/**
+ * How long SES's raw inbound MIME (`inbound/<id>`) is kept. Ingest extracts everything the
+ * reader needs (body, attachments), so the raw object is only staging plus the source of the
+ * "Download original" `.eml` — which is therefore offered only for mail younger than this.
+ * The mail bucket's lifecycle rule expires the prefix after the same number of days; S3 never
+ * deletes an object before then (it rounds up to the next midnight UTC and may lag), so a
+ * download offered inside the window always finds its object.
+ */
+export const INBOUND_RAW_RETENTION_DAYS = 14;

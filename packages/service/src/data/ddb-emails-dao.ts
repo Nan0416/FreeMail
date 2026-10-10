@@ -123,6 +123,7 @@ export class DdbEmailsDao implements EmailsDao {
           rawS3Key: input.rawS3Key,
           error: input.error,
           attachments: input.attachments,
+          body: input.body,
         },
         ConditionExpression: 'attribute_not_exists(pk)',
       }),
@@ -189,6 +190,7 @@ export class DdbEmailsDao implements EmailsDao {
             quarantined: input.quarantined,
             rawS3Key: input.rawS3Key,
             sizeBytes: input.sizeBytes,
+            body: input.body,
           },
           // The idempotency guard: a redelivered event finds the row present and no-ops.
           ConditionExpression: 'attribute_not_exists(pk)',

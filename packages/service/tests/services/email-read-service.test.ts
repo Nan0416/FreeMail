@@ -18,6 +18,7 @@ import type {
   AttachmentPresigner,
   PresignRequest,
 } from '../../src/facades/s3-attachment-presigner.js';
+import type { MailBodyContent, MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
 import type { ParsedInbound } from '../../src/utils/inbound-parse.js';
 import { EmailError } from '../../src/utils/errors.js';
 import { encodeEmailRef } from '../../src/utils/email-ref.js';
@@ -140,9 +141,29 @@ class FakePresigner implements AttachmentPresigner {
 class FakeRawMime implements RawMimeSource {
   readonly streams = new Map<string, string>();
   readonly getStreamCalls: string[] = [];
+  /** Keys whose object is gone (expired by the lifecycle rule) — S3 answers NoSuchKey. */
+  readonly missing = new Set<string>();
   getStream(key: string): Promise<Readable> {
     this.getStreamCalls.push(key);
+    if (this.missing.has(key)) {
+      const err = new Error('The specified key does not exist.');
+      err.name = 'NoSuchKey';
+      return Promise.reject(err);
+    }
     return Promise.resolve(Readable.from(this.streams.get(key) ?? ''));
+  }
+}
+
+class FakeBodyStore implements MailBodyStore {
+  readonly bodies = new Map<string, MailBodyContent>();
+  readonly getCalls: string[] = [];
+  putBody(key: string, body: MailBodyContent): Promise<void> {
+    this.bodies.set(key, body);
+    return Promise.resolve();
+  }
+  getBody(key: string): Promise<MailBodyContent | null> {
+    this.getCalls.push(key);
+    return Promise.resolve(this.bodies.get(key) ?? null);
   }
 }
 
@@ -176,10 +197,12 @@ function service(
   presigner: FakePresigner,
   rawMime: FakeRawMime,
   parse?: ParseInbound,
+  bodies: FakeBodyStore = new FakeBodyStore(),
 ): EmailReadService {
   return new EmailReadService({
     emailsDao: repo,
     presigner,
+    bodies,
     rawMime,
     now: NOW,
     ...(parse ? { parse } : {}),
@@ -225,9 +248,9 @@ describe('EmailReadService.getEmail', () => {
     expect(rawMime.getStreamCalls).toEqual(['sent/s1']);
     expect(parser.calls).toHaveLength(1);
     expect(parser.calls[0].options).toEqual({ assumeExposed: true });
-    expect(
-      (parser.calls[0].limits as { maxSnippetSourceBytes: number }).maxSnippetSourceBytes,
-    ).toBe(MAX_READ_BODY_BYTES);
+    expect((parser.calls[0].limits as { maxRetainedBodyChars: number }).maxRetainedBodyChars).toBe(
+      MAX_READ_BODY_BYTES,
+    );
   });
 
   it('sent row with recorded attachments → lists them WITHOUT the S3 key', async () => {
@@ -321,9 +344,9 @@ describe('EmailReadService.getEmail', () => {
     expect(rawMime.getStreamCalls).toEqual(['inbound/i1']);
     // Re-parse uses the no-op sink and the read limits (full body retention).
     expect(parser.calls).toHaveLength(1);
-    expect(
-      (parser.calls[0].limits as { maxSnippetSourceBytes: number }).maxSnippetSourceBytes,
-    ).toBe(MAX_READ_BODY_BYTES);
+    expect((parser.calls[0].limits as { maxRetainedBodyChars: number }).maxRetainedBodyChars).toBe(
+      MAX_READ_BODY_BYTES,
+    );
     // The S3 key is stripped from the public descriptor.
     expect(detail.attachments).toEqual([
       { id: '0', filename: 'r.pdf', contentType: 'application/pdf', sizeBytes: 9 },
@@ -537,6 +560,170 @@ describe('EmailReadService.getAttachmentUrl', () => {
     expect(presigner.last?.key).toBe('attachments/outbound/s1/0');
     expect(presigner.last?.contentType).toBe('application/octet-stream');
     expect(presigner.last?.contentDisposition).toMatch(/^attachment; filename="big\.zip"/);
+  });
+});
+
+describe('EmailReadService.getEmail — stored bodies', () => {
+  it('returns an inline stored body without touching the raw MIME', async () => {
+    const repo = new FakeDao();
+    const rawMime = new FakeRawMime();
+    const parser = fakeParse({});
+    const handle = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({ body: { kind: 'inline', text: 'Stored text', html: '<p>Stored</p>' } }),
+    );
+
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
+      handle,
+    });
+
+    expect(detail.text).toBe('Stored text');
+    expect(detail.html).toBe('<p>Stored</p>');
+    expect(detail.bodyTruncated).toBeUndefined();
+    expect(rawMime.getStreamCalls).toEqual([]);
+    expect(parser.calls).toEqual([]);
+  });
+
+  it('loads a body stored in S3, still without parsing', async () => {
+    const repo = new FakeDao();
+    const rawMime = new FakeRawMime();
+    const parser = fakeParse({});
+    const bodies = new FakeBodyStore();
+    bodies.bodies.set('bodies/inbound/i1.json', { html: '<p>Big</p>' });
+    const handle = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({ body: { kind: 's3', s3Key: 'bodies/inbound/i1.json' } }),
+    );
+
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn, bodies).getEmail({
+      handle,
+    });
+
+    expect(detail.html).toBe('<p>Big</p>');
+    expect(bodies.getCalls).toEqual(['bodies/inbound/i1.json']);
+    expect(rawMime.getStreamCalls).toEqual([]);
+    expect(parser.calls).toEqual([]);
+  });
+
+  it('reads envelope-only when a stored S3 body is missing (no throw)', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({ body: { kind: 's3', s3Key: 'bodies/inbound/gone.json' } }),
+    );
+
+    const detail = await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle });
+
+    expect(detail.text).toBeUndefined();
+    expect(detail.html).toBeUndefined();
+  });
+
+  it('keeps a body cut at storage time flagged truncated', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({ body: { kind: 'inline', text: 'cut', truncated: true } }),
+    );
+
+    const detail = await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle });
+
+    expect(detail.text).toBe('cut');
+    expect(detail.bodyTruncated).toBe(true);
+  });
+
+  it('never returns a stored body for a non-exposable inbound row (defense in depth)', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({
+        virusVerdict: 'FAIL',
+        quarantined: true,
+        body: { kind: 'inline', text: 'should never show' },
+      }),
+    );
+
+    const detail = await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle });
+
+    expect(detail.text).toBeUndefined();
+  });
+
+  it('returns the stored body of a sent row instead of re-parsing its archive', async () => {
+    const repo = new FakeDao();
+    const rawMime = new FakeRawMime();
+    const parser = fakeParse({});
+    const handle = repo.put(
+      SENT_PARTITION,
+      sentRow({
+        rawS3Key: 'sent/s1',
+        status: 'sent',
+        body: { kind: 'inline', text: 'As sent' },
+      } as Partial<GetEmailOutput>),
+    );
+
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
+      handle,
+    });
+
+    expect(detail.text).toBe('As sent');
+    expect(parser.calls).toEqual([]);
+  });
+
+  it('legacy inbound row whose raw MIME has expired → envelope-only, no throw', async () => {
+    const repo = new FakeDao();
+    const rawMime = new FakeRawMime();
+    rawMime.missing.add('inbound/i1');
+    const handle = repo.put(INBOUND_PARTITION, inboundRow());
+
+    const detail = await service(repo, new FakePresigner(), rawMime).getEmail({ handle });
+
+    expect(rawMime.getStreamCalls).toEqual(['inbound/i1']);
+    expect(detail.subject).toBe('Inbound hi');
+    expect(detail.text).toBeUndefined();
+    expect(detail.html).toBeUndefined();
+  });
+});
+
+describe('EmailReadService — original (.eml) retention window', () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  function receivedDaysAgo(days: number): string {
+    return new Date(NOW().getTime() - days * DAY).toISOString();
+  }
+
+  it('offers the original of clean inbound mail inside the 14-day window', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({ receivedAt: new Date(NOW().getTime() - 14 * DAY + 60_000).toISOString() }),
+    );
+    const read = service(repo, new FakePresigner(), new FakeRawMime());
+
+    expect((await read.getEmail({ handle })).rawAvailable).toBe(true);
+    await expect(read.getRawUrl({ handle })).resolves.toHaveProperty('url');
+  });
+
+  it('stops offering it once the raw MIME has aged out (lifecycle-expired)', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ receivedAt: receivedDaysAgo(14) }));
+    const read = service(repo, new FakePresigner(), new FakeRawMime());
+
+    expect((await read.getEmail({ handle })).rawAvailable).toBe(false);
+    await expect(read.getRawUrl({ handle })).rejects.toBeInstanceOf(EmailError);
+  });
+
+  it('keeps offering the sent archive however old (it never expires)', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(
+      SENT_PARTITION,
+      sentRow({
+        rawS3Key: 'sent/s1',
+        sentAt: receivedDaysAgo(400),
+      } as Partial<GetEmailOutput>),
+    );
+
+    expect(
+      (await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle }))
+        .rawAvailable,
+    ).toBe(true);
   });
 });
 

@@ -18,7 +18,26 @@ export const INBOUND_PARTITION = 'INBOUND';
 /** The two (and only) valid partitions — used to validate a decoded message handle. */
 export const EMAIL_PARTITIONS: ReadonlySet<string> = new Set([SENT_PARTITION, INBOUND_PARTITION]);
 
-/** Metadata for one sent message — headers + SES id + status; the body lives in S3 (`rawS3Key`). */
+/**
+ * A message's decoded body, stored once when the message is ingested or sent so opening it
+ * never re-parses raw MIME. Small bodies live inline in the row; larger ones in S3. Never
+ * projected into the list index — only `getEmail` reads it.
+ */
+export type StoredEmailBody =
+  | {
+      readonly kind: 'inline';
+      readonly text?: string;
+      readonly html?: string;
+      /** True when a part was cut to the per-part cap at storage time. */
+      readonly truncated?: boolean;
+    }
+  | {
+      readonly kind: 's3';
+      /** Server-side pointer to the `{ text?, html?, truncated? }` JSON object (`bodies/...`). */
+      readonly s3Key: string;
+    };
+
+/** Metadata for one sent message — headers + SES id + status + its stored body. */
 export interface CreateSentEmailInput {
   /** FreeMail's own id for the message. */
   readonly id: string;
@@ -43,8 +62,8 @@ export interface CreateSentEmailInput {
    */
   readonly status?: SentStatus;
   /**
-   * S3 pointer to the archived composed raw MIME (`sent/<id>`) — the source the read path
-   * re-parses on demand for the sent body. Absent on a legacy row (→ envelope-only detail).
+   * S3 pointer to the archived composed raw MIME (`sent/<id>`) — permanent; backs the `.eml`
+   * download (and the body of a legacy row stored before `body`). Absent on a pre-#29 row.
    */
   readonly rawS3Key?: string;
   /** Short failure reason on a `send_failed` row — server-side only, never surfaced in the read DTO. */
@@ -56,6 +75,8 @@ export interface CreateSentEmailInput {
    * (the read path treats that as none).
    */
   readonly attachments?: readonly SentAttachmentDescriptor[];
+  /** The body as sent (download links included). Absent on a row written before bodies were stored. */
+  readonly body?: StoredEmailBody;
 }
 
 /** Nothing to report: the conditional put either landed or threw. */
@@ -145,10 +166,18 @@ export interface CreateInboundEmailInput {
   readonly parseStatus: InboundParseStatus;
   /** Hidden-by-default: content suppressed (not virus-`PASS`/parse-failed) OR spam-flagged. */
   readonly quarantined: boolean;
-  /** S3 pointer to the raw MIME kept as the forensic source of truth (`inbound/<id>`). */
+  /**
+   * S3 pointer to SES's raw MIME (`inbound/<id>`). Staging only: it expires after
+   * `INBOUND_RAW_RETENTION_DAYS`, so it backs the `.eml` download only while it exists.
+   */
   readonly rawS3Key: string;
   /** Raw MIME size in bytes (from S3 `HeadObject`). */
   readonly sizeBytes: number;
+  /**
+   * The decoded body — present ONLY when content is exposable (parsed + virus `PASS`), like
+   * the snippet. Absent on a row written before bodies were stored.
+   */
+  readonly body?: StoredEmailBody;
 }
 
 export interface CreateInboundEmailOutput {

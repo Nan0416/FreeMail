@@ -96,6 +96,26 @@ function record(overrides: Partial<CreateSentEmailInput> = {}): CreateSentEmailI
 }
 
 describe('DdbEmailsDao', () => {
+  it('persists the stored body on both sent and inbound rows', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.createSentEmail(record({ body: { kind: 'inline', text: 'Hi', html: '<p>Hi</p>' } }));
+    await dao.createInboundEmail(
+      inboundRecord({ body: { kind: 's3', s3Key: 'bodies/inbound/ses-in-1.json' } }),
+    );
+
+    expect((doc.commands[0] as PutCommand).input.Item?.body).toEqual({
+      kind: 'inline',
+      text: 'Hi',
+      html: '<p>Hi</p>',
+    });
+    expect((doc.commands[1] as PutCommand).input.Item?.body).toEqual({
+      kind: 's3',
+      s3Key: 'bodies/inbound/ses-in-1.json',
+    });
+  });
+
   it('writes the sending row under the SENT partition with archive key, keyed newest-first', async () => {
     const doc = new FakeDoc();
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');

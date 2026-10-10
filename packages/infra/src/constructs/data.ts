@@ -1,5 +1,9 @@
-import { EMAIL_LIST_INDEX_ATTRIBUTES, EMAIL_LIST_INDEX_NAME } from '@freemail/shared/storage';
-import { RemovalPolicy } from 'aws-cdk-lib';
+import {
+  EMAIL_LIST_INDEX_ATTRIBUTES,
+  EMAIL_LIST_INDEX_NAME,
+  INBOUND_RAW_RETENTION_DAYS,
+} from '@freemail/shared/storage';
+import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { AttributeType, BillingMode, ProjectionType, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
@@ -24,7 +28,7 @@ export class DataConstruct extends Construct {
   readonly emailsTable: Table;
   /** Large-attachment download tokens (TTL on `ttl`). */
   readonly downloadTokensTable: Table;
-  /** Inbound raw MIME, parsed attachments, and outbound large attachments. */
+  /** Inbound raw MIME (expiring), stored bodies, parsed attachments, sent MIME + attachments. */
   readonly mailBucket: Bucket;
 
   constructor(scope: Construct, id: string) {
@@ -69,6 +73,15 @@ export class DataConstruct extends Construct {
     });
 
     this.mailBucket = this.privateBucket('MailBucket');
+    // SES's raw inbound MIME is staging: ingest extracts the body and attachments, so the raw
+    // object only backs the short-lived "Download original". Scoped to `inbound/` ONLY —
+    // stored bodies, attachments, and the sent archive are permanent, and sent-mail
+    // attachment downloads point at `attachments/outbound/*`.
+    this.mailBucket.addLifecycleRule({
+      id: 'ExpireInboundRawMime',
+      prefix: 'inbound/',
+      expiration: Duration.days(INBOUND_RAW_RETENTION_DAYS),
+    });
   }
 
   private privateBucket(id: string): Bucket {

@@ -31,6 +31,7 @@ import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
 import type { EmailsDao } from '../data/emails-dao.js';
 import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import type { ApiKeysDao } from '../data/api-keys-dao.js';
+import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { S3AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import { DownloadService } from '../services/download-service.js';
@@ -72,6 +73,7 @@ export class DependencyFactory {
     const presigner = new S3AttachmentPresigner(s3, this.config.mailBucket);
     const inboundStore = new S3InboundObjectStore(s3, this.config.mailBucket);
     const outboundStore = new S3OutboundObjectStore(s3, this.config.mailBucket);
+    const bodyStore = new S3MailBodyStore(s3, this.config.mailBucket);
 
     const sesSender = new SesV2Sender({
       client: new SESv2Client({}),
@@ -94,6 +96,7 @@ export class DependencyFactory {
         ses: sesSender,
         emailsDao,
         objectStore: outboundStore,
+        bodies: bodyStore,
         tokensDao: downloadTokensDao,
         downloadBaseUrl: this.config.downloadBaseUrl,
         emailDomain: this.config.emailDomain,
@@ -101,6 +104,7 @@ export class DependencyFactory {
       emailReadService: new EmailReadService({
         emailsDao,
         presigner,
+        bodies: bodyStore,
         rawMime: inboundStore,
       }),
       downloadService: new DownloadService({ tokensDao: downloadTokensDao, presigner }),

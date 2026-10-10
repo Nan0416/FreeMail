@@ -17,7 +17,9 @@ import type {
   UpdateSentEmailStatusInput,
   UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
+import type { MailBodyContent, MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
 import type { OutboundObjectStore } from '../../src/facades/s3-outbound-object-store.js';
+import { MAX_INLINE_BODY_BYTES } from '../../src/services/email-body-storage.js';
 import { EmailError } from '../../src/utils/errors.js';
 import type { RawMimeInput } from '../../src/utils/mime.js';
 import { EmailService, type EmailServiceDeps } from '../../src/services/email-service.js';
@@ -123,11 +125,23 @@ function base64OfBlocks(blocks: number): string {
   return 'AAAA'.repeat(blocks);
 }
 
+class FakeBodyStore implements MailBodyStore {
+  readonly puts = new Map<string, MailBodyContent>();
+  putBody(key: string, body: MailBodyContent): Promise<void> {
+    this.puts.set(key, body);
+    return Promise.resolve();
+  }
+  getBody(key: string): Promise<MailBodyContent | null> {
+    return Promise.resolve(this.puts.get(key) ?? null);
+  }
+}
+
 function makeService(overrides: Partial<EmailServiceDeps> = {}): {
   service: EmailService;
   ses: FakeSes;
   emails: FakeEmails;
   objectStore: FakeObjectStore;
+  bodies: FakeBodyStore;
   tokens: FakeDownloadTokens;
   mimeInputs: RawMimeInput[];
 } {
@@ -139,12 +153,14 @@ function makeService(overrides: Partial<EmailServiceDeps> = {}): {
       : new FakeObjectStore();
   const tokens =
     overrides.tokens instanceof FakeDownloadTokens ? overrides.tokens : new FakeDownloadTokens();
+  const bodies = overrides.bodies instanceof FakeBodyStore ? overrides.bodies : new FakeBodyStore();
   const mimeInputs: RawMimeInput[] = [];
   let tokenSeq = 0;
   const service = new EmailService({
     ses,
     emailsDao: emails,
     objectStore,
+    bodies,
     tokensDao: tokens,
     downloadBaseUrl: DOWNLOAD_BASE_URL,
     emailDomain: 'example.com',
@@ -157,7 +173,7 @@ function makeService(overrides: Partial<EmailServiceDeps> = {}): {
     generateToken: () => `tok-${tokenSeq++}`,
     ...overrides,
   });
-  return { service, ses, emails, objectStore, tokens, mimeInputs };
+  return { service, ses, emails, objectStore, bodies, tokens, mimeInputs };
 }
 
 function request(overrides: Partial<SendEmailRequest> = {}): SendEmailRequest {
@@ -394,6 +410,63 @@ describe('EmailService.send', () => {
         s3Key: 'attachments/sent/id-1/1',
       },
     ]);
+  });
+});
+
+describe('EmailService.send — stored body', () => {
+  it('stores a small body inline on the sent row', async () => {
+    const setup = makeService();
+
+    await setup.service.send(request({ text: 'Hello inline', html: '<p>Hello inline</p>' }));
+
+    expect(setup.emails.records[0]?.body).toEqual({
+      kind: 'inline',
+      text: 'Hello inline',
+      html: '<p>Hello inline</p>',
+    });
+    expect(setup.bodies.puts.size).toBe(0);
+  });
+
+  it('stores a large body in S3 before writing the row, and points the row at it', async () => {
+    const setup = makeService();
+    const createSent = setup.emails.createSentEmail.bind(setup.emails);
+    let bodyStoredBeforeRow = false;
+    setup.emails.createSentEmail = (record) => {
+      bodyStoredBeforeRow = setup.bodies.puts.has('bodies/sent/id-1.json');
+      return createSent(record);
+    };
+    const big = 'y'.repeat(MAX_INLINE_BODY_BYTES + 1);
+
+    await setup.service.send(request({ text: big }));
+
+    expect(bodyStoredBeforeRow).toBe(true);
+    expect(setup.emails.records[0]?.body).toEqual({
+      kind: 's3',
+      s3Key: 'bodies/sent/id-1.json',
+    });
+    expect(setup.bodies.puts.get('bodies/sent/id-1.json')?.text).toBe(big);
+  });
+
+  it('stores the body exactly as sent — download links included', async () => {
+    const setup = makeService();
+
+    await setup.service.send(
+      request({
+        text: 'See attached.',
+        attachments: [
+          {
+            filename: 'big.bin',
+            contentType: 'application/octet-stream',
+            // 3.6 MB decoded: over the embed limit, so it becomes a download link.
+            contentBase64: 'AAAA'.repeat(1_200_000),
+          },
+        ],
+      }),
+    );
+
+    const body = setup.emails.records[0]?.body;
+    expect(body?.kind).toBe('inline');
+    expect(body?.kind === 'inline' ? body.text : '').toContain('https://api.example.test/d/tok-0');
   });
 });
 

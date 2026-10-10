@@ -157,18 +157,22 @@ export class ApiConstruct extends Construct {
     props.emailsTable.grantReadWriteData(this.restHandler);
     // Large-attachment tokens: send mints them, GET /d/{token} claims (conditional update).
     props.downloadTokensTable.grantReadWriteData(this.restHandler);
-    // The read routes re-parse raw inbound MIME (for bodies) and presign attachment
-    // downloads — scoped to the inbound raw + extracted-attachment prefixes only.
+    // The read routes presign the original (.eml) and attachment downloads, and re-parse raw
+    // inbound MIME only for a legacy row with no stored body — scoped to these prefixes only.
     props.mailBucket.grantRead(this.restHandler, 'inbound/*');
     props.mailBucket.grantRead(this.restHandler, 'attachments/inbound/*');
     // Outbound large attachments: the send route writes them, GET /d/{token} presigns them.
     props.mailBucket.grantReadWrite(this.restHandler, 'attachments/outbound/*');
-    // Sent raw MIME archive (#29): the send route writes it; the always-available
-    // GET /emails/{id} re-parses it for the sent body.
+    // Sent raw MIME archive (#29): the send route writes it; the read routes presign it as the
+    // .eml download and re-parse it only for a legacy row with no stored body.
     props.mailBucket.grantReadWrite(this.restHandler, 'sent/*');
     // Sent embedded-attachment copies: the send route writes them; the attachment route
     // presigns them (linked ones are presigned from attachments/outbound/*, granted above).
     props.mailBucket.grantReadWrite(this.restHandler, 'attachments/sent/*');
+    // Stored bodies: the send route writes a large sent body; the read route loads any
+    // stored body (inbound bodies are written by the parser).
+    props.mailBucket.grantWrite(this.restHandler, 'bodies/sent/*');
+    props.mailBucket.grantRead(this.restHandler, 'bodies/*');
 
     // The REST `/emails` route sends.
     this.grantSesSend(this.restHandler, props.emailDomain, props.sesConfigurationSetName);
@@ -201,12 +205,14 @@ export class ApiConstruct extends Construct {
     props.mailBucket.grantWrite(this.mcpHandler, 'sent/*');
     // Sent embedded-attachment copies: send_email writes them (read granted below, like sent/*).
     props.mailBucket.grantWrite(this.mcpHandler, 'attachments/sent/*');
+    // A large sent body: send_email writes it (read granted below, with the read tools).
+    props.mailBucket.grantWrite(this.mcpHandler, 'bodies/sent/*');
     this.grantSesSend(this.mcpHandler, props.emailDomain, props.sesConfigurationSetName);
     // #13 read tools: read-only access scoped to exactly what EmailReadService touches —
-    // the emails table (list/get), the inbound raw MIME + extracted-attachment prefixes
-    // (body re-parse + attachment presign), the sent raw MIME archive (#29, sent body
-    // re-parse), and the sent attachments — embedded copies + linked large uploads — for
-    // get_email_attachment_url. Added only when inbound is enabled (fail-closed, gates get_email too).
+    // the emails table (list/get), stored bodies, the inbound raw MIME + extracted-attachment
+    // prefixes and the sent raw MIME archive (#29) (legacy body re-parse + presigns), and the
+    // sent attachments — embedded copies + linked large uploads — for get_email_attachment_url.
+    // Added only when inbound is enabled (fail-closed, gates get_email too).
     if (props.inboundEnabled) {
       props.emailsTable.grantReadData(this.mcpHandler);
       props.mailBucket.grantRead(this.mcpHandler, 'inbound/*');
@@ -214,6 +220,7 @@ export class ApiConstruct extends Construct {
       props.mailBucket.grantRead(this.mcpHandler, 'sent/*');
       props.mailBucket.grantRead(this.mcpHandler, 'attachments/sent/*');
       props.mailBucket.grantRead(this.mcpHandler, 'attachments/outbound/*');
+      props.mailBucket.grantRead(this.mcpHandler, 'bodies/*');
     }
 
     this.authorizerHandler = this.nodeFunction('AuthorizerHandler', 'authorizer.ts', {

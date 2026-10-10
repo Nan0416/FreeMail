@@ -255,9 +255,10 @@ export const MAX_EMAIL_PAGE_SIZE = 100;
 export const ATTACHMENT_URL_TTL_SECONDS = 60;
 
 /**
- * Per-body-part raw UTF-8 byte cap for the reader. Received bodies are materialized from
- * raw MIME on demand; each part (text / html) is truncated to this many bytes. A larger
- * body is truncated (`bodyTruncated: true`); the raw message is always retained in S3.
+ * Per-body-part raw UTF-8 byte cap for the reader. A message's body is stored when it is
+ * received or sent, with each part (text / html) truncated to this many bytes; a larger body
+ * is flagged `bodyTruncated: true`, and its full original stays downloadable as `.eml` (sent
+ * mail always; received mail while its raw message is still retained).
  */
 export const MAX_READ_BODY_BYTES = 1024 * 1024;
 
