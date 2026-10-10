@@ -13,7 +13,7 @@ import type { ComposeInit } from './ComposeWindow.js';
 import { DraftList } from './DraftList.js';
 import { EmailReader } from './EmailReader.js';
 import { Kbd } from './Kbd.js';
-import { KeysView } from './KeysView.js';
+import { McpServerView } from './McpServerView.js';
 import { MessageList } from './MessageList.js';
 import { Sidebar, type FolderId } from './Sidebar.js';
 
@@ -68,7 +68,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
  * The authenticated app: folders | message list | reading pane, plus a docked compose
  * window. Below `lg` the sidebar becomes a sheet; below `md` the list and the reader
  * share one column and the reader shows with a back button. Views unmount on navigation
- * (not merely hide), so leaving API keys drops any revealed secret.
+ * (not merely hide), so leaving the MCP server page drops any revealed key.
  */
 export function AppShell(props: AppShellProps): React.JSX.Element {
   const auth = useAuth();
@@ -264,9 +264,12 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
         </SheetContent>
       </Sheet>
 
-      {folder === 'keys' ? (
+      {folder === 'mcp' ? (
         <main className="min-w-0 flex-1">
-          <KeysView onOpenNav={() => setNavOpen(true)} />
+          <McpServerView
+            onOpenNav={() => setNavOpen(true)}
+            inboundEnabled={props.inboundEnabled ?? false}
+          />
         </main>
       ) : (
         <>

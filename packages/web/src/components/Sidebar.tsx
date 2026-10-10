@@ -1,11 +1,11 @@
 import {
   FileText,
   Inbox,
-  KeyRound,
   Layers,
   LogOut,
   Mail,
   PenSquare,
+  Plug,
   Send,
   ShieldAlert,
 } from 'lucide-react';
@@ -22,7 +22,7 @@ import {
 import { Kbd } from './Kbd.js';
 import { cn } from '@/lib/utils';
 
-export type FolderId = 'inbox' | 'all' | 'sent' | 'drafts' | 'errors' | 'keys';
+export type FolderId = 'inbox' | 'all' | 'sent' | 'drafts' | 'errors' | 'mcp';
 
 interface NavItem {
   readonly id: FolderId;
@@ -88,8 +88,8 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         </p>
         <ul>
           <NavRow
-            item={{ id: 'keys', label: 'API keys', icon: KeyRound }}
-            active={props.folder === 'keys'}
+            item={{ id: 'mcp', label: 'MCP server', icon: Plug }}
+            active={props.folder === 'mcp'}
             onSelect={props.onSelectFolder}
           />
         </ul>
@@ -118,9 +118,9 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
               Signed in as {props.subject}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => props.onSelectFolder('keys')}>
-              <KeyRound />
-              API keys
+            <DropdownMenuItem onSelect={() => props.onSelectFolder('mcp')}>
+              <Plug />
+              MCP server
             </DropdownMenuItem>
             <DropdownMenuItem disabled={props.signingOut} onSelect={props.onSignOut}>
               <LogOut />

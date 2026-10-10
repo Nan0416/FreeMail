@@ -259,9 +259,10 @@ describe('ApiConstruct', () => {
           API_KEYS_TABLE: Match.anyValue(),
           // The read routes need the mail bucket (raw MIME re-parse + attachment presign).
           MAIL_BUCKET: Match.anyValue(),
-          // Large-attachment (#14): token store + the public base for /d/{token} links.
+          // Large-attachment (#14): token store + the public base for /d/{token} links —
+          // the API's own domain, never the generated execute-api URL.
           DOWNLOAD_TOKENS_TABLE: Match.anyValue(),
-          DOWNLOAD_BASE_URL: Match.anyValue(),
+          DOWNLOAD_BASE_URL: 'https://api.example.com',
         }),
       },
     });
@@ -291,7 +292,7 @@ describe('ApiConstruct', () => {
           // Large-attachment (#14) send needs the mail bucket (upload) + token store + link base.
           MAIL_BUCKET: Match.anyValue(),
           DOWNLOAD_TOKENS_TABLE: Match.anyValue(),
-          DOWNLOAD_BASE_URL: Match.anyValue(),
+          DOWNLOAD_BASE_URL: 'https://api.example.com',
           // #13 read-tool gate — off in this config (inbound disabled).
           INBOUND_ENABLED: 'false',
           // Authentication is the shared authorizer's job — the MCP handler needs none of these.

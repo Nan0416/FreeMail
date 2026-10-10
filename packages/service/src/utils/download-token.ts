@@ -36,7 +36,7 @@ export function isValidDownloadToken(token: string): boolean {
 
 /**
  * Build the public download link for a token. `baseUrl` is the API's own public base
- * (e.g. `https://abc.execute-api.us-east-1.amazonaws.com`); a trailing slash is tolerated.
+ * (e.g. `https://api.example.com`); a trailing slash is tolerated.
  * The token is base64url, so no path encoding is needed.
  */
 export function downloadUrl(baseUrl: string, token: string): string {

@@ -202,6 +202,7 @@ describe('FreeMailStack', () => {
     const restEnv = envOf('FreeMail REST API (auth + app routes).');
     // Links are recognized exactly as they are built.
     expect(parserEnv.DOWNLOAD_BASE_URL).toEqual(restEnv.DOWNLOAD_BASE_URL);
+    expect(restEnv.DOWNLOAD_BASE_URL).toBe('https://api.example.com');
     expect(JSON.stringify(parserEnv.DOWNLOAD_TOKENS_TABLE)).toContain('DataDownloadTokensTable');
 
     // Every grant the parser holds on the tokens table is a plain read — never a claim

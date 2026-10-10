@@ -10,7 +10,7 @@ export interface KeyRevealPanelProps {
 }
 
 /**
- * One-time reveal of a freshly created API key. The raw key is only ever the
+ * One-time reveal of a freshly created access key. The raw key is only ever the
  * `apiKey` prop (transient parent state); this component neither persists nor logs
  * it. Copy puts it on the OS clipboard — we say so plainly and make no attempt to
  * auto-clear the clipboard (a false sense of security; the OS owns it).
@@ -31,13 +31,13 @@ export function KeyRevealPanel(props: KeyRevealPanelProps): React.JSX.Element {
   return (
     <div
       role="alertdialog"
-      aria-label="New API key"
+      aria-label="New access key"
       className="rounded-md border border-warning/30 bg-warning-surface p-4"
     >
       <div className="flex items-start gap-2.5">
         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
         <div className="min-w-0 flex-1">
-          <h3 className="text-[13px] font-semibold">Copy your new API key now</h3>
+          <h3 className="text-[13px] font-semibold">Copy your new access key now</h3>
           <p className="mt-0.5 text-[13px] text-muted-foreground">
             This is the only time it will be shown. If you lose it, revoke it and create a new one.
           </p>

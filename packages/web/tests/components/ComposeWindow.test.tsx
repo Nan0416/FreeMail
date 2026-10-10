@@ -1,5 +1,6 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { UploadTransport } from '../../src/api/client.js';
 import { ComposeWindow, type ComposeInit } from '../../src/components/ComposeWindow.js';
 import { resetDraftsCache } from '../../src/lib/drafts.js';
 import { callsTo, json, pathOf, renderWithApp } from '../helpers.js';
@@ -199,6 +200,152 @@ describe('ComposeWindow — attachments', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('"empty.txt" is empty');
     expect(callsTo(compose.fetchImpl, '/attachments/uploads')).toHaveLength(0);
+  });
+
+  /** The API, minting one upload per file — its id is the filename. */
+  function perFileUploadsApi() {
+    return vi.fn<typeof fetch>(async (url, init) => {
+      if (pathOf(url) === '/me') {
+        return json(200, { subject: 'owner' });
+      }
+      if (pathOf(url) === '/attachments/uploads') {
+        const filename = JSON.parse(String(init?.body)).filename as string;
+        return json(201, {
+          uploadId: filename,
+          uploadUrl: `https://mail-bucket.s3.us-east-1.amazonaws.com/uploads/${filename}`,
+          uploadMethod: 'PUT',
+          expiresAt: '2026-10-10T00:15:00.000Z',
+        });
+      }
+      return json(200, { id: 'm1', messageId: 'ses-123', sentAt: '2026-07-17T00:00:00.000Z' });
+    });
+  }
+
+  /** An S3 stand-in whose PUTs stay open until the test finishes them. */
+  function heldUploads() {
+    const open = new Map<string, { report: (bytes: number) => void; finish: () => void }>();
+    const uploadImpl: UploadTransport = (url, _file, _type, onProgress) =>
+      new Promise((resolve) => {
+        open.set(new URL(url).pathname.split('/').pop() ?? '', {
+          report: onProgress,
+          finish: () => resolve(200),
+        });
+      });
+    return { open, uploadImpl };
+  }
+
+  function renderWithUploads(fetchImpl: typeof fetch, uploadImpl: UploadTransport) {
+    const onClose = vi.fn();
+    renderWithApp(
+      <ComposeWindow
+        init={{ from: 'me@x.com', to: 'a@y.com', html: '<p>files</p>' }}
+        onClose={onClose}
+      />,
+      fetchImpl,
+      uploadImpl,
+    );
+    return onClose;
+  }
+
+  it('uploads up to four files at once and sends them in the order they were attached', async () => {
+    const fetchImpl = perFileUploadsApi();
+    const s3 = heldUploads();
+    const onClose = renderWithUploads(fetchImpl, s3.uploadImpl);
+    const names = ['a.txt', 'b.txt', 'c.txt', 'd.txt', 'e.txt'];
+    fireEvent.change(screen.getByLabelText('Attach files', { selector: 'input' }), {
+      target: { files: names.map((name) => new File(['data'], name, { type: 'text/plain' })) },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect([...s3.open.keys()]).toEqual(names.slice(0, 4)));
+    // Finishing one frees a slot for the fifth; the rest finish out of order.
+    await act(async () => s3.open.get('c.txt')?.finish());
+    await waitFor(() => expect(s3.open.has('e.txt')).toBe(true));
+    for (const name of ['e.txt', 'd.txt', 'b.txt', 'a.txt']) {
+      await act(async () => s3.open.get(name)?.finish());
+    }
+
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    const [[, sendInit]] = callsTo(fetchImpl, '/emails', 'POST');
+    expect(JSON.parse(String(sendInit?.body)).attachments).toEqual(
+      names.map((name) => ({ uploadId: name })),
+    );
+  });
+
+  it("shows each file's upload progress and the overall percent on the send button", async () => {
+    const s3 = heldUploads();
+    renderWithUploads(perFileUploadsApi(), s3.uploadImpl);
+    fireEvent.change(screen.getByLabelText('Attach files', { selector: 'input' }), {
+      target: {
+        files: [
+          new File(['12345678'], 'big.bin', { type: 'application/octet-stream' }),
+          new File(['12'], 'small.txt', { type: 'text/plain' }),
+        ],
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(s3.open.size).toBe(2));
+
+    await act(async () => {
+      s3.open.get('big.bin')?.report(4);
+      s3.open.get('small.txt')?.report(2);
+    });
+    expect(screen.getByRole('progressbar', { name: 'Uploading big.bin' })).toHaveAttribute(
+      'aria-valuenow',
+      '50',
+    );
+    expect(screen.getByRole('progressbar', { name: 'Uploading small.txt' })).toHaveAttribute(
+      'aria-valuenow',
+      '100',
+    );
+    // 6 of 10 bytes across both files.
+    expect(screen.getByRole('button', { name: 'Uploading 60%' })).toBeDisabled();
+    // Nothing can be added or removed mid-send.
+    expect(screen.getByRole('button', { name: 'Remove big.bin' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Attach files' })).toBeDisabled();
+  });
+
+  it('waits for the uploads still running before reporting a failed one, then retries only it', async () => {
+    const fetchImpl = perFileUploadsApi();
+    const s3 = heldUploads();
+    let badAttempts = 0;
+    const onClose = renderWithUploads(fetchImpl, async (url, file, type, onProgress) => {
+      if (url.endsWith('/bad.txt')) {
+        badAttempts += 1;
+        if (badAttempts === 1) {
+          return 403;
+        }
+      }
+      return s3.uploadImpl(url, file, type, onProgress);
+    });
+    fireEvent.change(screen.getByLabelText('Attach files', { selector: 'input' }), {
+      target: {
+        files: ['bad.txt', 'slow.txt'].map((name) => new File(['x'], name, { type: 'text/plain' })),
+      },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(s3.open.has('slow.txt')).toBe(true));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    await act(async () => s3.open.get('slow.txt')?.finish());
+    expect(await screen.findByRole('alert')).toHaveTextContent('could not be uploaded');
+    expect(callsTo(fetchImpl, '/emails', 'POST')).toHaveLength(0);
+    expect(onClose).not.toHaveBeenCalled();
+
+    // Sending again uploads only the failed file; the finished one is reused.
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(s3.open.has('bad.txt')).toBe(true));
+    await act(async () => s3.open.get('bad.txt')?.finish());
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    const uploads = callsTo(fetchImpl, '/attachments/uploads', 'POST').map(
+      (call) => JSON.parse(String(call[1]?.body)).filename,
+    );
+    expect(uploads.sort()).toEqual(['bad.txt', 'bad.txt', 'slow.txt']);
+    const [[, sendInit]] = callsTo(fetchImpl, '/emails', 'POST');
+    expect(JSON.parse(String(sendInit?.body)).attachments).toEqual([
+      { uploadId: 'bad.txt' },
+      { uploadId: 'slow.txt' },
+    ]);
   });
 
   it('keeps the window open when an upload fails', async () => {

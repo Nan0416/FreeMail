@@ -222,7 +222,7 @@ export class InboundConstruct extends Construct {
    * Let the parser recognize this deployment's own download links (`/d/{token}`) and attach
    * the files they name: it looks tokens up by exact key (GetItem only — never a claim, so no
    * download is counted) and matches links by the API's link base. Called by the stack once
-   * the API exists, since the links are built from its endpoint.
+   * the API exists, since the links are built on its domain.
    */
   linkOwnDownloads(downloadTokensTable: ITable, downloadBaseUrl: string): void {
     this.parser.addEnvironment('DOWNLOAD_TOKENS_TABLE', downloadTokensTable.tableName);
