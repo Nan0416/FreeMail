@@ -12,7 +12,7 @@
  */
 import { Router } from 'express';
 import type { Express, NextFunction, Request, Response } from 'express';
-import type { DownloadService } from '../services/download-service.js';
+import type { AttachmentDownloadResolver } from '../services/attachment-service.js';
 import { getLogger } from '../utils/logger.js';
 import { noStore } from '../utils/web-session.js';
 import type { Endpoints } from './endpoints.js';
@@ -31,7 +31,7 @@ const NOT_FOUND_HTML =
 export class DownloadEndpoints implements Endpoints {
   private readonly router: Router;
 
-  constructor(downloadService: DownloadService) {
+  constructor(attachmentService: AttachmentDownloadResolver) {
     this.router = Router();
 
     this.router.get('/d/:token', async (req: Request, res: Response, next: NextFunction) => {
@@ -43,7 +43,7 @@ export class DownloadEndpoints implements Endpoints {
           notFound(res);
           return;
         }
-        const result = await downloadService.resolve({ token });
+        const result = await attachmentService.resolveAttachmentDownloadPresignedUrl({ token });
         if (!result) {
           logger.info('GET /d/:token — no usable token.');
           notFound(res);

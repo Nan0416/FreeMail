@@ -60,8 +60,8 @@ function buildHandler(): ApiGatewayHandler {
     endpoints: [
       new AuthEndpoints(deps.authService),
       new KeysEndpoints(deps.apiKeyService),
-      new EmailEndpoints(deps.emailService, deps.emailReadService, deps.attachmentUploadService),
-      new DownloadEndpoints(deps.downloadService),
+      new EmailEndpoints(deps.emailService, deps.emailReadService, deps.attachmentService),
+      new DownloadEndpoints(deps.attachmentService),
     ],
     notFoundHandler,
     errorHandler,

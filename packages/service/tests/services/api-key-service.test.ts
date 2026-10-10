@@ -53,7 +53,7 @@ beforeEach(() => {
 
 describe('ApiKeyService.create', () => {
   it('returns the raw key once and persists only its hash', async () => {
-    const result = await service.create({ name: 'CI deploy bot' });
+    const result = await service.createApiKey({ name: 'CI deploy bot' });
 
     expect(result.key.startsWith('fm_')).toBe(true);
     expect(result.name).toBe('CI deploy bot');
@@ -68,17 +68,17 @@ describe('ApiKeyService.create', () => {
   });
 
   it('stores an unnamed key as name null (trimming blank names)', async () => {
-    expect((await service.create({})).name).toBeNull();
-    expect((await service.create({ name: '   ' })).name).toBeNull();
+    expect((await service.createApiKey({})).name).toBeNull();
+    expect((await service.createApiKey({ name: '   ' })).name).toBeNull();
   });
 
   it('rejects a name over the max length', async () => {
-    await expect(service.create({ name: 'x'.repeat(101) })).rejects.toBeInstanceOf(AuthError);
+    await expect(service.createApiKey({ name: 'x'.repeat(101) })).rejects.toBeInstanceOf(AuthError);
   });
 
   it('retries on a keyId collision and still succeeds', async () => {
     repo.collideNext = 2;
-    const result = await service.create({});
+    const result = await service.createApiKey({});
     expect(repo.rows.has(result.id)).toBe(true);
   });
 });
@@ -86,11 +86,11 @@ describe('ApiKeyService.create', () => {
 describe('ApiKeyService.list', () => {
   it('returns summaries newest-first and never the secret', async () => {
     service = new ApiKeyService({ apiKeysDao: repo, now: () => NOW });
-    const first = await service.create({ name: 'first' });
+    const first = await service.createApiKey({ name: 'first' });
     service = new ApiKeyService({ apiKeysDao: repo, now: () => NOW + 10 });
-    const second = await service.create({ name: 'second' });
+    const second = await service.createApiKey({ name: 'second' });
 
-    const result = await service.list({});
+    const result = await service.listApiKeys({});
     expect(result.keys.map((s) => s.id)).toEqual([second.id, first.id]);
     expect(JSON.stringify(result.keys)).not.toContain(first.key);
     expect(JSON.stringify(result.keys)).not.toContain(second.key);
@@ -103,30 +103,30 @@ describe('ApiKeyService.list', () => {
 
 describe('ApiKeyService.revoke', () => {
   it('deletes a key and is idempotent on an unknown id', async () => {
-    const created = await service.create({});
-    await service.revoke({ keyId: created.id });
+    const created = await service.createApiKey({});
+    await service.revokeApiKey({ keyId: created.id });
     expect(repo.rows.has(created.id)).toBe(false);
-    await expect(service.revoke({ keyId: 'nonexistent' })).resolves.toBeUndefined();
+    await expect(service.revokeApiKey({ keyId: 'nonexistent' })).resolves.toBeUndefined();
   });
 });
 
 describe('ApiKeyService.verify', () => {
   it('accepts a valid key and returns its keyId', async () => {
-    const created = await service.create({});
-    expect(await service.verify({ rawKey: created.key })).toEqual({ keyId: created.id });
+    const created = await service.createApiKey({});
+    expect(await service.verifyApiKey({ rawKey: created.key })).toEqual({ keyId: created.id });
   });
 
   it('rejects a malformed, unknown, or revoked key', async () => {
-    const created = await service.create({});
-    expect(await service.verify({ rawKey: 'not-a-key' })).toBeNull();
-    expect(await service.verify({ rawKey: 'fm_deadbeef_missing' })).toBeNull();
-    await service.revoke({ keyId: created.id });
-    expect(await service.verify({ rawKey: created.key })).toBeNull();
+    const created = await service.createApiKey({});
+    expect(await service.verifyApiKey({ rawKey: 'not-a-key' })).toBeNull();
+    expect(await service.verifyApiKey({ rawKey: 'fm_deadbeef_missing' })).toBeNull();
+    await service.revokeApiKey({ keyId: created.id });
+    expect(await service.verifyApiKey({ rawKey: created.key })).toBeNull();
   });
 
   it('rejects a right keyId with a wrong secret', async () => {
-    const created = await service.create({});
+    const created = await service.createApiKey({});
     const forged = `fm_${created.id}_tampered`;
-    expect(await service.verify({ rawKey: forged })).toBeNull();
+    expect(await service.verifyApiKey({ rawKey: forged })).toBeNull();
   });
 });

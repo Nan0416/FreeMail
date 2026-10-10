@@ -8,7 +8,7 @@
  * and payload caps must hold for every caller, REST or MCP.
  *
  * Attachments arrive as references to finished uploads (`uploads/<uploadId>`, see
- * {@link AttachmentUploadService}) — never as bytes in the request. Each is copied once to its
+ * {@link AttachmentService}) — never as bytes in the request. Each is copied once to its
  * permanent key, `attachments/sent/<id>/<index>`. Small ones are also embedded in the MIME
  * (first fit, in request order, while the message's embedded total stays within budget); the
  * rest get a download token and a `GET /d/{token}` link appended to the body (#14). The same
@@ -43,8 +43,11 @@ import { emailErrors } from '../utils/errors.js';
 import { mapBounded } from '../utils/bounded-map.js';
 import { buildRawMime, type RawMimeAttachment, type RawMimeInput } from '../utils/mime.js';
 import type { SesSender } from '../facades/ses-email-facade.js';
-import { isValidUploadId, uploadKey } from './attachment-upload-service.js';
+import { isValidUploadId, uploadKey } from './attachment-service.js';
 import { bodyKey, estimateRowBytes, storeEmailBody } from './email-body-storage.js';
+
+/** A send, exactly as REST and MCP both receive it. */
+export type SendEmailServiceRequest = SendEmailRequest;
 
 export interface EmailServiceDeps {
   readonly ses: SesSender;
@@ -121,7 +124,7 @@ export class EmailService {
     this.generateToken = deps.generateToken ?? generateDownloadToken;
   }
 
-  async send(request: SendEmailRequest): Promise<SendEmailResponse> {
+  async sendEmail(request: SendEmailServiceRequest): Promise<SendEmailResponse> {
     const from = this.validateSender(request.from);
     const fromName = optionalTrimmed(request.fromName);
 
@@ -377,7 +380,7 @@ export class EmailService {
    * file after a linked one can still be embedded.
    */
   private async resolveAttachments(
-    refs: SendEmailRequest['attachments'],
+    refs: SendEmailServiceRequest['attachments'],
   ): Promise<ResolvedAttachment[]> {
     if (refs === undefined || refs.length === 0) {
       return [];

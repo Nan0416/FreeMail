@@ -46,7 +46,7 @@ vi.mock('../../src/utils/signing-key.js', () => ({
 const sendMock = vi.hoisted(() => vi.fn());
 vi.mock('../../src/services/email-service.js', () => ({
   EmailService: class {
-    send = sendMock;
+    sendEmail = sendMock;
   },
 }));
 
@@ -72,28 +72,24 @@ vi.mock('../../src/services/email-read-service.js', () => ({
 const keysMocks = vi.hoisted(() => ({ create: vi.fn(), list: vi.fn(), revoke: vi.fn() }));
 vi.mock('../../src/services/api-key-service.js', () => ({
   ApiKeyService: class {
-    create = keysMocks.create;
-    list = keysMocks.list;
-    revoke = keysMocks.revoke;
+    createApiKey = keysMocks.create;
+    listApiKeys = keysMocks.list;
+    revokeApiKey = keysMocks.revoke;
   },
 }));
 vi.mock('../../src/data/ddb-api-keys-dao.js', () => ({ DdbApiKeysDao: class {} }));
 
-// Stub the upload service so POST /attachments/uploads exercises routing/validation without S3.
-const uploadMock = vi.hoisted(() => ({ create: vi.fn() }));
-vi.mock('../../src/services/attachment-upload-service.js', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../src/services/attachment-upload-service.js')>()),
-  AttachmentUploadService: class {
-    create = uploadMock.create;
-  },
+// Stub the attachment service so POST /attachments/uploads and the public GET /d/{token}
+// exercise routing/validation and the redirect/uniform-404 plumbing without DDB or S3.
+const attachmentMocks = vi.hoisted(() => ({
+  createAttachmentUpload: vi.fn(),
+  resolveAttachmentDownloadPresignedUrl: vi.fn(),
 }));
-
-// Stub the download service so the public GET /d/{token} route exercises the
-// redirect/uniform-404 plumbing without DDB or S3.
-const downloadMock = vi.hoisted(() => ({ resolve: vi.fn() }));
-vi.mock('../../src/services/download-service.js', () => ({
-  DownloadService: class {
-    resolve = downloadMock.resolve;
+vi.mock('../../src/services/attachment-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/services/attachment-service.js')>()),
+  AttachmentService: class {
+    createAttachmentUpload = attachmentMocks.createAttachmentUpload;
+    resolveAttachmentDownloadPresignedUrl = attachmentMocks.resolveAttachmentDownloadPresignedUrl;
   },
 }));
 
@@ -198,7 +194,7 @@ beforeEach(() => {
   authMocks.login.mockReset().mockResolvedValue(TOKEN_PAIR);
   authMocks.refresh.mockReset();
   authMocks.logout.mockReset().mockResolvedValue(undefined);
-  downloadMock.resolve.mockReset();
+  attachmentMocks.resolveAttachmentDownloadPresignedUrl.mockReset();
 });
 
 afterEach(() => {
@@ -226,7 +222,7 @@ describe('rest handler — the Express routes match the CDK route table', () => 
       readMocks.getEmail.mockResolvedValue({ id: 'h', direction: 'inbound' });
       readMocks.getAttachmentUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
       readMocks.getRawUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
-      downloadMock.resolve.mockResolvedValue(null);
+      attachmentMocks.resolveAttachmentDownloadPresignedUrl.mockResolvedValue(null);
       authMocks.refresh.mockResolvedValue(TOKEN_PAIR);
 
       const res = await invoke(routeKey, {
@@ -296,9 +292,32 @@ describe('rest handler — send email is dual-scheme', () => {
   );
 });
 
+describe('rest handler — key management reaches the API-key service', () => {
+  it('creates a key: POST /keys → 201, createApiKey called with the name', async () => {
+    keysMocks.create
+      .mockReset()
+      .mockResolvedValue({ id: 'k1', name: 'ci', createdAt: 'now', key: 'fm_raw' });
+    const res = await invoke('POST /keys', {
+      lambda: lambdaContext('access'),
+      body: { name: 'ci' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.body ?? '{}')).toMatchObject({ id: 'k1', key: 'fm_raw' });
+    expect(keysMocks.create).toHaveBeenCalledWith({ name: 'ci' });
+  });
+
+  it('lists keys: GET /keys → 200, listApiKeys called', async () => {
+    keysMocks.list.mockReset().mockResolvedValue({ keys: [] });
+    const res = await invoke('GET /keys', { lambda: lambdaContext('access'), contentType: null });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body ?? '{}')).toEqual({ keys: [] });
+    expect(keysMocks.list).toHaveBeenCalledWith({});
+  });
+});
+
 describe('rest handler — attachment uploads are dual-scheme', () => {
   it.each(['access', 'apiKey'])('lets a %s credential create an upload', async (scheme) => {
-    uploadMock.create.mockReset().mockResolvedValue({
+    attachmentMocks.createAttachmentUpload.mockReset().mockResolvedValue({
       uploadId: 'u1',
       uploadUrl: 'https://s3/u1',
       uploadMethod: 'PUT',
@@ -310,7 +329,7 @@ describe('rest handler — attachment uploads are dual-scheme', () => {
     });
     expect(res.statusCode).toBe(201);
     expect(JSON.parse(res.body ?? '{}')).toMatchObject({ uploadId: 'u1', uploadMethod: 'PUT' });
-    expect(uploadMock.create).toHaveBeenCalledWith({
+    expect(attachmentMocks.createAttachmentUpload).toHaveBeenCalledWith({
       filename: 'a.pdf',
       contentType: 'application/pdf',
       sizeBytes: 12,
@@ -318,13 +337,13 @@ describe('rest handler — attachment uploads are dual-scheme', () => {
   });
 
   it('rejects a non-numeric size with 400 before reaching the service', async () => {
-    uploadMock.create.mockReset();
+    attachmentMocks.createAttachmentUpload.mockReset();
     const res = await invoke('POST /attachments/uploads', {
       lambda: lambdaContext('access'),
       body: { filename: 'a.pdf', sizeBytes: '12' },
     });
     expect(res.statusCode).toBe(400);
-    expect(uploadMock.create).not.toHaveBeenCalled();
+    expect(attachmentMocks.createAttachmentUpload).not.toHaveBeenCalled();
   });
 });
 
@@ -667,7 +686,9 @@ describe('rest handler — logout clears both cookies (POST, idempotent)', () =>
 
 describe('rest handler — public token download (GET /d/{token})', () => {
   it('302-redirects a valid token to the presigned URL, no-store, no auth context needed', async () => {
-    downloadMock.resolve.mockResolvedValue({ url: 'https://s3.example.com/signed-get' });
+    attachmentMocks.resolveAttachmentDownloadPresignedUrl.mockResolvedValue({
+      url: 'https://s3.example.com/signed-get',
+    });
     const res = await invoke('GET /d/{token}', { contentType: null, params: { token: 'tok-abc' } });
     expect(res.statusCode).toBe(302);
     expect(res.headers?.location).toBe('https://s3.example.com/signed-get');
@@ -675,11 +696,13 @@ describe('rest handler — public token download (GET /d/{token})', () => {
     // No S3 key/bucket disclosed, and — unlike `res.redirect()` — no body echoing the
     // presigned URL either.
     expect(res.body).toBe('');
-    expect(downloadMock.resolve).toHaveBeenCalledWith({ token: 'tok-abc' });
+    expect(attachmentMocks.resolveAttachmentDownloadPresignedUrl).toHaveBeenCalledWith({
+      token: 'tok-abc',
+    });
   });
 
   it('serves a uniform 404 HTML page for any invalid/expired/revoked/exhausted token', async () => {
-    downloadMock.resolve.mockResolvedValue(null);
+    attachmentMocks.resolveAttachmentDownloadPresignedUrl.mockResolvedValue(null);
     const res = await invoke('GET /d/{token}', { contentType: null, params: { token: 'tok-bad' } });
     expect(res.statusCode).toBe(404);
     expect(res.headers?.['content-type']).toContain('text/html');

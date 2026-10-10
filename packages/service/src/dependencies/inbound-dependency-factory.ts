@@ -11,8 +11,8 @@ import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3QuarantineStore } from '../facades/s3-quarantine-store.js';
 import type { InboundConfig } from '../handlers/inbound-config.js';
-import { InboundProcessor } from '../services/inbound-service.js';
-import { OwnLinkAttachments } from '../services/own-link-attachments.js';
+import { InboundProcessor } from '../processors/inbound-processor.js';
+import { OwnLinkAttachments } from '../processors/own-link-attachments.js';
 
 export interface InboundDependencies {
   readonly emailsDao: EmailsDao;

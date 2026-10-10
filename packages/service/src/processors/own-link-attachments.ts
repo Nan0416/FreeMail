@@ -31,7 +31,7 @@ export const MAX_LINKED_ATTACHMENTS = 20;
 /** Every linked file is a copy a send stored; a row is never pointed anywhere else. */
 const SENT_ATTACHMENTS_PREFIX = 'attachments/sent/';
 
-export interface ResolveLinkedAttachmentsServiceRequest {
+export interface ResolveLinkedAttachmentsRequest {
   /** The message's decoded text and HTML bodies (either may be absent). */
   readonly bodies: readonly (string | undefined)[];
   /** The message's From address. */
@@ -42,7 +42,7 @@ export interface ResolveLinkedAttachmentsServiceRequest {
   readonly receivedAt: string;
 }
 
-export interface ResolveLinkedAttachmentsServiceResponse {
+export interface ResolveLinkedAttachmentsResponse {
   /** The linked files to carry as attachments, in the order their links appear. */
   readonly attachments: readonly InboundAttachmentDescriptor[];
 }
@@ -61,9 +61,9 @@ export class OwnLinkAttachments {
     this.linkPattern = new RegExp(`${base}/d/([A-Za-z0-9_-]+)`, 'gi');
   }
 
-  async resolve(
-    request: ResolveLinkedAttachmentsServiceRequest,
-  ): Promise<ResolveLinkedAttachmentsServiceResponse> {
+  async resolveLinkedAttachments(
+    request: ResolveLinkedAttachmentsRequest,
+  ): Promise<ResolveLinkedAttachmentsResponse> {
     const from = request.from.trim().toLowerCase();
     if (
       request.authenticatedDomain === undefined ||

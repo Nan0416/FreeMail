@@ -34,7 +34,7 @@ export class KeysEndpoints implements Endpoints {
         try {
           const name = optionalString(requireBody(req), 'name');
           logger.info('POST /keys.');
-          res.status(201).json(await apiKeyService.create({ name }));
+          res.status(201).json(await apiKeyService.createApiKey({ name }));
         } catch (err) {
           next(err);
         }
@@ -47,7 +47,7 @@ export class KeysEndpoints implements Endpoints {
       async (_req: Request, res: Response, next: NextFunction) => {
         try {
           logger.info('GET /keys.');
-          res.status(200).json(await apiKeyService.list({}));
+          res.status(200).json(await apiKeyService.listApiKeys({}));
         } catch (err) {
           next(err);
         }
@@ -60,7 +60,7 @@ export class KeysEndpoints implements Endpoints {
       async (req: Request, res: Response, next: NextFunction) => {
         try {
           logger.info('DELETE /keys/:id.');
-          await apiKeyService.revoke({ keyId: requirePathParam(req, 'id') });
+          await apiKeyService.revokeApiKey({ keyId: requirePathParam(req, 'id') });
           res.status(204).end();
         } catch (err) {
           next(err);

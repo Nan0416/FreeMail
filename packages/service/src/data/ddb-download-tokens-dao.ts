@@ -5,10 +5,10 @@
  *     createdAt, expiresAt, ttl, revoked, downloadCount, maxDownloads?,
  *     sender?, ownDomainRecipients? }
  *
- * `create` is a conditional put so a token collision never clobbers an existing row.
- * `claim` folds ALL the download gates (exists, not revoked, not expired, under the
- * optional cap) into ONE conditional `UpdateItem` that also increments the counter —
- * so the check-and-consume is atomic. Concurrent claims cannot bypass a `maxDownloads`
+ * `createDownloadToken` is a conditional put so a token collision never clobbers an existing
+ * row. `claimDownloadToken` folds ALL the download gates (exists, not revoked, not expired,
+ * under the optional cap) into ONE conditional `UpdateItem` that also increments the counter
+ * — so the check-and-consume is atomic. Concurrent claims cannot bypass a `maxDownloads`
  * cap (the last claim to reach the cap wins; the next fails the condition), and a
  * failed condition writes nothing (an unknown token never creates a phantom row).
  */
