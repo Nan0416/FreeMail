@@ -157,6 +157,50 @@ describe('ComposeWindow — attachments', () => {
     expect(callsTo(compose.fetchImpl, '/emails')).toHaveLength(0);
   });
 
+  it('reuses a finished upload when Send is pressed again after a rejected send', async () => {
+    const fetchImpl = uploadingApi();
+    const base = fetchImpl.getMockImplementation();
+    let sends = 0;
+    fetchImpl.mockImplementation(async (url, init) => {
+      if (pathOf(url) === '/emails' && init?.method === 'POST') {
+        sends += 1;
+        if (sends === 1) {
+          return json(400, { error: 'invalid_request', message: 'Bad recipient.' });
+        }
+      }
+      return base!(url, init);
+    });
+    const compose = renderCompose({ from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' }, fetchImpl);
+    attach(new File(['%PDF'], 'report.pdf', { type: 'application/pdf' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Bad recipient.');
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(compose.onClose).toHaveBeenCalled());
+    expect(callsTo(fetchImpl, '/attachments/uploads')).toHaveLength(1);
+    expect(fetchImpl.mock.calls.filter(([url]) => url === S3_URL)).toHaveLength(1);
+    const sendBodies = callsTo(fetchImpl, '/emails', 'POST').map(([, init]) =>
+      JSON.parse(String(init?.body)),
+    );
+    expect(sendBodies.map((body) => body.attachments)).toEqual([
+      [{ uploadId: 'U1' }],
+      [{ uploadId: 'U1' }],
+    ]);
+  });
+
+  it('refuses an empty file before uploading anything', async () => {
+    const compose = renderCompose(
+      { from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' },
+      uploadingApi(),
+    );
+    attach(new File([], 'empty.txt', { type: 'text/plain' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('"empty.txt" is empty');
+    expect(callsTo(compose.fetchImpl, '/attachments/uploads')).toHaveLength(0);
+  });
+
   it('keeps the window open when an upload fails', async () => {
     const fetchImpl = uploadingApi();
     const base = fetchImpl.getMockImplementation();

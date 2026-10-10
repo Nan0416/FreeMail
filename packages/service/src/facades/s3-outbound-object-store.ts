@@ -1,15 +1,14 @@
 /**
- * The S3 port the send path uses to write objects to the mail bucket, plus its S3
- * implementation. Two kinds of object flow through it: outbound LARGE attachments (#14,
- * `attachments/outbound/*`) and the archived composed raw MIME of a sent message (#29,
- * `sent/*`). The {@link EmailService} depends on the interface so its
- * embed-vs-link + archive logic is testable with a fake; only this file touches
- * `@aws-sdk/client-s3`.
+ * The S3 port the send path uses to archive the composed raw MIME of a sent message (#29,
+ * `sent/*`), plus its S3 implementation. (Attachments no longer flow through here: they are
+ * uploaded directly and copied by the upload store.) The {@link EmailService} depends on the
+ * interface so its archive step is testable with a fake; only this file touches
+ * `@aws-sdk/client-s3` for it.
  *
  * Objects are written `application/octet-stream` with `Content-Disposition: attachment`
  * (mirroring the inbound store), so even a naked GET serves them as a download, never an
- * inline-renderable type. That disposition is irrelevant to the sent MIME archive (it is
- * only ever re-read server-side for the read path), but harmless — one write path for both.
+ * inline-renderable type — irrelevant to the archive (only ever re-read server-side), but
+ * harmless.
  */
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 

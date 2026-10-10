@@ -167,6 +167,32 @@ describe('ApiConstruct', () => {
     }
   });
 
+  it('writes nothing to the legacy attachments/outbound/* prefix — REST only presigns old links', () => {
+    const template = synth();
+    expect(
+      roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'attachments/outbound/*'),
+    ).toBe(true);
+    for (const description of [REST_DESCRIPTION, MCP_DESCRIPTION]) {
+      expect(
+        roleGrantsOnPrefix(template, description, 's3:PutObject', 'attachments/outbound/*'),
+      ).toBe(false);
+    }
+  });
+
+  it('gives both send paths 29 s (copying uploads), just under the HTTP API cap', () => {
+    const template = synth();
+    for (const description of [REST_DESCRIPTION, MCP_DESCRIPTION]) {
+      template.hasResourceProperties('AWS::Lambda::Function', {
+        Description: description,
+        Timeout: 29,
+      });
+    }
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Description: 'FreeMail Lambda authorizer (access tokens + API keys).',
+      Timeout: 10,
+    });
+  });
+
   it('passes deploy-configured embed limits to both send paths, and nothing when unset', () => {
     const configured = Template.fromStack(
       new FreeMailStack(new App(), 'TestStack', {

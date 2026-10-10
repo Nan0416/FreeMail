@@ -138,16 +138,17 @@ class FakeUploadStore implements UploadStore {
   head(key: string): Promise<UploadedObject | null> {
     return Promise.resolve(this.objects.get(key)?.meta ?? null);
   }
-  copy(source: string, dest: string): Promise<void> {
+  copy(source: string, dest: string): Promise<boolean> {
     if (this.failCopy) {
       return Promise.reject(new Error('s3 copy down'));
     }
-    this.copies.push({ source, dest });
     const object = this.objects.get(source);
-    if (object) {
-      this.objects.set(dest, object);
+    if (!object) {
+      return Promise.resolve(false);
     }
-    return Promise.resolve();
+    this.copies.push({ source, dest });
+    this.objects.set(dest, object);
+    return Promise.resolve(true);
   }
   getBytes(key: string): Promise<Buffer> {
     this.reads.push(key);
@@ -376,7 +377,7 @@ describe('EmailService.send', () => {
     await expect(setup.service.send(request({ attachments }))).rejects.toThrow(/at most 20/);
   });
 
-  it('copies each upload once to attachments/sent/<id>/<index>, embedding small ones from it', async () => {
+  it('copies each upload once to attachments/sent/<id>/<index>, embedding small ones from the upload', async () => {
     const setup = makeService();
     const a = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('aaa'));
     const b = setup.uploads.add(2, 'b.pdf', 'application/pdf', Buffer.from('bbbb'));
@@ -387,8 +388,9 @@ describe('EmailService.send', () => {
       { source: `uploads/${a}`, dest: 'attachments/sent/id-1/0' },
       { source: `uploads/${b}`, dest: 'attachments/sent/id-1/1' },
     ]);
-    // Embedded from the permanent copy, with the filename + type S3 recorded at upload.
-    expect(setup.uploads.reads).toEqual(['attachments/sent/id-1/0', 'attachments/sent/id-1/1']);
+    // Embedded from the upload itself (an MCP role without the read tools can't read the sent
+    // copies), with the filename + type S3 recorded at upload.
+    expect(setup.uploads.reads).toEqual([`uploads/${a}`, `uploads/${b}`]);
     expect(setup.mimeInputs[0]?.attachments).toEqual([
       {
         filename: 'a.txt',
@@ -481,6 +483,26 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
     expect(setup.emails.statusUpdates).toHaveLength(0);
   });
 
+  it('answers "upload not found" (400) when an upload vanishes between its HEAD and its copy', async () => {
+    const setup = makeService();
+    const a = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('aaa'));
+    const head = setup.uploads.head.bind(setup.uploads);
+    setup.uploads.head = async (key) => {
+      const meta = await head(key);
+      setup.uploads.objects.delete(key); // swept right after the HEAD
+      return meta;
+    };
+
+    await expect(
+      setup.service.send(request({ attachments: [{ uploadId: a }] })),
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: expect.stringContaining('was not found'),
+    });
+    expect(setup.emails.records).toEqual([]);
+    expect(setup.ses.calls).toHaveLength(0);
+  });
+
   it('FAILS CLOSED when copying an upload fails: no send, no row', async () => {
     const setup = makeService();
     const a = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('aaa'));
@@ -563,7 +585,7 @@ describe('EmailService.send — embed or link (#14)', () => {
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['over.bin']);
   });
 
-  it('stops embedding once the message’s embedded total would pass its budget', async () => {
+  it('links a file that would pass the message’s embed budget', async () => {
     const setup = makeService();
     // Four 3 MB files: three fit the 10 MB budget (9 MB), the fourth is linked.
     const ids = [1, 2, 3, 4].map((n) =>
@@ -578,6 +600,23 @@ describe('EmailService.send — embed or link (#14)', () => {
       'f3.bin',
     ]);
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['f4.bin']);
+  });
+
+  it('still embeds a small file after a linked one (first fit, in request order)', async () => {
+    const setup = makeService();
+    const ids = [3, 3, 3, 3, 1].map((size, n) =>
+      setup.uploads.add(n, `f${n}.bin`, 'application/octet-stream', size * MB),
+    );
+
+    await setup.service.send(request({ attachments: ids.map((uploadId) => ({ uploadId })) }));
+
+    expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual([
+      'f0.bin',
+      'f1.bin',
+      'f2.bin',
+      'f4.bin',
+    ]);
+    expect(setup.tokens.created.map((t) => t.filename)).toEqual(['f3.bin']);
   });
 
   it('links a large file: a token for its permanent copy, a link in the body, no embed', async () => {

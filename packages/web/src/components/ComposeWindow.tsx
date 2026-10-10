@@ -45,6 +45,18 @@ type WindowMode = 'normal' | 'minimized' | 'maximized';
 const AUTOSAVE_MS = 800;
 
 /**
+ * Reuse a finished upload for this long when Send is pressed again (a rejected recipient, say).
+ * The server sweeps an unsent upload after a day at the earliest.
+ */
+const UPLOAD_REUSE_MS = 12 * 60 * 60 * 1000;
+
+/** A file already uploaded from this window: its upload id, and when it was uploaded. */
+interface FinishedUpload {
+  readonly uploadId: string;
+  readonly uploadedAt: number;
+}
+
+/**
  * A docked compose window: bottom-right on desktop, full-screen on phones, and a large
  * centred sheet when maximized. Edits auto-save to a browser-local draft (see
  * `lib/drafts.ts`); closing keeps the draft, discarding deletes it (with undo).
@@ -71,6 +83,8 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   // The re-entrancy guard. `busy` drives the UI but only lands on the next render, so
   // a second ⌘↵ in the same tick would still see it false and send twice.
   const sending = useRef(false);
+  /** Files already uploaded from this window, so a retried send doesn't upload them again. */
+  const uploaded = useRef(new WeakMap<File, FinishedUpload>());
   const [savedAt, setSavedAt] = useState<Date | null>(props.init.draftId ? new Date() : null);
   const fileInput = useRef<HTMLInputElement>(null);
   const toInput = useRef<HTMLInputElement>(null);
@@ -196,6 +210,11 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
       setError(`At most ${MAX_ATTACHMENTS} attachments are allowed.`);
       return;
     }
+    const empty = files.find((file) => file.size === 0);
+    if (empty) {
+      setError(`"${empty.name}" is empty — remove it or attach another file.`);
+      return;
+    }
     const tooLarge = files.find((file) => file.size > MAX_UPLOAD_BYTES);
     if (tooLarge) {
       setError(
@@ -212,6 +231,11 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
       const attachments: EmailAttachmentRef[] = [];
       for (let index = 0; index < files.length; index += 1) {
         const file = files[index];
+        const previous = uploaded.current.get(file);
+        if (previous && Date.now() - previous.uploadedAt < UPLOAD_REUSE_MS) {
+          attachments.push({ uploadId: previous.uploadId });
+          continue;
+        }
         setProgress(`Uploading ${index + 1} of ${files.length}…`);
         const upload = await auth.client.createUpload({
           filename: file.name,
@@ -219,6 +243,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
           sizeBytes: file.size,
         });
         await auth.client.putUpload(upload.uploadUrl, file);
+        uploaded.current.set(file, { uploadId: upload.uploadId, uploadedAt: Date.now() });
         attachments.push({ uploadId: upload.uploadId });
       }
       setProgress(null);

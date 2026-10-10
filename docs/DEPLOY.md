@@ -245,7 +245,7 @@ Attachment bytes never travel through the API. Sending a file is two steps:
 
 When the message is sent, each upload is copied to permanent storage and then:
 
-- **Small files are embedded** in the outgoing MIME — each file up to **3 MB**, and up to **10 MB embedded per message** in total (in request order; once the total would be passed, the rest are linked).
+- **Small files are embedded** in the outgoing MIME — each file up to **3 MB**, and up to **10 MB embedded per message** in total. Files are considered in order; one that would push the embedded total past 10 MB is linked instead, and a smaller one after it can still be embedded.
 - **Larger files become a token-download link** in the email body — `GET /d/{token}`, which validates the token and 302-redirects to a short-lived presigned S3 URL. Recipients' links are valid for **30 days**. Your own copy in **Sent** never expires.
 - **Limits:** up to **20 attachments** per message, each up to **100 MB**. An upload that is never sent is deleted after a day.
 

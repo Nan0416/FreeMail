@@ -42,8 +42,11 @@ export interface UploadStore {
   ): Promise<string>;
   /** What was uploaded at `key`, or null when nothing was (never uploaded, or expired). */
   head(key: string): Promise<UploadedObject | null>;
-  /** Copy an upload to its permanent key, stored as a non-inline download. */
-  copy(sourceKey: string, destKey: string): Promise<void>;
+  /**
+   * Copy an upload to its permanent key, stored as a non-inline download. False when nothing is
+   * at `sourceKey` (it expired since its HEAD).
+   */
+  copy(sourceKey: string, destKey: string): Promise<boolean>;
   /** The bytes at `key` (for embedding a small attachment). */
   getBytes(key: string): Promise<Buffer>;
 }
@@ -105,19 +108,29 @@ export class S3UploadStore implements UploadStore {
     }
   }
 
-  async copy(sourceKey: string, destKey: string): Promise<void> {
-    await this.client.send(
-      new CopyObjectCommand({
-        Bucket: this.bucket,
-        Key: destKey,
-        // CopySource is `<bucket>/<key>` with the key URL-encoded (its `/` separators kept).
-        CopySource: `${this.bucket}/${encodeURIComponent(sourceKey).replace(/%2F/g, '/')}`,
-        // Served only as a download, whatever the uploader claimed.
-        MetadataDirective: 'REPLACE',
-        ContentType: 'application/octet-stream',
-        ContentDisposition: 'attachment',
-      }),
-    );
+  async copy(sourceKey: string, destKey: string): Promise<boolean> {
+    try {
+      await this.client.send(this.copyCommand(sourceKey, destKey));
+      return true;
+    } catch (err) {
+      if (err instanceof Error && NOT_FOUND.has(err.name)) {
+        return false;
+      }
+      throw err;
+    }
+  }
+
+  private copyCommand(sourceKey: string, destKey: string): CopyObjectCommand {
+    return new CopyObjectCommand({
+      Bucket: this.bucket,
+      Key: destKey,
+      // CopySource is `<bucket>/<key>` with the key URL-encoded (its `/` separators kept).
+      CopySource: `${this.bucket}/${encodeURIComponent(sourceKey).replace(/%2F/g, '/')}`,
+      // Served only as a download, whatever the uploader claimed.
+      MetadataDirective: 'REPLACE',
+      ContentType: 'application/octet-stream',
+      ContentDisposition: 'attachment',
+    });
   }
 
   async getBytes(key: string): Promise<Buffer> {

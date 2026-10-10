@@ -20,6 +20,13 @@ import { emailErrors } from '../utils/errors.js';
 
 /** Max length of an attachment filename (it becomes a MIME header parameter and S3 metadata). */
 const MAX_FILENAME_CHARS = 255;
+
+/**
+ * Max length of the filename once URI-encoded, as it is stored in S3 user metadata — which S3
+ * caps at 2 KB in all. Long non-ASCII names (each character encodes to up to 12 bytes) hit this
+ * before the character limit.
+ */
+const MAX_ENCODED_FILENAME_BYTES = 1800;
 /** Max length of a declared content type. */
 const MAX_CONTENT_TYPE_CHARS = 128;
 /** `type/subtype` with an optional parameter list — enough to reject garbage, not full RFC 2045. */
@@ -66,6 +73,9 @@ export class AttachmentUploadService {
       throw emailErrors.invalidRequest(
         `"filename" must be a non-empty string of at most ${MAX_FILENAME_CHARS} characters.`,
       );
+    }
+    if (encodeURIComponent(filename).length > MAX_ENCODED_FILENAME_BYTES) {
+      throw emailErrors.invalidRequest('"filename" is too long — shorten it and try again.');
     }
     const contentType = normalizeContentType(request.contentType);
     const sizeBytes = request.sizeBytes;

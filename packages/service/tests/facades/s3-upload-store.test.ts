@@ -6,10 +6,14 @@ class FakeS3 {
   readonly calls: unknown[] = [];
   headResult: unknown = {};
   headError?: Error;
+  copyError?: Error;
   send(command: unknown): Promise<unknown> {
     this.calls.push(command);
     if (command instanceof HeadObjectCommand) {
       return this.headError ? Promise.reject(this.headError) : Promise.resolve(this.headResult);
+    }
+    if (command instanceof CopyObjectCommand && this.copyError) {
+      return Promise.reject(this.copyError);
     }
     return Promise.resolve({});
   }
@@ -37,7 +41,9 @@ describe('S3UploadStore', () => {
 
     expect(url.host).toBe('mail-bucket.s3.us-east-1.amazonaws.com');
     expect(url.pathname).toBe('/uploads/AAAAAAAAAAAAAAAAAAAAAA');
-    expect(url.searchParams.get('X-Amz-SignedHeaders')).toContain('content-length');
+    // Exactly these: the length is pinned, and Content-Type is NOT signed — a browser PUT sets
+    // its own, and a signed one it didn't match would fail with a 403.
+    expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;host');
     expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
     expect(url.searchParams.get('x-amz-meta-filename')).toBe(encodeURIComponent('résumé 1.pdf'));
     expect(url.searchParams.get('x-amz-meta-content-type')).toBe(
@@ -71,7 +77,7 @@ describe('S3UploadStore', () => {
 
   it('copies an upload to its permanent key as a forced download', async () => {
     const t = store();
-    await t.s.copy('uploads/AAAAAAAAAAAAAAAAAAAAAA', 'attachments/sent/e1/0');
+    expect(await t.s.copy('uploads/AAAAAAAAAAAAAAAAAAAAAA', 'attachments/sent/e1/0')).toBe(true);
 
     const copy = t.fake.calls[0] as CopyObjectCommand;
     expect(copy).toBeInstanceOf(CopyObjectCommand);
@@ -83,5 +89,13 @@ describe('S3UploadStore', () => {
       ContentType: 'application/octet-stream',
       ContentDisposition: 'attachment',
     });
+  });
+
+  it('answers false when the upload is gone by the time it is copied, and rethrows anything else', async () => {
+    const t = store();
+    t.fake.copyError = Object.assign(new Error('gone'), { name: 'NoSuchKey' });
+    expect(await t.s.copy('uploads/x', 'attachments/sent/e1/0')).toBe(false);
+    t.fake.copyError = Object.assign(new Error('denied'), { name: 'AccessDenied' });
+    await expect(t.s.copy('uploads/x', 'attachments/sent/e1/0')).rejects.toThrow(/denied/);
   });
 });

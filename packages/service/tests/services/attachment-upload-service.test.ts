@@ -92,6 +92,17 @@ describe('AttachmentUploadService.create', () => {
     ).rejects.toThrow(/contentType/);
   });
 
+  it('rejects a filename too long for S3 metadata once encoded, before presigning', async () => {
+    const t = service();
+    // Each CJK character encodes to 9 bytes: 200 of them (1800) is the limit, 201 is over —
+    // both well within the 255-character limit.
+    await expect(t.svc.create({ filename: '文'.repeat(201), sizeBytes: 1 })).rejects.toThrow(
+      /too long/,
+    );
+    await expect(t.svc.create({ filename: '文'.repeat(200), sizeBytes: 1 })).resolves.toBeDefined();
+    expect(t.uploads.presigned).toHaveLength(1);
+  });
+
   it('mints unguessable ids by default (16 random bytes, base64url)', async () => {
     const uploads = new FakeUploads();
     const svc = new AttachmentUploadService({ uploads });

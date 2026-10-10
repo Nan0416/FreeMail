@@ -24,8 +24,9 @@ import type { Endpoints } from '../routes/endpoints.js';
 
 /**
  * API Gateway HTTP APIs cap a request payload at 10 MB, so accepting more here could only
- * ever fail later. Send requests carry base64 attachments (7 MB of attachment inflates to
- * ~9.3 MB encoded), which is why this is not conduit's 100 kb.
+ * ever fail later. A send request carries no attachment bytes (those go straight to S3), but
+ * it does carry the whole message body — text plus HTML — which is why this is not conduit's
+ * 100 kb.
  */
 const JSON_BODY_LIMIT = '10mb';
 

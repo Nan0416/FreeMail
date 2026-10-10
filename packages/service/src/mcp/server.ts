@@ -207,10 +207,6 @@ function toolErrorResult(error: unknown, genericMessage: string, logLabel: strin
   return { isError: true, content: [{ type: 'text', text: genericMessage }] };
 }
 
-/**
- * The `send_email` tool body. Exported so the success/known-failure/unexpected-failure
- * branches are asserted without driving the MCP protocol.
- */
 /** `create_attachment_upload`: a presigned PUT for one attachment, over {@link AttachmentUploadService}. */
 export async function handleCreateUpload(
   uploadService: AttachmentUploadService,
@@ -243,6 +239,10 @@ export async function handleCreateUpload(
   }
 }
 
+/**
+ * The `send_email` tool body. Exported so the success/known-failure/unexpected-failure
+ * branches are asserted without driving the MCP protocol.
+ */
 export async function handleSendEmail(
   emailService: EmailService,
   request: SendEmailRequest,
