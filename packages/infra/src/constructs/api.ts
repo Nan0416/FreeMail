@@ -24,6 +24,7 @@ import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations
 import { Construct } from 'constructs';
 import type { AttachmentsConfig } from '@freemail/shared/config';
 import type { CustomDomainProps } from './web.js';
+import { SELF_CONTAINED_BUNDLING } from './bundling.js';
 
 const HANDLERS_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -442,8 +443,7 @@ export class ApiConstruct extends Construct {
       memorySize: props.memorySize ?? 256,
       description: props.description,
       environment: props.environment,
-      // Bundle everything (incl. the AWS SDK v3 clients) rather than relying on the
-      // runtime-provided SDK, so the deployed version is pinned and reproducible.
+      bundling: SELF_CONTAINED_BUNDLING,
     });
   }
 }

@@ -40,8 +40,8 @@ const PLACEHOLDER_DIR = join(HERE, '..', '..', 'assets', 'web-placeholder');
 /**
  * Resolve the SPA asset directory: the real `packages/web/dist` when it has been
  * built, else a committed placeholder. This decouples infra synth/tests from the
- * web build (same reason the API construct's handler bundling is self-contained) —
- * a real deploy runs `npm run build` first so `dist` exists.
+ * web build (as the API handlers are bundled from TypeScript source at synth, needing no
+ * prior build) — a real deploy runs `npm run build` first so `dist` exists.
  */
 export function resolveWebAssetPath(): string {
   return existsSync(join(BUILT_SPA_DIR, 'index.html')) ? BUILT_SPA_DIR : PLACEHOLDER_DIR;
