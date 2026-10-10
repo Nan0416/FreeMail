@@ -102,6 +102,8 @@ export class SesConstruct extends Construct {
   readonly bounceComplaintTopic: Topic;
   /** Logs every bounce/complaint SNS notification to CloudWatch for audit. */
   readonly bounceComplaintLogger: LambdaFunction;
+  /** The inbound receipt pipeline — present only when inbound email is enabled. */
+  readonly inbound?: InboundConstruct;
   /**
    * Custom MAIL FROM subdomain (`bounce.<emailDomain>`) — keeps SPF/DMARC aligned with
    * the From domain. Undefined in import mode: whatever MAIL FROM the existing identity
@@ -163,7 +165,7 @@ export class SesConstruct extends Construct {
     // pipeline (receipt rule set → S3 + MX + parser) as a child. Absent → send-only.
     // The stack's `confirmInboundMx` acknowledgement gate still fires first, at synth.
     if (props.inbound) {
-      new InboundConstruct(this, 'Inbound', {
+      this.inbound = new InboundConstruct(this, 'Inbound', {
         hostedZone: props.hostedZone,
         emailDomain: props.emailDomain,
         region: props.region,

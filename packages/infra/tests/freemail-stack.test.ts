@@ -190,6 +190,38 @@ describe('FreeMailStack', () => {
     });
   });
 
+  it('lets the parser look up download tokens (GetItem only) by the same link base REST mints', () => {
+    const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
+    const functions = Object.values(template.findResources('AWS::Lambda::Function'));
+    const envOf = (description: string): Record<string, unknown> =>
+      functions.find((f) => f.Properties.Description === description)?.Properties.Environment
+        .Variables;
+    const parserEnv = envOf(
+      'FreeMail inbound MIME parser (S3 raw MIME → DDB index + attachments to S3).',
+    );
+    const restEnv = envOf('FreeMail REST API (auth + app routes).');
+    // Links are recognized exactly as they are built.
+    expect(parserEnv.DOWNLOAD_BASE_URL).toEqual(restEnv.DOWNLOAD_BASE_URL);
+    expect(JSON.stringify(parserEnv.DOWNLOAD_TOKENS_TABLE)).toContain('DataDownloadTokensTable');
+
+    // Every grant the parser holds on the tokens table is a plain read — never a claim
+    // (UpdateItem), a write, or a scan.
+    const tokenActions = Object.values(template.findResources('AWS::IAM::Policy'))
+      .filter((policy) => JSON.stringify(policy.Properties.Roles).includes('ParserFn'))
+      .flatMap((policy) => policy.Properties.PolicyDocument.Statement as Record<string, unknown>[])
+      .filter((statement) => JSON.stringify(statement.Resource).includes('DownloadTokensTable'))
+      .flatMap((statement) => ([] as unknown[]).concat(statement.Action));
+    expect(tokenActions).toEqual(['dynamodb:GetItem']);
+  });
+
+  it('gives a send-only deploy no parser to wire', () => {
+    const template = synth(makeConfig());
+    const parsers = Object.values(template.findResources('AWS::Lambda::Function')).filter((f) =>
+      String(f.Properties.Description).startsWith('FreeMail inbound MIME parser'),
+    );
+    expect(parsers).toHaveLength(0);
+  });
+
   it('lets the inbound parser tag the raw MIME it has fully ingested', () => {
     const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
     expect(canOnMailPrefix(template, 'ParserFn', 's3:PutObjectTagging', '*')).toBe(true);

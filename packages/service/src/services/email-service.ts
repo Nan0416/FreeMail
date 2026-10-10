@@ -178,7 +178,10 @@ export class EmailService {
         ),
       }),
     );
-    const links = await this.mintDownloadLinks(attachments, id, nowDate);
+    const links = await this.mintDownloadLinks(attachments, id, nowDate, {
+      sender: from.toLowerCase(),
+      ownDomainRecipients: this.ownDomainRecipients([...to, ...cc, ...bcc]),
+    });
     const body = appendDownloadLinks(
       {
         ...(text !== undefined ? { text } : {}),
@@ -285,12 +288,15 @@ export class EmailService {
    * append to the body. A token points at the attachment's permanent copy, so the link works
    * for the token's lifetime while the sender's own access (via the Sent folder) never expires.
    * Token writes happen BEFORE the SES send (the links must be in the MIME); a later send
-   * failure leaves harmless orphans that expire with the token TTL.
+   * failure leaves harmless orphans that expire with the token TTL. Each token also records
+   * who sent the message and which of its recipients are this deployment's own addresses, so
+   * the copy that comes back in through inbound can carry the file as a real attachment.
    */
   private async mintDownloadLinks(
     attachments: readonly ResolvedAttachment[],
     emailId: string,
     nowDate: Date,
+    parties: TokenParties,
   ): Promise<DownloadLink[]> {
     const createdAt = nowDate.toISOString();
     const expiresMs = nowDate.getTime() + DOWNLOAD_TOKEN_TTL_SECONDS * 1000;
@@ -316,6 +322,10 @@ export class EmailService {
         ttl,
         revoked: false,
         downloadCount: 0,
+        sender: parties.sender,
+        ...(parties.ownDomainRecipients.length > 0
+          ? { ownDomainRecipients: parties.ownDomainRecipients }
+          : {}),
       });
       links.push({
         filename: attachment.filename,
@@ -324,6 +334,18 @@ export class EmailService {
       });
     }
     return links;
+  }
+
+  /** The recipients under the configured domain, lowercased and de-duplicated. */
+  private ownDomainRecipients(recipients: readonly string[]): string[] {
+    const own = new Set<string>();
+    for (const address of recipients) {
+      const domain = normalizeDomain(address.slice(address.lastIndexOf('@') + 1));
+      if (isSubdomainOrEqual(domain, this.emailDomain)) {
+        own.add(address.toLowerCase());
+      }
+    }
+    return [...own];
   }
 
   /** Enforce "from any address under the configured domain" — an explicit 400, not a 500 from SES. */
@@ -404,6 +426,12 @@ function uploadNotFound(uploadId: string): Error {
   return emailErrors.invalidRequest(
     `Attachment upload "${uploadId}" was not found — it may never have been uploaded, or it expired. Upload it again.`,
   );
+}
+
+/** Who a sent message's download tokens record: its sender and its own-domain recipients. */
+interface TokenParties {
+  readonly sender: string;
+  readonly ownDomainRecipients: readonly string[];
 }
 
 /** Max chars of a `send_failed` reason kept on the row — bounds an unexpectedly verbose SES error. */

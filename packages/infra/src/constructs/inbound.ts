@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CustomResource, Duration, RemovalPolicy } from 'aws-cdk-lib';
-import type { Table } from 'aws-cdk-lib/aws-dynamodb';
+import type { ITable, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Architecture, Code, Function as LambdaFunction, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { SqsDestination } from 'aws-cdk-lib/aws-lambda-destinations';
@@ -63,6 +63,7 @@ const RECORD_TTL = '1800';
  */
 export class InboundConstruct extends Construct {
   readonly ruleSet: ReceiptRuleSet;
+  private readonly parser: NodejsFunction;
 
   constructor(scope: Construct, id: string, props: InboundConstructProps) {
     super(scope, id);
@@ -96,7 +97,7 @@ export class InboundConstruct extends Construct {
     });
 
     this.activateRuleSet(this.ruleSet.receiptRuleSetName);
-    this.wireParser(props.mailBucket, props.emailsTable, props.quarantineBucket);
+    this.parser = this.wireParser(props.mailBucket, props.emailsTable, props.quarantineBucket);
   }
 
   /**
@@ -111,7 +112,11 @@ export class InboundConstruct extends Construct {
    * treats malformed/oversized/over-limit messages as handled quarantine writes and
    * returns success, so a poison message can't spin forever.
    */
-  private wireParser(mailBucket: Bucket, emailsTable: Table, quarantineBucket: Bucket): void {
+  private wireParser(
+    mailBucket: Bucket,
+    emailsTable: Table,
+    quarantineBucket: Bucket,
+  ): NodejsFunction {
     const dlq = new Queue(this, 'ParserDlq', {
       retentionPeriod: Duration.days(14),
     });
@@ -154,6 +159,7 @@ export class InboundConstruct extends Construct {
     mailBucket.addEventNotification(EventType.OBJECT_CREATED, new LambdaDestination(parser), {
       prefix: INBOUND_PREFIX,
     });
+    return parser;
   }
 
   /**
@@ -199,5 +205,17 @@ export class InboundConstruct extends Construct {
       serviceToken: provider.serviceToken,
       properties: { RuleSetName: ruleSetName },
     });
+  }
+
+  /**
+   * Let the parser recognize this deployment's own download links (`/d/{token}`) and attach
+   * the files they name: it looks tokens up by exact key (GetItem only — never a claim, so no
+   * download is counted) and matches links by the API's link base. Called by the stack once
+   * the API exists, since the links are built from its endpoint.
+   */
+  linkOwnDownloads(downloadTokensTable: ITable, downloadBaseUrl: string): void {
+    this.parser.addEnvironment('DOWNLOAD_TOKENS_TABLE', downloadTokensTable.tableName);
+    this.parser.addEnvironment('DOWNLOAD_BASE_URL', downloadBaseUrl);
+    downloadTokensTable.grant(this.parser, 'dynamodb:GetItem');
   }
 }

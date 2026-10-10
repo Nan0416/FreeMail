@@ -53,6 +53,7 @@ The SES domain identity is normally **created** by FreeMail together with its DK
 - **Outbound upload:** the client never sends bytes through the API — it gets a **presigned S3 PUT** (`POST /attachments/uploads`, or the MCP tool `create_attachment_upload`), uploads directly, and the send references the `uploadId`. Up to 100 MB per file.
 - **Outbound small (≤ 3 MB each, ≤ 10 MB per message; configurable):** **embedded in the MIME** (SendRawEmail) — the recipient's provider serves it. (SES caps the message at 40 MB; keep the threshold conservative.)
 - **Outbound large:** the **Gmail→Drive / iCloud→Mail-Drop pattern** — upload to S3, put a **download link in the email body** → a **token endpoint** (`GET /d/{token}` → validate token in DDB → 302 to a presigned S3 GET), with a configurable expiry (e.g. 30 days) + revocation. (A raw presigned URL is rejected here — 7-day max, non-revocable, leaks the bucket.)
+- **Own-domain recipients:** when a message to one of your own addresses comes back in through inbound, its own `/d/{token}` links are matched to their tokens and the linked files become real attachments on the received copy (pointing at the sent copy — permanent, no bytes copied).
 
 ## Deploy UX ✅
 A small **`npx freemail init`** CLI prompts for:

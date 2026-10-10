@@ -36,6 +36,14 @@ export interface CreateDownloadTokenInput {
   readonly downloadCount: number;
   /** Optional cap; when set, a claim past the cap fails closed. Multi-use (unlimited) when absent. */
   readonly maxDownloads?: number;
+  /** The sent message's sender address, lowercased (absent on tokens minted before it was kept). */
+  readonly sender?: string;
+  /**
+   * The sent message's recipients under this deployment's own domain (to/cc/bcc), lowercased.
+   * When the message comes back in through inbound, a link to this token becomes a permanent
+   * attachment on the received copy. Absent when there were none.
+   */
+  readonly ownDomainRecipients?: readonly string[];
 }
 
 /** Nothing to report: the conditional put either landed or threw. */
@@ -50,6 +58,13 @@ export interface ClaimDownloadTokenInput {
 
 /** One stored token row, as read back after a successful claim. */
 export interface ClaimDownloadTokenOutput extends CreateDownloadTokenInput {}
+
+export interface GetDownloadTokenInput {
+  readonly token: string;
+}
+
+/** One stored token row, read without claiming it (whatever its gates say). */
+export interface GetDownloadTokenOutput extends CreateDownloadTokenInput {}
 
 export interface DownloadTokensDao {
   /**
@@ -66,4 +81,10 @@ export interface DownloadTokensDao {
    * single uniform "no" with no oracle, and race-safe under concurrency.
    */
   claimDownloadToken(input: ClaimDownloadTokenInput): Promise<ClaimDownloadTokenOutput | null>;
+
+  /**
+   * Read a token row as stored — no gate, no download counted — or `null` when there is none.
+   * For server-side bookkeeping only (inbound linking); never a download path.
+   */
+  getDownloadToken(input: GetDownloadTokenInput): Promise<GetDownloadTokenOutput | null>;
 }

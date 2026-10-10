@@ -2,7 +2,8 @@
  * DynamoDB-backed {@link DownloadTokensDao} over #2's `downloadTokensTable`
  * (partition key `token`, TTL on `ttl`). One row per token:
  *   { token, s3Key, filename, contentType, sizeBytes, emailId,
- *     createdAt, expiresAt, ttl, revoked, downloadCount, maxDownloads? }
+ *     createdAt, expiresAt, ttl, revoked, downloadCount, maxDownloads?,
+ *     sender?, ownDomainRecipients? }
  *
  * `create` is a conditional put so a token collision never clobbers an existing row.
  * `claim` folds ALL the download gates (exists, not revoked, not expired, under the
@@ -13,6 +14,7 @@
  */
 import {
   DynamoDBDocumentClient,
+  GetCommand,
   PutCommand,
   UpdateCommand,
   type UpdateCommandOutput,
@@ -23,6 +25,8 @@ import type {
   CreateDownloadTokenInput,
   CreateDownloadTokenOutput,
   DownloadTokensDao,
+  GetDownloadTokenInput,
+  GetDownloadTokenOutput,
 } from './download-tokens-dao.js';
 import { CONDITIONAL_CHECK_FAILED, DownloadTokenEntity } from './entities.js';
 
@@ -53,6 +57,10 @@ export class DdbDownloadTokensDao implements DownloadTokensDao {
           revoked: input.revoked,
           downloadCount: input.downloadCount,
           ...(input.maxDownloads !== undefined ? { maxDownloads: input.maxDownloads } : {}),
+          ...(input.sender !== undefined ? { sender: input.sender } : {}),
+          ...(input.ownDomainRecipients !== undefined && input.ownDomainRecipients.length > 0
+            ? { ownDomainRecipients: input.ownDomainRecipients }
+            : {}),
         },
         // `#tk` because we also reference the key attribute; guards against clobbering a
         // collision (the secret token can't collide in practice, but fail safe anyway).
@@ -98,6 +106,13 @@ export class DdbDownloadTokensDao implements DownloadTokensDao {
       throw err;
     }
   }
+
+  async getDownloadToken(input: GetDownloadTokenInput): Promise<GetDownloadTokenOutput | null> {
+    const out = await this.doc.send(
+      new GetCommand({ TableName: this.tableName, Key: DownloadTokenEntity.key(input.token) }),
+    );
+    return toRecord(out.Item);
+  }
 }
 
 function toRecord(item: Record<string, unknown> | undefined): ClaimDownloadTokenOutput | null {
@@ -130,5 +145,13 @@ function toRecord(item: Record<string, unknown> | undefined): ClaimDownloadToken
     revoked: item.revoked,
     downloadCount: item.downloadCount,
     ...(typeof item.maxDownloads === 'number' ? { maxDownloads: item.maxDownloads } : {}),
+    ...(typeof item.sender === 'string' ? { sender: item.sender } : {}),
+    ...(isStringArray(item.ownDomainRecipients)
+      ? { ownDomainRecipients: item.ownDomainRecipients }
+      : {}),
   };
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }

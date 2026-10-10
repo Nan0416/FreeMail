@@ -73,6 +73,9 @@ describe('InboundDependencyFactory', () => {
     const deps = new InboundDependencyFactory({
       emailsTable: 'emails',
       mailBucket: 'bucket',
+      quarantineBucket: 'q',
+      downloadTokensTable: 'tokens',
+      downloadBaseUrl: 'https://api.example.com',
     }).build();
     expect(deps.processor).toBeDefined();
     expect(deps.emailsDao).toBeDefined();

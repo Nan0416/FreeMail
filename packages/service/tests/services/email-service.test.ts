@@ -643,11 +643,32 @@ describe('EmailService.send — embed or link (#14)', () => {
         ttl: Math.floor(Date.parse(expiresAt) / 1000),
         revoked: false,
         downloadCount: 0,
+        sender: 'me@example.com',
       },
     ]);
     expect(setup.mimeInputs[0]?.text).toContain('https://api.example.test/d/tok-0');
     // The sender's own copy (Sent folder) points at the same permanent key, without a token.
     expect(setup.emails.records[0]?.attachments?.[0]?.s3Key).toBe('attachments/sent/id-1/0');
+  });
+
+  it('records which recipients are your own addresses on the token (to/cc/bcc, lowercased)', async () => {
+    const setup = makeService();
+    const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
+
+    await setup.service.send(
+      request({
+        from: 'Me@Example.com',
+        to: ['friend@other.com', 'Team@example.com'],
+        cc: ['ops@mail.example.com'],
+        bcc: ['team@example.com', 'boss@elsewhere.org'],
+        attachments: [{ uploadId: big }],
+      }),
+    );
+
+    expect(setup.tokens.created[0]).toMatchObject({
+      sender: 'me@example.com',
+      ownDomainRecipients: ['team@example.com', 'ops@mail.example.com'],
+    });
   });
 
   it('links into an HTML-only body with an escaped anchor', async () => {
