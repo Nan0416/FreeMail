@@ -2,7 +2,11 @@ import { App } from 'aws-cdk-lib';
 import { Annotations, Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import type { FreeMailConfig } from '@freemail/shared/config';
-import { EMAIL_LIST_INDEX_ATTRIBUTES, INBOUND_RAW_RETENTION_DAYS } from '@freemail/shared/storage';
+import {
+  EMAIL_LIST_INDEX_ATTRIBUTES,
+  INBOUND_INGESTED_TAG,
+  INBOUND_RAW_RETENTION_DAYS,
+} from '@freemail/shared/storage';
 import { FreeMailStack } from '../src/freemail-stack.js';
 
 function makeConfig(overrides: Partial<FreeMailConfig> = {}): FreeMailConfig {
@@ -141,16 +145,18 @@ describe('FreeMailStack', () => {
     expect(canDescribe('McpHandler')).toBe(true);
   });
 
-  it('expires raw inbound MIME after the retention window — and nothing else', () => {
+  it('expires only fully ingested raw inbound MIME after the retention window', () => {
     const template = synth(makeConfig());
-    // Exactly one rule, scoped to inbound/: bodies, attachments, and the sent archive are
-    // permanent (sent-mail downloads point at attachments/outbound/*).
+    // Exactly one rule: inbound/ AND the ingested tag. Untagged raw MIME (failed or
+    // dead-lettered mail — the only copy) is kept; bodies, attachments, and the sent archive
+    // are permanent (sent-mail downloads point at attachments/outbound/*).
     template.hasResourceProperties('AWS::S3::Bucket', {
       LifecycleConfiguration: {
         Rules: [
           {
-            Id: 'ExpireInboundRawMime',
+            Id: 'ExpireIngestedInboundRawMime',
             Prefix: 'inbound/',
+            TagFilters: [{ Key: INBOUND_INGESTED_TAG.key, Value: INBOUND_INGESTED_TAG.value }],
             ExpirationInDays: INBOUND_RAW_RETENTION_DAYS,
             Status: 'Enabled',
           },
@@ -160,14 +166,26 @@ describe('FreeMailStack', () => {
     expect(INBOUND_RAW_RETENTION_DAYS).toBe(14);
   });
 
+  it('lets the inbound parser tag the raw MIME it has fully ingested', () => {
+    const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
+    expect(canOnMailPrefix(template, 'ParserFn', 's3:PutObjectTagging', '*')).toBe(true);
+  });
+
   it('lets the send paths write sent bodies and the readers load stored bodies', () => {
     const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
     expect(canOnMailPrefix(template, 'RestHandler', 's3:PutObject', 'bodies/sent/*')).toBe(true);
     expect(canOnMailPrefix(template, 'RestHandler', 's3:GetObject*', 'bodies/*')).toBe(true);
     expect(canOnMailPrefix(template, 'McpHandler', 's3:PutObject', 'bodies/sent/*')).toBe(true);
     expect(canOnMailPrefix(template, 'McpHandler', 's3:GetObject*', 'bodies/*')).toBe(true);
-    // Negative control: neither send path may write inbound bodies (only the parser does).
+    // Negative controls: neither send path may write inbound bodies (only the parser does),
+    // and the body grant is put-only — no deletes.
     expect(canOnMailPrefix(template, 'RestHandler', 's3:PutObject', 'bodies/*')).toBe(false);
+    expect(canOnMailPrefix(template, 'RestHandler', 's3:DeleteObject*', 'bodies/sent/*')).toBe(
+      false,
+    );
+    expect(canOnMailPrefix(template, 'McpHandler', 's3:DeleteObject*', 'bodies/sent/*')).toBe(
+      false,
+    );
   });
 
   it('buckets block public access and enforce SSL', () => {

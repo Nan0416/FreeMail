@@ -127,7 +127,11 @@ function base64OfBlocks(blocks: number): string {
 
 class FakeBodyStore implements MailBodyStore {
   readonly puts = new Map<string, MailBodyContent>();
+  fail = false;
   putBody(key: string, body: MailBodyContent): Promise<void> {
+    if (this.fail) {
+      return Promise.reject(new Error('s3 body put down'));
+    }
     this.puts.set(key, body);
     return Promise.resolve();
   }
@@ -501,6 +505,18 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
     ).rejects.toThrow('s3 down');
     expect(setup.ses.calls).toHaveLength(0);
     expect(setup.emails.records).toHaveLength(0);
+  });
+
+  it('FAILS CLOSED when a large-body write fails: no row, no send', async () => {
+    const setup = makeService();
+    setup.bodies.fail = true;
+
+    await expect(
+      setup.service.send(request({ text: 'z'.repeat(MAX_INLINE_BODY_BYTES + 1) })),
+    ).rejects.toThrow(/s3 body put down/);
+
+    expect(setup.emails.records).toEqual([]);
+    expect(setup.ses.calls).toEqual([]);
   });
 
   it('FAILS CLOSED when the sending-row write fails: no send', async () => {

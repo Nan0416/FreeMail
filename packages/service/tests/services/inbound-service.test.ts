@@ -23,6 +23,10 @@ class FakeStore implements InboundObjectStore {
   readonly objects = new Map<string, string>();
   readonly putKeys: string[] = [];
   readonly deletedKeys: string[] = [];
+  /** Raw keys tagged as fully ingested (so the lifecycle rule may expire them). */
+  readonly taggedKeys: string[] = [];
+  /** Runs inside markIngested — lets a test record the order of writes. */
+  onTag?: (key: string) => void;
   headCalls = 0;
   getCalls = 0;
   /** Optional: make putAttachment fail (simulate an S3 infra error). */
@@ -49,6 +53,11 @@ class FakeStore implements InboundObjectStore {
   }
   deleteObject(key: string): Promise<void> {
     this.deletedKeys.push(key);
+    return Promise.resolve();
+  }
+  markIngested(key: string): Promise<void> {
+    this.onTag?.(key);
+    this.taggedKeys.push(key);
     return Promise.resolve();
   }
 }
@@ -229,6 +238,53 @@ describe('InboundProcessor', () => {
     );
   });
 
+  it('tags the raw copy for expiry only AFTER the fully extracted row is committed', async () => {
+    const store = new FakeStore();
+    const events: string[] = [];
+    const repo = new FakeDao();
+    const createInbound = repo.createInboundEmail.bind(repo);
+    repo.createInboundEmail = (record) => {
+      events.push('row');
+      return createInbound(record);
+    };
+    store.onTag = (key) => events.push(`tag:${key}`);
+    seed(store, 'TAGGED', CLEAN_TEXT);
+
+    await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/TAGGED',
+    });
+
+    expect(events).toEqual(['row', 'tag:inbound/TAGGED']);
+  });
+
+  it('stores an empty inline body for attachment-only mail — never mistaken for legacy', async () => {
+    const store = new FakeStore();
+    const repo = new FakeDao();
+    seed(
+      store,
+      'PDFONLY',
+      [
+        'X-SES-Spam-Verdict: PASS',
+        'X-SES-Virus-Verdict: PASS',
+        'From: a@x.com',
+        'Subject: scan',
+        'Content-Type: application/pdf',
+        'Content-Disposition: attachment; filename="scan.pdf"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        'SGVsbG8gUERG',
+        '',
+      ].join('\r\n'),
+    );
+
+    await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/PDFONLY',
+    });
+
+    expect(repo.inbound[0]!.body).toEqual({ kind: 'inline' });
+    expect(store.taggedKeys).toEqual(['inbound/PDFONLY']);
+  });
+
   it('extracts attachments to a key OUTSIDE inbound/ (no recursive re-trigger)', async () => {
     const store = new FakeStore();
     const repo = new FakeDao();
@@ -267,6 +323,7 @@ describe('InboundProcessor', () => {
     expect(row.snippet).toBeUndefined();
     expect(row.body).toBeUndefined(); // nothing readable is stored for a non-PASS message
     expect(store.putKeys).toEqual([]); // never materialized the malware
+    expect(store.taggedKeys).toEqual([]); // raw MIME is the only copy: never expires
   });
 
   it('oversize object: quarantined WITHOUT downloading or parsing', async () => {
@@ -300,6 +357,7 @@ describe('InboundProcessor', () => {
     expect(row.parseStatus).toBe('limit_exceeded');
     expect(row.attachments).toEqual([]); // no partial publish
     expect(row.body).toBeUndefined();
+    expect(store.taggedKeys).toEqual([]); // clean but unparsed: its raw MIME is the only copy
     // Everything written this attempt was cleaned up (and is unreferenced regardless).
     expect(store.putKeys.length).toBeGreaterThan(0);
     expect(store.deletedKeys.sort()).toEqual([...store.putKeys].sort());
@@ -314,6 +372,8 @@ describe('InboundProcessor', () => {
       rawKey: 'inbound/MSG1',
     });
     expect(result).toEqual({ outcome: 'duplicate', messageId: 'MSG1' });
+    // A retry after a failed tag lands here: the raw copy is (re-)tagged all the same.
+    expect(store.taggedKeys).toEqual(['inbound/MSG1']);
   });
 
   it('malformed event key: skipped, never touches S3 or DDB', async () => {

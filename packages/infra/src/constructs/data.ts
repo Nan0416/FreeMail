@@ -1,6 +1,7 @@
 import {
   EMAIL_LIST_INDEX_ATTRIBUTES,
   EMAIL_LIST_INDEX_NAME,
+  INBOUND_INGESTED_TAG,
   INBOUND_RAW_RETENTION_DAYS,
 } from '@freemail/shared/storage';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
@@ -73,13 +74,16 @@ export class DataConstruct extends Construct {
     });
 
     this.mailBucket = this.privateBucket('MailBucket');
-    // SES's raw inbound MIME is staging: ingest extracts the body and attachments, so the raw
-    // object only backs the short-lived "Download original". Scoped to `inbound/` ONLY —
-    // stored bodies, attachments, and the sent archive are permanent, and sent-mail
-    // attachment downloads point at `attachments/outbound/*`.
+    // SES's raw inbound MIME becomes staging once ingest has fully extracted the message (body +
+    // attachments): the parser then tags it, and only then does it expire — it backs just the
+    // short-lived "Download original". Untagged raw MIME (a message that failed to parse, one
+    // whose ingest dead-lettered, anything from before tagging) is the only copy and is kept.
+    // Scoped to `inbound/` ONLY — stored bodies, attachments, and the sent archive are
+    // permanent, and sent-mail attachment downloads point at `attachments/outbound/*`.
     this.mailBucket.addLifecycleRule({
-      id: 'ExpireInboundRawMime',
+      id: 'ExpireIngestedInboundRawMime',
       prefix: 'inbound/',
+      tagFilters: { [INBOUND_INGESTED_TAG.key]: INBOUND_INGESTED_TAG.value },
       expiration: Duration.days(INBOUND_RAW_RETENTION_DAYS),
     });
   }

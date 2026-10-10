@@ -63,6 +63,7 @@ import { contentDispositionForDownload } from '../utils/content-disposition.js';
 import { decodeEmailRef, encodeEmailRef } from '../utils/email-ref.js';
 import { emailErrors } from '../utils/errors.js';
 import { listEmailsPage } from '../utils/list-merge.js';
+import { getLogger } from '../utils/logger.js';
 import { loadEmailBody } from './email-body-storage.js';
 
 /** The raw-MIME source legacy rows re-parse their bodies from — satisfied by the inbound S3 store. */
@@ -112,6 +113,8 @@ const READ_PARSE_LIMITS: ParseLimits = {
   maxTotalBodyBytes: MAX_TOTAL_BODY_BYTES,
   maxRetainedBodyChars: MAX_READ_BODY_BYTES,
 };
+
+const logger = getLogger('EmailReadService');
 
 /** S3's error name for a missing object — an expired raw message on the legacy path. */
 const NO_SUCH_KEY = 'NoSuchKey';
@@ -278,7 +281,12 @@ export class EmailReadService {
     }
     if (row.body !== undefined) {
       const content = await loadEmailBody(this.bodies, row.body);
-      return content === null ? {} : fitToResponse(content, envelopeBytes);
+      if (content === null) {
+        // Stored bodies never expire, so a missing one is an integrity problem worth seeing.
+        logger.warn(`Stored body for ${row.direction} message ${row.id} is missing or unreadable.`);
+        return {};
+      }
+      return fitToResponse(content, envelopeBytes);
     }
     return this.legacyBody(row, envelopeBytes);
   }

@@ -143,8 +143,13 @@ class FakeRawMime implements RawMimeSource {
   readonly getStreamCalls: string[] = [];
   /** Keys whose object is gone (expired by the lifecycle rule) — S3 answers NoSuchKey. */
   readonly missing = new Set<string>();
+  /** When set, every read fails with this error instead. */
+  failWith?: Error;
   getStream(key: string): Promise<Readable> {
     this.getStreamCalls.push(key);
+    if (this.failWith) {
+      return Promise.reject(this.failWith);
+    }
     if (this.missing.has(key)) {
       const err = new Error('The specified key does not exist.');
       err.name = 'NoSuchKey';
@@ -680,6 +685,19 @@ describe('EmailReadService.getEmail — stored bodies', () => {
     expect(detail.subject).toBe('Inbound hi');
     expect(detail.text).toBeUndefined();
     expect(detail.html).toBeUndefined();
+  });
+});
+
+describe('EmailReadService.getEmail — legacy fallback failures', () => {
+  it('surfaces any raw-MIME read failure other than an expired object', async () => {
+    const repo = new FakeDao();
+    const rawMime = new FakeRawMime();
+    rawMime.failWith = Object.assign(new Error('Access Denied'), { name: 'AccessDenied' });
+    const handle = repo.put(INBOUND_PARTITION, inboundRow());
+
+    await expect(service(repo, new FakePresigner(), rawMime).getEmail({ handle })).rejects.toThrow(
+      /Access Denied/,
+    );
   });
 });
 

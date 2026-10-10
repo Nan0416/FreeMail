@@ -27,6 +27,7 @@ import {
 } from '@freemail/shared';
 import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
 import type {
+  CreateSentEmailInput,
   EmailsDao,
   SentAttachmentDescriptor,
   UpdateSentEmailStatusInput,
@@ -42,7 +43,7 @@ import {
 import { emailErrors } from '../utils/errors.js';
 import { buildRawMime, type RawMimeAttachment, type RawMimeInput } from '../utils/mime.js';
 import type { SesSender } from '../facades/ses-email-facade.js';
-import { bodyKey, storeEmailBody } from './email-body-storage.js';
+import { bodyKey, estimateRowBytes, storeEmailBody } from './email-body-storage.js';
 
 export interface EmailServiceDeps {
   readonly ses: SesSender;
@@ -195,9 +196,7 @@ export class EmailService {
     // failure are harmless (RETAINed).
     await this.objectStore.put(rawS3Key, raw);
     const attachments = await this.storeAttachmentCopies(processed, linkedKeys, id);
-    // The body exactly as sent (download links included), so opening it never re-parses the archive.
-    const storedBody = await storeEmailBody(this.bodies, bodyKey('sent', id), body.text, body.html);
-    await this.emailsDao.createSentEmail({
+    const record: CreateSentEmailInput = {
       id,
       from,
       to,
@@ -210,8 +209,16 @@ export class EmailService {
       status: 'sending',
       rawS3Key,
       attachments,
-      body: storedBody,
+    };
+    // The body exactly as sent (download links included), so opening it never re-parses the
+    // archive — sized against the rest of the row, which the send path does not cap.
+    const storedBody = await storeEmailBody(this.bodies, {
+      key: bodyKey('sent', id),
+      text: body.text,
+      html: body.html,
+      otherRowBytes: estimateRowBytes(record),
     });
+    await this.emailsDao.createSentEmail({ ...record, body: storedBody });
 
     let messageId: string;
     try {

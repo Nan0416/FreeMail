@@ -13,13 +13,12 @@
  * during the failed attempt are unreachable (the row is the only key source the read
  * API serves) — and best-effort deletes them. Only an infra failure (S3/DDB) throws,
  * so the async invocation retries and eventually DLQs.
+ *
+ * SES's raw copy is tagged for expiry only AFTER the row of a fully extracted message is
+ * committed. A message that failed, or never got a row, keeps its raw copy indefinitely —
+ * it is the only copy of that message.
  */
-import type {
-  EmailsDao,
-  CreateInboundEmailInput,
-  InboundVerdict,
-  StoredEmailBody,
-} from '../data/emails-dao.js';
+import type { EmailsDao, CreateInboundEmailInput, InboundVerdict } from '../data/emails-dao.js';
 import type { InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import type { MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { validateInboundEventKey } from '../utils/event-key.js';
@@ -32,7 +31,7 @@ import {
   snippetFromText,
 } from '../utils/sanitize.js';
 import { decideExposure, type Exposure } from '../utils/verdicts.js';
-import { bodyKey, storeEmailBody } from './email-body-storage.js';
+import { bodyKey, estimateRowBytes, storeEmailBody } from './email-body-storage.js';
 
 /** Extracted attachments live OUTSIDE the `inbound/` trigger prefix so writes never re-invoke the parser. */
 export const ATTACHMENTS_PREFIX = 'attachments/inbound/';
@@ -111,17 +110,25 @@ export class InboundProcessor {
       await this.cleanup(writtenKeys);
     }
     const exposure = decideExposure(parsed.verdicts, parsed.parseStatus);
-    // Store the body only when content is exposable, exactly like the snippet and attachments:
-    // a quarantined (virus / parse-failed) message keeps nothing readable.
-    const body = exposure.exposeContent
-      ? await storeEmailBody(
-          this.bodies,
-          bodyKey('inbound', key.messageId),
-          parsed.textBody,
-          parsed.htmlBody,
-        )
-      : undefined;
-    return this.commit(this.record(base, parsed, exposure, body), key.messageId);
+    const record = this.record(base, parsed, exposure);
+    if (!exposure.exposeContent) {
+      // Nothing readable is kept (virus / parse failure), so SES's raw copy stays untagged and
+      // never expires: it is the only copy of the message.
+      return this.commit(record, key.messageId);
+    }
+    // Store the body exactly like the snippet and attachments — only for exposable content —
+    // sized against the rest of the row so an inline body can't push it past DynamoDB's limit.
+    const body = await storeEmailBody(this.bodies, {
+      key: bodyKey('inbound', key.messageId),
+      text: parsed.textBody,
+      html: parsed.htmlBody,
+      otherRowBytes: estimateRowBytes(record),
+    });
+    const response = await this.commit({ ...record, body }, key.messageId);
+    // Fully extracted and committed (or already committed, on a redelivery): the raw copy is now
+    // only the short-lived `.eml` source, so let the lifecycle rule expire it.
+    await this.store.markIngested(key.rawS3Key);
+    return response;
   }
 
   /** Conditional-put the row (the commit marker) and map the outcome. */
@@ -172,7 +179,6 @@ export class InboundProcessor {
     base: RecordBase,
     parsed: ParsedInbound,
     exposure: Exposure,
-    body: StoredEmailBody | undefined,
   ): CreateInboundEmailInput {
     const snippet = exposure.exposeContent ? this.snippet(parsed) : undefined;
     return {
@@ -195,7 +201,6 @@ export class InboundProcessor {
       quarantined: exposure.quarantined,
       rawS3Key: base.rawS3Key,
       sizeBytes: base.sizeBytes,
-      body,
     };
   }
 

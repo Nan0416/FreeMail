@@ -13,12 +13,17 @@ import type { StoredEmailBody } from '../data/emails-dao.js';
 import type { MailBodyContent, MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { fitBodyToBudget } from '../utils/body-budget.js';
 
-/**
- * Bodies up to this many UTF-8 bytes (text + HTML) are kept inline in the emails row. The rest
- * of an inbound row is bounded at roughly 50 KB (capped addresses, subject, attachment
- * descriptors), so an inline body this size keeps the row well under DynamoDB's 400 KB item limit.
- */
+/** A body is never kept inline above this many UTF-8 bytes (text + HTML), however small its row. */
 export const MAX_INLINE_BODY_BYTES = 256 * 1024;
+
+/**
+ * A row with an inline body must stay at or under this many bytes in total. DynamoDB caps an
+ * item at 400 KB; the gap leaves room for later updates to the row (a sent row's status +
+ * `sesMessageId` / `error`). A hostile inbound envelope alone can reach ~130 KB (multi-byte
+ * addresses at their caps, 25 attachment descriptors), so the rest of the row is measured
+ * rather than assumed.
+ */
+export const MAX_INLINE_ROW_BYTES = 350 * 1024;
 
 /** The S3 key for a body stored outside the row. */
 export function bodyKey(direction: 'sent' | 'inbound', id: string): string {
@@ -26,23 +31,37 @@ export function bodyKey(direction: 'sent' | 'inbound', id: string): string {
 }
 
 /**
- * Cap a body to what the reader can show, then store it inline or in S3. Returns the row's
- * pointer, or undefined when there is no body at all. The S3 write happens BEFORE the caller
- * writes the row (the row is the commit marker), so a row never points at a missing object.
+ * An upper bound on a row's stored size: its JSON form, which carries every attribute name and
+ * value plus punctuation DynamoDB doesn't charge for, so it never under-counts.
+ */
+export function estimateRowBytes(row: object): number {
+  return Buffer.byteLength(JSON.stringify(row), 'utf8');
+}
+
+export interface StoreEmailBodyInput {
+  /** Where the body goes if it is stored in S3 ({@link bodyKey}). */
+  readonly key: string;
+  readonly text?: string | undefined;
+  readonly html?: string | undefined;
+  /** {@link estimateRowBytes} of the row this body will be stored on, without the body. */
+  readonly otherRowBytes: number;
+}
+
+/**
+ * Cap a body to what the reader can show, then store it inline or in S3, and return the row's
+ * pointer. A message with no text or HTML part (attachments only) gets an EMPTY inline body,
+ * so it is never mistaken for a legacy row that predates stored bodies. The S3 write happens
+ * BEFORE the caller writes the row (the row is the commit marker), so a row never points at a
+ * missing object.
  */
 export async function storeEmailBody(
   store: MailBodyStore,
-  key: string,
-  text: string | undefined,
-  html: string | undefined,
-): Promise<StoredEmailBody | undefined> {
-  if (text === undefined && html === undefined) {
-    return undefined;
-  }
+  input: StoreEmailBodyInput,
+): Promise<StoredEmailBody> {
   // The same per-part cap the reader applied when it re-parsed raw MIME, so what is stored is
   // exactly what used to be shown. The response budget is re-applied at read time, when the
   // envelope's size is known.
-  const fitted = fitBodyToBudget(text, html, {
+  const fitted = fitBodyToBudget(input.text, input.html, {
     partCapBytes: MAX_READ_BODY_BYTES,
     serializedBudgetBytes: MAX_EMAIL_RESPONSE_BYTES,
   });
@@ -51,25 +70,35 @@ export async function storeEmailBody(
     ...(fitted.html !== undefined ? { html: fitted.html } : {}),
     ...(fitted.truncated ? { truncated: true } : {}),
   };
-  if (utf8Bytes(content.text) + utf8Bytes(content.html) <= MAX_INLINE_BODY_BYTES) {
+  const bodyBytes = utf8Bytes(content.text) + utf8Bytes(content.html);
+  if (
+    bodyBytes <= MAX_INLINE_BODY_BYTES &&
+    input.otherRowBytes + bodyBytes <= MAX_INLINE_ROW_BYTES
+  ) {
     return { kind: 'inline', ...content };
   }
-  await store.putBody(key, content);
-  return { kind: 's3', s3Key: key };
+  await store.putBody(input.key, content);
+  return { kind: 's3', s3Key: input.key };
 }
 
-/** Read a stored body back; null when its S3 object is missing or unreadable. */
+/**
+ * Read a stored body back; null when its S3 object is missing or the stored pointer is not one
+ * this code wrote. An inline body is re-checked field by field, like the S3 JSON.
+ */
 export async function loadEmailBody(
   store: MailBodyStore,
   body: StoredEmailBody,
 ): Promise<MailBodyContent | null> {
   if (body.kind === 's3') {
-    return store.getBody(body.s3Key);
+    return typeof body.s3Key === 'string' ? store.getBody(body.s3Key) : null;
+  }
+  if (body.kind !== 'inline') {
+    return null;
   }
   return {
-    ...(body.text !== undefined ? { text: body.text } : {}),
-    ...(body.html !== undefined ? { html: body.html } : {}),
-    ...(body.truncated ? { truncated: true } : {}),
+    ...(typeof body.text === 'string' ? { text: body.text } : {}),
+    ...(typeof body.html === 'string' ? { html: body.html } : {}),
+    ...(body.truncated === true ? { truncated: true } : {}),
   };
 }
 
