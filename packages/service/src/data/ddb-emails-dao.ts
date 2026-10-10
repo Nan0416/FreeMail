@@ -55,13 +55,31 @@ type InboundSummaryFields = Omit<
   'direction' | 'sk'
 >;
 
-/** The same reconstruction for a list-index entry, which carries only the projected fields. */
-function toSummary(item: Record<string, unknown>): EmailSummary {
+/**
+ * The same reconstruction for a list-index entry, which carries only the projected fields.
+ * The direction comes from the partition that was queried, never from a projected attribute,
+ * so the list's merge and cursor can't be misled by a projection change.
+ */
+function toSummary(item: Record<string, unknown>, direction: 'sent' | 'inbound'): EmailSummary {
   const sk = String(item.sk);
-  if (item.direction === 'inbound') {
+  if (direction === 'inbound') {
     return { ...(item as unknown as InboundSummaryFields), direction: 'inbound', sk };
   }
   return { ...(item as unknown as SentSummaryFields), direction: 'sent', sk };
+}
+
+/**
+ * DynamoDB rejects a query on an index that is still backfilling, or that a deploy has not
+ * created yet. CloudFormation does NOT wait for a newly added GSI to finish backfilling before
+ * it updates the Lambdas that read it, so these are expected for a few minutes after the deploy
+ * that adds the index.
+ */
+function isIndexNotReadable(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    err.name === 'ValidationException' &&
+    /backfilling global secondary index|does not have the specified index/i.test(err.message)
+  );
 }
 
 export class DdbEmailsDao implements EmailsDao {
@@ -185,7 +203,18 @@ export class DdbEmailsDao implements EmailsDao {
   }
 
   async listEmailSummaries(input: ListEmailSummariesInput): Promise<ListEmailSummariesOutput> {
-    return { emails: (await this.queryPartition(input, EMAIL_LIST_INDEX_NAME)).map(toSummary) };
+    let items: Record<string, unknown>[];
+    try {
+      items = await this.queryPartition(input, EMAIL_LIST_INDEX_NAME);
+    } catch (err) {
+      if (!isIndexNotReadable(err)) {
+        throw err;
+      }
+      // Until the index is readable, serve the page from the table: same keys, same order,
+      // same paging — just larger reads. No list outage while a new index backfills.
+      items = await this.queryPartition(input);
+    }
+    return { emails: items.map((item) => toSummary(item, input.direction)) };
   }
 
   /**

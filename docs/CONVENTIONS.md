@@ -262,9 +262,10 @@ first-writer-wins enrollment, atomic claim-and-consume, versioned compare-and-sw
 each has a test pinning that exact semantics. `entities.ts` is the schema half of an entity
 definition without the query builder on top.
 
-**Index names and projections live in `@freemail/shared/storage`,** not in `entities.ts`,
-because the CDK app creates the index and the service queries it — a name or projected
-attribute spelled in two packages would drift. The service then derives its row type from
+**[deviation]** **Index names and projections live in `@freemail/shared/storage`,** not in
+`entities.ts`. The reference service spells an index name in both its CDK stack and its
+entities file; here the CDK app creates the index and the service queries it from one
+definition, because a name or projected attribute spelled in two packages would drift. The service then derives its row type from
 the projection list (`EmailSummary` picks exactly the projected fields), so reading a field
 the index does not carry is a compile error rather than a silent `undefined`. Changing a
 projection is a migration: CloudFormation cannot edit a GSI's projection in place.
