@@ -12,8 +12,9 @@ import type {
 } from '../../src/data/emails-dao.js';
 import type { InboundObjectStore, ObjectHead } from '../../src/facades/s3-inbound-object-store.js';
 import type { MailBodyContent, MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
+import type { QuarantineStore } from '../../src/facades/s3-quarantine-store.js';
 import { MAX_INLINE_BODY_BYTES } from '../../src/services/email-body-storage.js';
-import { MAX_ATTACHMENTS } from '../../src/utils/inbound-limits.js';
+import { MAX_ATTACHMENTS, MAX_HEADER_BLOCK_BYTES } from '../../src/utils/inbound-limits.js';
 import { ATTACHMENTS_PREFIX, InboundProcessor } from '../../src/services/inbound-service.js';
 
 const RECEIVED = new Date('2026-05-01T09:30:00.000Z');
@@ -58,6 +59,23 @@ class FakeStore implements InboundObjectStore {
   markIngested(key: string): Promise<void> {
     this.onTag?.(key);
     this.taggedKeys.push(key);
+    return Promise.resolve();
+  }
+  /** Ranged reads: the key + byte cap of each, served from `objects`. */
+  readonly headReads: { key: string; maxBytes: number }[] = [];
+  getHead(key: string, maxBytes: number): Promise<Buffer> {
+    this.headReads.push({ key, maxBytes });
+    return Promise.resolve(Buffer.from(this.objects.get(key) ?? '').subarray(0, maxBytes));
+  }
+}
+
+class FakeQuarantine implements QuarantineStore {
+  readonly copies: { sourceKey: string; destKey: string }[] = [];
+  /** Runs inside copyFromMail — lets a test record the order of writes. */
+  onCopy?: () => void;
+  copyFromMail(sourceKey: string, destKey: string): Promise<void> {
+    this.onCopy?.();
+    this.copies.push({ sourceKey, destKey });
     return Promise.resolve();
   }
 }
@@ -183,7 +201,12 @@ describe('InboundProcessor', () => {
     const store = new FakeStore();
     const repo = new FakeDao();
     seed(store, 'MSG1', CLEAN_TEXT);
-    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+    const result = await new InboundProcessor(
+      store,
+      repo,
+      new FakeBodyStore(),
+      new FakeQuarantine(),
+    ).process({
       rawKey: 'inbound/MSG1',
     });
 
@@ -206,7 +229,9 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     const bodies = new FakeBodyStore();
     seed(store, 'SMALL', CLEAN_TEXT);
-    await new InboundProcessor(store, repo, bodies).process({ rawKey: 'inbound/SMALL' });
+    await new InboundProcessor(store, repo, bodies, new FakeQuarantine()).process({
+      rawKey: 'inbound/SMALL',
+    });
 
     const row = repo.inbound[0]!;
     expect(row.body).toEqual({ kind: 'inline', text: expect.stringContaining('Hello there') });
@@ -229,13 +254,54 @@ describe('InboundProcessor', () => {
     const big = Array.from({ length: Math.ceil(MAX_INLINE_BODY_BYTES / 1000) + 10 }, () => line);
     seed(store, 'LARGE', cleanWithBody(big.join('\r\n')));
 
-    await new InboundProcessor(store, repo, bodies).process({ rawKey: 'inbound/LARGE' });
+    await new InboundProcessor(store, repo, bodies, new FakeQuarantine()).process({
+      rawKey: 'inbound/LARGE',
+    });
 
     expect(events).toEqual(['body:bodies/inbound/LARGE.json', 'row']);
     expect(repo.inbound[0]!.body).toEqual({ kind: 's3', s3Key: 'bodies/inbound/LARGE.json' });
     expect(bodies.puts.get('bodies/inbound/LARGE.json')!.text!.length).toBeGreaterThan(
       MAX_INLINE_BODY_BYTES,
     );
+  });
+
+  it('quarantines a failed message BEFORE its row, then lets the SES raw copy expire', async () => {
+    const store = new FakeStore();
+    const events: string[] = [];
+    const repo = new FakeDao();
+    const createInbound = repo.createInboundEmail.bind(repo);
+    repo.createInboundEmail = (record) => {
+      events.push('row');
+      return createInbound(record);
+    };
+    const quarantine = new FakeQuarantine();
+    quarantine.onCopy = () => events.push('quarantine');
+    store.onTag = () => events.push('tag');
+    seed(store, 'VIRUS', withAttachment('FAIL'));
+
+    await new InboundProcessor(store, repo, new FakeBodyStore(), quarantine).process({
+      rawKey: 'inbound/VIRUS',
+    });
+
+    expect(events).toEqual(['quarantine', 'row', 'tag']);
+    expect(quarantine.copies).toEqual([
+      { sourceKey: 'inbound/VIRUS', destKey: 'inbound/VIRUS.eml' },
+    ]);
+  });
+
+  it('a clean message is neither quarantined nor filed as failed', async () => {
+    const store = new FakeStore();
+    const repo = new FakeDao();
+    const quarantine = new FakeQuarantine();
+    seed(store, 'CLEAN', CLEAN_TEXT);
+
+    await new InboundProcessor(store, repo, new FakeBodyStore(), quarantine).process({
+      rawKey: 'inbound/CLEAN',
+    });
+
+    expect(quarantine.copies).toEqual([]);
+    expect(repo.inbound[0]!.failed).toBeUndefined();
+    expect(repo.inbound[0]!.quarantineS3Key).toBeUndefined();
   });
 
   it('tags the raw copy for expiry only AFTER the fully extracted row is committed', async () => {
@@ -250,7 +316,7 @@ describe('InboundProcessor', () => {
     store.onTag = (key) => events.push(`tag:${key}`);
     seed(store, 'TAGGED', CLEAN_TEXT);
 
-    await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+    await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).process({
       rawKey: 'inbound/TAGGED',
     });
 
@@ -277,7 +343,7 @@ describe('InboundProcessor', () => {
       ].join('\r\n'),
     );
 
-    await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+    await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).process({
       rawKey: 'inbound/PDFONLY',
     });
 
@@ -289,7 +355,12 @@ describe('InboundProcessor', () => {
     const store = new FakeStore();
     const repo = new FakeDao();
     seed(store, 'MSG2', withAttachment('PASS'));
-    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+    const result = await new InboundProcessor(
+      store,
+      repo,
+      new FakeBodyStore(),
+      new FakeQuarantine(),
+    ).process({
       rawKey: 'inbound/MSG2',
     });
 
@@ -309,7 +380,12 @@ describe('InboundProcessor', () => {
     const store = new FakeStore();
     const repo = new FakeDao();
     seed(store, 'MSG3', withAttachment('FAIL'));
-    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+    const result = await new InboundProcessor(
+      store,
+      repo,
+      new FakeBodyStore(),
+      new FakeQuarantine(),
+    ).process({
       rawKey: 'inbound/MSG3',
     });
 
@@ -323,24 +399,54 @@ describe('InboundProcessor', () => {
     expect(row.snippet).toBeUndefined();
     expect(row.body).toBeUndefined(); // nothing readable is stored for a non-PASS message
     expect(store.putKeys).toEqual([]); // never materialized the malware
-    expect(store.taggedKeys).toEqual([]); // raw MIME is the only copy: never expires
+    expect(row.failed).toBe(true);
+    expect(row.quarantineS3Key).toBe('inbound/MSG3.eml');
   });
 
-  it('oversize object: quarantined WITHOUT downloading or parsing', async () => {
+  it('oversize: never downloaded — sender, subject, and verdicts come from its header block', async () => {
     const store = new FakeStore();
     const repo = new FakeDao();
-    // HEAD reports a size over the raw cap; the body is never fetched.
+    const quarantine = new FakeQuarantine();
+    // HEAD reports a size over the raw cap; only the leading header block is ever read.
     store.heads.set('inbound/BIG', { sizeBytes: 41 * 1024 * 1024, lastModified: RECEIVED });
-    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
-      rawKey: 'inbound/BIG',
-    });
+    store.objects.set('inbound/BIG', `${CLEAN_TEXT}${'x'.repeat(1000)}`);
+
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), quarantine).process(
+      { rawKey: 'inbound/BIG' },
+    );
 
     expect(result.outcome).toBe('quarantined');
     expect(store.getCalls).toBe(0); // never downloaded
+    expect(store.headReads).toEqual([{ key: 'inbound/BIG', maxBytes: MAX_HEADER_BLOCK_BYTES }]);
     const row = repo.inbound[0]!;
     expect(row.parseStatus).toBe('oversize');
+    expect(row.from).toBe('a@x.com');
+    expect(row.subject).toBe('Hi');
+    expect(row.virusVerdict).toBe('PASS'); // SES's real verdict, not ABSENT
     expect(row.quarantined).toBe(true);
     expect(row.attachments).toEqual([]);
+    expect(row.body).toBeUndefined();
+    // Errors folder: its raw MIME is kept in quarantine.
+    expect(row.failed).toBe(true);
+    expect(row.quarantineS3Key).toBe('inbound/BIG.eml');
+    expect(quarantine.copies).toEqual([{ sourceKey: 'inbound/BIG', destKey: 'inbound/BIG.eml' }]);
+  });
+
+  it('oversize with a header block too long to read: ABSENT verdicts, still kept', async () => {
+    const store = new FakeStore();
+    const repo = new FakeDao();
+    store.heads.set('inbound/HUGEHDR', { sizeBytes: 41 * 1024 * 1024, lastModified: RECEIVED });
+    // No blank line inside the bytes read: the header block runs past them.
+    store.objects.set('inbound/HUGEHDR', `X-Long: ${'y'.repeat(MAX_HEADER_BLOCK_BYTES)}\r\n\r\n`);
+
+    await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).process({
+      rawKey: 'inbound/HUGEHDR',
+    });
+
+    const row = repo.inbound[0]!;
+    expect(row.virusVerdict).toBe('ABSENT');
+    expect(row.from).toBe('');
+    expect(row.failed).toBe(true);
   });
 
   it('limit breach: quarantines and cleans up attachments written during the failed attempt', async () => {
@@ -348,7 +454,12 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     // One more attachment than the default cap → limit_exceeded after the cap is filled.
     seed(store, 'MANY', manyAttachments(MAX_ATTACHMENTS + 1));
-    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+    const result = await new InboundProcessor(
+      store,
+      repo,
+      new FakeBodyStore(),
+      new FakeQuarantine(),
+    ).process({
       rawKey: 'inbound/MANY',
     });
 
@@ -357,7 +468,8 @@ describe('InboundProcessor', () => {
     expect(row.parseStatus).toBe('limit_exceeded');
     expect(row.attachments).toEqual([]); // no partial publish
     expect(row.body).toBeUndefined();
-    expect(store.taggedKeys).toEqual([]); // clean but unparsed: its raw MIME is the only copy
+    expect(row.failed).toBe(true); // clean but unparsed → Errors folder, raw kept in quarantine
+    expect(row.quarantineS3Key).toBe('inbound/MANY.eml');
     // Everything written this attempt was cleaned up (and is unreferenced regardless).
     expect(store.putKeys.length).toBeGreaterThan(0);
     expect(store.deletedKeys.sort()).toEqual([...store.putKeys].sort());
@@ -368,7 +480,12 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     repo.existingIds.add('MSG1');
     seed(store, 'MSG1', CLEAN_TEXT);
-    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+    const result = await new InboundProcessor(
+      store,
+      repo,
+      new FakeBodyStore(),
+      new FakeQuarantine(),
+    ).process({
       rawKey: 'inbound/MSG1',
     });
     expect(result).toEqual({ outcome: 'duplicate', messageId: 'MSG1' });
@@ -379,7 +496,12 @@ describe('InboundProcessor', () => {
   it('malformed event key: skipped, never touches S3 or DDB', async () => {
     const store = new FakeStore();
     const repo = new FakeDao();
-    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+    const result = await new InboundProcessor(
+      store,
+      repo,
+      new FakeBodyStore(),
+      new FakeQuarantine(),
+    ).process({
       rawKey: 'inbound/a/b/traversal',
     });
     expect(result.outcome).toBe('skipped');
@@ -390,7 +512,12 @@ describe('InboundProcessor', () => {
   it('missing object: skipped (HEAD returns null)', async () => {
     const store = new FakeStore();
     const repo = new FakeDao();
-    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+    const result = await new InboundProcessor(
+      store,
+      repo,
+      new FakeBodyStore(),
+      new FakeQuarantine(),
+    ).process({
       rawKey: 'inbound/GONE',
     });
     expect(result.outcome).toBe('skipped');
@@ -404,7 +531,9 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     seed(store, 'MSG2', withAttachment('PASS'));
     await expect(
-      new InboundProcessor(store, repo, new FakeBodyStore()).process({ rawKey: 'inbound/MSG2' }),
+      new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).process({
+        rawKey: 'inbound/MSG2',
+      }),
     ).rejects.toThrow('s3 put failed');
     expect(repo.inbound).toEqual([]); // no row committed on an infra failure
   });

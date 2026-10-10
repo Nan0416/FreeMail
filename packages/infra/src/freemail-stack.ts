@@ -36,7 +36,13 @@ export class FreeMailStack extends Stack {
       // the construct instantiates the receipt pipeline as a child. The confirmInboundMx
       // acknowledgement gate (assertInboundAcknowledged, above) still fires first.
       ...(props.config.inbound.enabled
-        ? { inbound: { mailBucket: data.mailBucket, emailsTable: data.emailsTable } }
+        ? {
+            inbound: {
+              mailBucket: data.mailBucket,
+              emailsTable: data.emailsTable,
+              quarantineBucket: data.quarantineBucket,
+            },
+          }
         : {}),
     });
 
@@ -52,6 +58,7 @@ export class FreeMailStack extends Stack {
       emailsTable: data.emailsTable,
       downloadTokensTable: data.downloadTokensTable,
       mailBucket: data.mailBucket,
+      quarantineBucket: data.quarantineBucket,
       emailDomain: props.config.emailDomain,
       sesConfigurationSetName: ses.configurationSet.configurationSetName,
       inboundEnabled: props.config.inbound.enabled,
@@ -78,6 +85,7 @@ export class FreeMailStack extends Stack {
       });
     }
     new CfnOutput(this, 'MailBucketName', { value: data.mailBucket.bucketName });
+    new CfnOutput(this, 'QuarantineBucketName', { value: data.quarantineBucket.bucketName });
     new CfnOutput(this, 'WebBucketName', { value: web.webBucket.bucketName });
 
     new CfnOutput(this, 'ApiEndpoint', {

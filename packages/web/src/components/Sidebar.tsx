@@ -1,4 +1,14 @@
-import { FileText, Inbox, KeyRound, Layers, LogOut, Mail, PenSquare, Send } from 'lucide-react';
+import {
+  FileText,
+  Inbox,
+  KeyRound,
+  Layers,
+  LogOut,
+  Mail,
+  PenSquare,
+  Send,
+  ShieldAlert,
+} from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,7 +22,7 @@ import {
 import { Kbd } from './Kbd.js';
 import { cn } from '@/lib/utils';
 
-export type FolderId = 'inbox' | 'all' | 'sent' | 'drafts' | 'keys';
+export type FolderId = 'inbox' | 'all' | 'sent' | 'drafts' | 'errors' | 'keys';
 
 interface NavItem {
   readonly id: FolderId;
@@ -38,6 +48,10 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
     { id: 'sent', label: 'Sent', icon: Send },
     { id: 'drafts', label: 'Drafts', icon: FileText },
     ...(props.inboundEnabled ? [{ id: 'all' as const, label: 'All mail', icon: Layers }] : []),
+    // Received mail whose content couldn't be extracted (failed scan or parse).
+    ...(props.inboundEnabled
+      ? [{ id: 'errors' as const, label: 'Errors', icon: ShieldAlert }]
+      : []),
   ];
 
   return (

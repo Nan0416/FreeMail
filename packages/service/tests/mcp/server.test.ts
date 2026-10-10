@@ -252,6 +252,21 @@ describe('list_emails', () => {
     expect(text).toContain('<<<END-UNTRUSTED-EMAIL TESTNONCE>>>');
   });
 
+  it('passes the failed filter through and flags failed rows in the text', async () => {
+    const listEmails = vi
+      .fn()
+      .mockResolvedValue({ emails: [{ ...inboundItem(), failed: true, quarantined: true }] });
+    const client = await connectRead(fakeReadService({ listEmails }));
+
+    const result = await client.callTool({
+      name: 'list_emails',
+      arguments: { direction: 'failed' },
+    });
+
+    expect(listEmails).toHaveBeenCalledWith({ direction: 'failed', limit: 25 });
+    expect(textOf(result)).toContain('[failed: content not extracted]');
+  });
+
   it('marks a sent-only page self-authored and does not frame the text', async () => {
     const listEmails = vi.fn().mockResolvedValue({ emails: [sentItem()] });
     const client = await connectRead(fakeReadService({ listEmails }));

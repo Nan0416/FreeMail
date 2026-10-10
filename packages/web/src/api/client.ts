@@ -2,7 +2,7 @@ import type {
   AttachmentDownloadResponse,
   CreateApiKeyResponse,
   EmailDetail,
-  EmailDirection,
+  EmailListFilter,
   ListApiKeysResponse,
   ListEmailsResponse,
   RawEmailDownloadResponse,
@@ -13,8 +13,8 @@ import type {
 
 /** Query params for {@link FreeMailClient.listEmails}. */
 export interface ListEmailsParams {
-  /** Restrict the merged timeline to one partition; omit for both. */
-  readonly direction?: EmailDirection;
+  /** One direction, or `failed` (the Errors folder); omit for the merged sent + inbound timeline. */
+  readonly direction?: EmailListFilter;
   /** Page size (server clamps to its max); omit for the server default. */
   readonly limit?: number;
   /** Opaque continuation token from a prior `nextCursor`. */

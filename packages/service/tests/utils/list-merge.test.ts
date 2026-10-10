@@ -206,6 +206,11 @@ describe('list cursor codec', () => {
   it('round-trips a partial (single-direction) cursor', () => {
     const token = encodeListCursor({ v: 1, sent: 'a#1' });
     expect(decodeListCursor(token)).toEqual({ v: 1, sent: 'a#1' });
+    // The Errors folder keeps its own position.
+    expect(decodeListCursor(encodeListCursor({ v: 1, failed: 'c#3' }))).toEqual({
+      v: 1,
+      failed: 'c#3',
+    });
   });
 
   it('rejects a malformed / wrong-version / wrong-type cursor with a 400', () => {

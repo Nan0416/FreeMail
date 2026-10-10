@@ -31,6 +31,11 @@ export class DataConstruct extends Construct {
   readonly downloadTokensTable: Table;
   /** Inbound raw MIME (expiring), stored bodies, parsed attachments, sent MIME + attachments. */
   readonly mailBucket: Bucket;
+  /**
+   * Raw MIME of received messages whose content could not be extracted (the Errors folder):
+   * SES's `inbound/` copy expires, so these are copied here to stay downloadable. No expiry.
+   */
+  readonly quarantineBucket: Bucket;
 
   constructor(scope: Construct, id: string) {
     super(scope, id);
@@ -74,6 +79,7 @@ export class DataConstruct extends Construct {
     });
 
     this.mailBucket = this.privateBucket('MailBucket');
+    this.quarantineBucket = this.privateBucket('QuarantineBucket');
     // SES's raw inbound MIME becomes staging once ingest has fully extracted the message (body +
     // attachments): the parser then tags it, and only then does it expire — it backs just the
     // short-lived "Download original". Untagged raw MIME (a message that failed to parse, one

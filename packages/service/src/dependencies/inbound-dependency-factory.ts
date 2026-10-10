@@ -8,6 +8,7 @@ import { createDocumentClient } from '../data/document-client.js';
 import type { EmailsDao } from '../data/emails-dao.js';
 import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
+import { S3QuarantineStore } from '../facades/s3-quarantine-store.js';
 import type { InboundConfig } from '../handlers/inbound-config.js';
 import { InboundProcessor } from '../services/inbound-service.js';
 
@@ -35,6 +36,7 @@ export class InboundDependencyFactory {
         objectStore,
         emailsDao,
         new S3MailBodyStore(s3, this.config.mailBucket),
+        new S3QuarantineStore(s3, this.config.mailBucket, this.config.quarantineBucket),
       ),
     };
   }

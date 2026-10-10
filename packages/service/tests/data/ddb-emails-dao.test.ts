@@ -308,6 +308,57 @@ function inboundItem(sk: string): Record<string, unknown> {
   return { ...inboundRecord(), pk: 'INBOUND', sk, direction: 'inbound' };
 }
 
+describe('DdbEmailsDao — Errors folder', () => {
+  it('files a failed inbound message under FAILED, with its quarantine pointer', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.createInboundEmail(
+      inboundRecord({ failed: true, quarantineS3Key: 'inbound/ses-in-1.eml' }),
+    );
+
+    const item = (doc.commands[0] as PutCommand).input.Item!;
+    expect(item.pk).toBe('FAILED');
+    expect(item.sk).toBe(`${inboundRecord().receivedAt}#${inboundRecord().id}`);
+    expect(item).toMatchObject({
+      direction: 'inbound',
+      failed: true,
+      quarantineS3Key: 'inbound/ses-in-1.eml',
+    });
+  });
+
+  it('keeps a normal inbound message under INBOUND', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.createInboundEmail(inboundRecord());
+
+    expect((doc.commands[0] as PutCommand).input.Item!.pk).toBe('INBOUND');
+  });
+
+  it('lists the FAILED partition as inbound rows that carry their pk', async () => {
+    const doc = new PagedFakeDoc([
+      { Items: [{ ...inboundRecord(), pk: 'FAILED', sk: 'sk-1', direction: 'inbound' }] },
+    ]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({ direction: 'failed', limit: 5 });
+
+    expect(doc.queries[0]?.input.ExpressionAttributeValues).toEqual({ ':pk': 'FAILED' });
+    expect(result.emails[0]).toMatchObject({ direction: 'inbound', pk: 'FAILED', sk: 'sk-1' });
+  });
+
+  it('returns a row with the partition it was read from', async () => {
+    const doc = new ReadFakeDoc();
+    doc.result = { Item: { ...inboundRecord(), pk: 'FAILED', sk: 'sk-7', direction: 'inbound' } };
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const row = await dao.getEmail({ pk: 'FAILED', sk: 'sk-7' });
+
+    expect(row).toMatchObject({ direction: 'inbound', pk: 'FAILED', sk: 'sk-7' });
+  });
+});
+
 describe('DdbEmailsDao — reads', () => {
   it('queries a partition newest-first with a limit and no start key', async () => {
     const doc = new ReadFakeDoc();

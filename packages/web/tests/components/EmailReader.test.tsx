@@ -205,6 +205,56 @@ describe('EmailReader — download original (.eml)', () => {
     await waitFor(() => expect(clickedHref).toBe('https://s3.example/raw'));
   });
 
+  it('offers a suspicious failed message’s original from its notice, with a warning', async () => {
+    let clickedHref = '';
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+      this: HTMLAnchorElement,
+    ) {
+      clickedHref = this.href;
+    });
+    renderReader(
+      mockReader(
+        {
+          ...BASE_INBOUND,
+          quarantined: true,
+          failed: true,
+          virusVerdict: 'FAIL',
+          rawAvailable: true,
+          rawSuspicious: true,
+        },
+        (path) =>
+          path === '/emails/h1/raw'
+            ? json(200, {
+                url: 'https://s3.example/quarantine',
+                expiresAt: '2026-07-17T00:01:00.000Z',
+              })
+            : null,
+      ),
+    );
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(/failed a virus scan/);
+    expect(alert).toHaveTextContent(/not confirm it is virus-free/);
+    fireEvent.click(screen.getByRole('button', { name: 'Download anyway' }));
+    await waitFor(() => expect(clickedHref).toBe('https://s3.example/quarantine'));
+  });
+
+  it('offers a clean-but-unparsed failed message’s original without the warning', async () => {
+    renderReader(
+      mockReader({
+        ...BASE_INBOUND,
+        quarantined: true,
+        failed: true,
+        virusVerdict: 'PASS',
+        parseStatus: 'oversize',
+        rawAvailable: true,
+      }),
+    );
+
+    expect(await screen.findByRole('button', { name: 'Download original' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download anyway' })).not.toBeInTheDocument();
+  });
+
   it('hides it when the original is not available', async () => {
     renderReader(mockReader({ ...BASE_INBOUND, text: 'body', rawAvailable: false }));
     await screen.findByRole('heading', { name: 'Hello' });

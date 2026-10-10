@@ -108,16 +108,25 @@ export function isValidEmailAddress(value: string): boolean {
 /* ------------------------------------------------------------------ *
  * Read API (#11): list/read the mailbox + attachment download.
  *
- * The stored index has two partitions — sent (`pk='SENT'`) and received
- * (`pk='INBOUND'`) — merged into one newest-first timeline. Every message is
- * addressed by an OPAQUE `id` handle (minted by the list, echoed on read); the
- * client never constructs it and the raw S3 key never appears on the wire. Bodies are
- * stored when a message is received (verdict-gated) or sent, so reading one never re-parses
- * raw MIME; a row stored before that falls back to its raw MIME while it still exists.
+ * The stored index has three partitions — sent (`pk='SENT'`), received (`pk='INBOUND'`),
+ * and received mail whose content could not be extracted (`pk='FAILED'`: a virus verdict
+ * other than PASS, or a parse failure / limit breach). Sent + received merge into one
+ * newest-first timeline; failed mail is its own folder. Every message is addressed by an
+ * OPAQUE `id` handle (minted by the list, echoed on read); the client never constructs it
+ * and no S3 key ever appears on the wire. Bodies are stored when a message is received
+ * (verdict-gated) or sent, so reading one never re-parses raw MIME; a row stored before
+ * that falls back to its raw MIME while it still exists.
  * ------------------------------------------------------------------ */
 
-/** Which partition a stored message came from. */
+/** Which way a stored message travelled. */
 export type EmailDirection = 'sent' | 'inbound';
+
+/**
+ * What `GET /emails?direction=` (and the `list_emails` tool) can list: one direction, or
+ * `failed` — received mail whose content could not be extracted (the Errors folder). Rows
+ * listed as `failed` are still `direction: 'inbound'` messages, with `failed: true`.
+ */
+export type EmailListFilter = EmailDirection | 'failed';
 
 /**
  * Delivery status of a sent message (present on `sent` rows only). Set write-before-send:
@@ -176,6 +185,10 @@ export interface EmailListItem {
   /** Inbound only: SES verdicts, so the UI can explain a quarantine. Absent on sent. */
   readonly spamVerdict?: InboundVerdict;
   readonly virusVerdict?: InboundVerdict;
+  /** Inbound only: how parsing went — explains why a `failed` message has no content. */
+  readonly parseStatus?: InboundParseStatus;
+  /** Inbound only: true for a message in the Errors folder (content could not be extracted). */
+  readonly failed?: boolean;
 }
 
 /** A single message with headers, body, and attachment list. */
@@ -208,10 +221,16 @@ export interface EmailDetail {
   readonly bodyTruncated?: boolean;
   /**
    * True when the original message (`.eml`) can be downloaded via `GET /emails/{id}/raw`:
-   * sent mail with an archive, and received mail that passed the virus scan — for fully
-   * processed mail, only while it is younger than the raw-MIME retention window (14 days).
+   * sent mail with an archive, received mail that passed the virus scan — for fully processed
+   * mail, only while it is younger than the raw-MIME retention window (14 days) — and every
+   * message in the Errors folder (kept in quarantine).
    */
   readonly rawAvailable?: boolean;
+  /**
+   * True when the downloadable original did NOT get an affirmative virus `PASS` (an Errors
+   * folder message flagged or left unscanned by SES). The client must warn before download.
+   */
+  readonly rawSuspicious?: boolean;
   readonly attachments: readonly EmailAttachmentInfo[];
   readonly hasAttachments: boolean;
   readonly attachmentCount: number;
@@ -220,6 +239,8 @@ export interface EmailDetail {
   readonly spamVerdict?: InboundVerdict;
   readonly virusVerdict?: InboundVerdict;
   readonly parseStatus?: InboundParseStatus;
+  /** Inbound only: true for a message in the Errors folder (content could not be extracted). */
+  readonly failed?: boolean;
   /** Raw message size in bytes. */
   readonly sizeBytes: number;
 }

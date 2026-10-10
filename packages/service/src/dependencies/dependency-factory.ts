@@ -71,6 +71,7 @@ export class DependencyFactory {
     const downloadTokensDao = new DdbDownloadTokensDao(doc, this.config.downloadTokensTable);
 
     const presigner = new S3AttachmentPresigner(s3, this.config.mailBucket);
+    const quarantinePresigner = new S3AttachmentPresigner(s3, this.config.quarantineBucket);
     const inboundStore = new S3InboundObjectStore(s3, this.config.mailBucket);
     const outboundStore = new S3OutboundObjectStore(s3, this.config.mailBucket);
     const bodyStore = new S3MailBodyStore(s3, this.config.mailBucket);
@@ -104,6 +105,7 @@ export class DependencyFactory {
       emailReadService: new EmailReadService({
         emailsDao,
         presigner,
+        quarantinePresigner,
         bodies: bodyStore,
         rawMime: inboundStore,
       }),

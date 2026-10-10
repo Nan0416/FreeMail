@@ -12,7 +12,8 @@
  * NOTHING here talks to AWS. It is pure key construction, so a DAO test can assert the
  * exact key a command was issued against.
  */
-import { INBOUND_PARTITION, SENT_PARTITION } from './emails-dao.js';
+import type { EmailListFilter } from '@freemail/shared';
+import { FAILED_PARTITION, INBOUND_PARTITION, SENT_PARTITION } from './emails-dao.js';
 
 /** A full DynamoDB primary key for the single-table auth and emails layouts. */
 export interface TableKey {
@@ -54,14 +55,16 @@ export const ApiKeyEntity = {
 export const EmailEntity = {
   SENT_PARTITION,
   INBOUND_PARTITION,
-  partitionFor: (direction: 'sent' | 'inbound'): string =>
-    direction === 'sent' ? SENT_PARTITION : INBOUND_PARTITION,
+  FAILED_PARTITION,
+  partitionFor: (filter: EmailListFilter): string =>
+    filter === 'sent' ? SENT_PARTITION : filter === 'failed' ? FAILED_PARTITION : INBOUND_PARTITION,
   sent: (sentAtIso: string, id: string): TableKey => ({
     pk: SENT_PARTITION,
     sk: `${sentAtIso}#${id}`,
   }),
-  inbound: (receivedAtIso: string, id: string): TableKey => ({
-    pk: INBOUND_PARTITION,
+  /** A received message — under FAILED when its content could not be extracted. */
+  inbound: (receivedAtIso: string, id: string, failed: boolean): TableKey => ({
+    pk: failed ? FAILED_PARTITION : INBOUND_PARTITION,
     sk: `${receivedAtIso}#${id}`,
   }),
 } as const;

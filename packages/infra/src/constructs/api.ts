@@ -45,6 +45,8 @@ export interface ApiConstructProps {
   readonly downloadTokensTable: Table;
   /** Inbound raw MIME + extracted attachments, sent MIME + attachment copies, outbound large attachments. */
   readonly mailBucket: IBucket;
+  /** Raw MIME of Errors-folder messages — the REST read routes presign their `.eml` downloads. */
+  readonly quarantineBucket: IBucket;
   /** The SES send domain — `from` must be under it, and it scopes the send IAM grant. */
   readonly emailDomain: string;
   /** SES configuration set the send route routes through (suppression + bounce/complaint tracking). */
@@ -144,6 +146,7 @@ export class ApiConstruct extends Construct {
         EMAILS_TABLE: props.emailsTable.tableName,
         DOWNLOAD_TOKENS_TABLE: props.downloadTokensTable.tableName,
         MAIL_BUCKET: props.mailBucket.bucketName,
+        QUARANTINE_BUCKET: props.quarantineBucket.bucketName,
         EMAIL_DOMAIN: props.emailDomain,
         SES_CONFIGURATION_SET: props.sesConfigurationSetName,
         // Public base for `/d/{token}` links — the API's own endpoint (no bucket exposure).
@@ -173,6 +176,8 @@ export class ApiConstruct extends Construct {
     // stored body (inbound bodies are written by the parser).
     props.mailBucket.grantPut(this.restHandler, 'bodies/sent/*');
     props.mailBucket.grantRead(this.restHandler, 'bodies/*');
+    // Errors-folder originals: the raw route presigns their quarantined copies.
+    props.quarantineBucket.grantRead(this.restHandler);
 
     // The REST `/emails` route sends.
     this.grantSesSend(this.restHandler, props.emailDomain, props.sesConfigurationSetName);

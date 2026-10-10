@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { EmailDetail, EmailDirection } from '@freemail/shared';
+import type { EmailDetail, EmailListFilter } from '@freemail/shared';
 import { MailOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
@@ -29,8 +29,8 @@ export interface AppShellProps {
 
 interface FolderSpec {
   readonly title: string;
-  /** undefined → the merged timeline. */
-  readonly direction: EmailDirection | undefined;
+  /** undefined → the merged sent + inbound timeline; `failed` → the Errors folder. */
+  readonly direction: EmailListFilter | undefined;
   readonly emptyMessage: string;
 }
 
@@ -43,6 +43,11 @@ const MAIL_FOLDERS: Partial<Record<FolderId, FolderSpec>> = {
   inbox: { title: 'Inbox', direction: 'inbound', emptyMessage: 'Your inbox is empty.' },
   sent: { title: 'Sent', direction: 'sent', emptyMessage: 'No sent messages yet.' },
   all: { title: 'All mail', direction: undefined, emptyMessage: 'No messages yet.' },
+  errors: {
+    title: 'Errors',
+    direction: 'failed',
+    emptyMessage: 'No messages failed scanning or processing.',
+  },
 };
 
 /** Keys typed into a field belong to the field, not to the app's shortcuts. */
@@ -289,7 +294,7 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
                   loadingMore={mailbox.loadingMore}
                   onLoadMore={() => void handleLoadMore()}
                   emptyMessage={spec.emptyMessage}
-                  showSpamFilter={spec.direction !== 'sent'}
+                  showSpamFilter={spec.direction !== 'sent' && spec.direction !== 'failed'}
                   onOpenNav={() => setNavOpen(true)}
                 />
               )

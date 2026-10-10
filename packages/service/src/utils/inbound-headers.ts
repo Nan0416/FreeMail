@@ -50,3 +50,14 @@ export function headerValues(lines: readonly HeaderLine[], name: string): string
   const lower = name.toLowerCase();
   return lines.filter((l) => l.key === lower).map((l) => l.value);
 }
+
+/**
+ * The root header block of a raw message, from just its first bytes: everything before the
+ * first blank line, or undefined when no blank line falls inside those bytes (the headers run
+ * past what was read — treated as unreadable rather than parsed half-way).
+ */
+export function rootHeaderBlock(prefix: Buffer): string | undefined {
+  const text = prefix.toString('utf8');
+  const blankLine = /\r?\n\r?\n/.exec(text);
+  return blankLine ? text.slice(0, blankLine.index) : undefined;
+}

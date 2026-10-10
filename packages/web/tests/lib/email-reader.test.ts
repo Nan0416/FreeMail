@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { EmailDetail } from '@freemail/shared';
 import {
   bodyKind,
+  failureReason,
   formatSender,
   quarantineNotice,
   sentStatusNotice,
@@ -49,7 +50,12 @@ describe('quarantineNotice', () => {
     const notice = quarantineNotice(
       inbound({ quarantined: true, spamVerdict: 'FAIL', virusVerdict: 'PASS', text: 'body' }),
     );
-    expect(notice).toEqual({ message: 'This message was flagged as spam.', canReveal: true });
+    expect(notice).toEqual({
+      message: 'This message was flagged as spam.',
+      canReveal: true,
+      offerDownload: false,
+      suspicious: false,
+    });
   });
 
   it('virus-fail → NOT revealable (no body exists to show)', () => {
@@ -66,6 +72,68 @@ describe('quarantineNotice', () => {
     );
     expect(notice?.canReveal).toBe(false);
     expect(notice?.message).toMatch(/parse/i);
+  });
+
+  it('a failed message whose original is offered → download, with a warning without a virus PASS', () => {
+    const suspicious = quarantineNotice(
+      inbound({
+        quarantined: true,
+        failed: true,
+        virusVerdict: 'FAIL',
+        rawAvailable: true,
+        rawSuspicious: true,
+      }),
+    );
+    expect(suspicious).toMatchObject({ offerDownload: true, suspicious: true, canReveal: false });
+    expect(suspicious?.message).toMatch(/not confirm it is virus-free/);
+
+    const clean = quarantineNotice(
+      inbound({
+        quarantined: true,
+        failed: true,
+        virusVerdict: 'PASS',
+        parseStatus: 'limit_exceeded',
+        rawAvailable: true,
+      }),
+    );
+    expect(clean).toMatchObject({ offerDownload: true, suspicious: false });
+    expect(clean?.message).toMatch(/download the original/);
+  });
+
+  it('offers no download when the server does not', () => {
+    const notice = quarantineNotice(
+      inbound({ quarantined: true, failed: true, virusVerdict: 'FAIL', rawAvailable: false }),
+    );
+    expect(notice).toMatchObject({ offerDownload: false, suspicious: false });
+  });
+});
+
+describe('failureReason', () => {
+  it('names the virus verdict first — it outranks a parse problem', () => {
+    expect(failureReason({ virusVerdict: 'FAIL', parseStatus: 'parse_failed' })).toMatchObject({
+      label: 'Virus',
+      suspicious: true,
+    });
+    expect(failureReason({ virusVerdict: 'GRAY' })?.label).toBe('Suspicious');
+    expect(failureReason({ virusVerdict: 'ABSENT' })?.label).toBe('Not scanned');
+    expect(failureReason({ virusVerdict: 'PROCESSING_FAILED' })?.label).toBe('Not scanned');
+  });
+
+  it('names the parse problem of clean mail, not suspicious', () => {
+    expect(failureReason({ virusVerdict: 'PASS', parseStatus: 'oversize' })).toMatchObject({
+      label: 'Too large',
+      suspicious: false,
+    });
+    expect(failureReason({ virusVerdict: 'PASS', parseStatus: 'limit_exceeded' })?.label).toBe(
+      'Over limits',
+    );
+    expect(failureReason({ virusVerdict: 'PASS', parseStatus: 'parse_failed' })?.label).toBe(
+      'Unreadable',
+    );
+  });
+
+  it('is null for clean, parsed mail (at most spam)', () => {
+    expect(failureReason({ virusVerdict: 'PASS', parseStatus: 'ok' })).toBeNull();
   });
 });
 

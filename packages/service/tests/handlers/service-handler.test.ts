@@ -176,6 +176,7 @@ beforeEach(() => {
   process.env.EMAIL_DOMAIN = 'example.com';
   process.env.EMAILS_TABLE = 'emails-test';
   process.env.MAIL_BUCKET = 'mail-test';
+  process.env.QUARANTINE_BUCKET = 'quarantine-test';
   process.env.DOWNLOAD_TOKENS_TABLE = 'tokens-test';
   process.env.DOWNLOAD_BASE_URL = 'https://api.test';
   sendMock.mockReset();
@@ -196,6 +197,7 @@ afterEach(() => {
   delete process.env.EMAIL_DOMAIN;
   delete process.env.EMAILS_TABLE;
   delete process.env.MAIL_BUCKET;
+  delete process.env.QUARANTINE_BUCKET;
   delete process.env.DOWNLOAD_TOKENS_TABLE;
   delete process.env.DOWNLOAD_BASE_URL;
 });

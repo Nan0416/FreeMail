@@ -174,7 +174,9 @@ export function EmailReader(props: EmailReaderProps): React.JSX.Element {
               {email?.rawAvailable && (
                 <DropdownMenuItem onSelect={() => void downloadOriginal()}>
                   <FileDown />
-                  Download original (.eml)
+                  {email.rawSuspicious
+                    ? 'Download original anyway (.eml)'
+                    : 'Download original (.eml)'}
                 </DropdownMenuItem>
               )}
               {email && email.attachments.length > 0 && (
@@ -209,6 +211,7 @@ export function EmailReader(props: EmailReaderProps): React.JSX.Element {
           revealed={revealed}
           onReveal={() => setRevealed(true)}
           onDownload={(a) => void download(a)}
+          onDownloadOriginal={() => void downloadOriginal()}
         />
       )}
     </article>
@@ -259,6 +262,7 @@ function ReaderContent(props: {
   revealed: boolean;
   onReveal: () => void;
   onDownload: (attachment: EmailAttachmentInfo) => void;
+  onDownloadOriginal: () => void;
 }): React.JSX.Element {
   const notice = quarantineNotice(props.email);
   const statusNotice = sentStatusNotice(props.email);
@@ -356,6 +360,16 @@ function ReaderContent(props: {
             {notice.canReveal && !props.revealed && (
               <Button variant="outline" size="xs" onClick={props.onReveal}>
                 Show message
+              </Button>
+            )}
+            {notice.offerDownload && (
+              <Button
+                variant={notice.suspicious ? 'destructive' : 'outline'}
+                size="xs"
+                onClick={props.onDownloadOriginal}
+              >
+                <FileDown />
+                {notice.suspicious ? 'Download anyway' : 'Download original'}
               </Button>
             )}
           </div>

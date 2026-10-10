@@ -82,20 +82,20 @@ describe('FreeMailStack', () => {
     expect(stack.region).toBe('us-east-1');
   });
 
-  it('creates the data layer: 4 tables + 2 buckets — data retained, web disposable', () => {
+  it('creates the data layer: 4 tables + 3 buckets — data retained, web disposable', () => {
     const template = synth(makeConfig());
     template.resourceCountIs('AWS::DynamoDB::Table', 4);
-    template.resourceCountIs('AWS::S3::Bucket', 2);
+    template.resourceCountIs('AWS::S3::Bucket', 3);
     template.allResourcesProperties('AWS::DynamoDB::Table', { BillingMode: 'PAY_PER_REQUEST' });
     // Tables + the mail bucket hold the deployer's real data → RETAIN (a cdk destroy
     // must never wipe email). RETAIN is a resource-level DeletionPolicy, not a property.
     for (const resource of Object.values(template.findResources('AWS::DynamoDB::Table'))) {
       expect(resource.DeletionPolicy).toBe('Retain');
     }
-    // Exactly one retained bucket (mail) and one disposable bucket (the SPA web bucket,
+    // Two retained buckets (mail + quarantine) and one disposable bucket (the SPA web bucket,
     // owned by WebConstruct — holds only the redeployable build).
     const buckets = Object.values(template.findResources('AWS::S3::Bucket'));
-    expect(buckets.filter((b) => b.DeletionPolicy === 'Retain')).toHaveLength(1);
+    expect(buckets.filter((b) => b.DeletionPolicy === 'Retain')).toHaveLength(2);
     expect(buckets.filter((b) => b.DeletionPolicy === 'Delete')).toHaveLength(1);
     // The disposable web bucket is auto-emptied on delete (CFN can't remove a non-empty bucket).
     template.resourceCountIs('Custom::S3AutoDeleteObjects', 1);
@@ -169,6 +169,34 @@ describe('FreeMailStack', () => {
   it('lets the inbound parser tag the raw MIME it has fully ingested', () => {
     const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
     expect(canOnMailPrefix(template, 'ParserFn', 's3:PutObjectTagging', '*')).toBe(true);
+  });
+
+  it('wires the quarantine bucket: the parser copies in, only REST reads out', () => {
+    const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
+    const roleCan = (rolePrefix: string, action: string): boolean =>
+      Object.values(template.findResources('AWS::IAM::Policy')).some(
+        (policy) =>
+          JSON.stringify(policy.Properties.Roles).includes(rolePrefix) &&
+          (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some(
+            (statement) =>
+              ([] as unknown[]).concat(statement.Action).includes(action) &&
+              JSON.stringify(statement.Resource).includes('QuarantineBucket'),
+          ),
+      );
+    expect(roleCan('ParserFn', 's3:PutObject')).toBe(true);
+    expect(roleCan('RestHandler', 's3:GetObject*')).toBe(true);
+    // Neither the MCP server nor the REST handler can write into quarantine.
+    expect(roleCan('McpHandler', 's3:GetObject*')).toBe(false);
+    expect(roleCan('RestHandler', 's3:PutObject')).toBe(false);
+    // Both Lambdas that use it are told where it is.
+    const envOf = (idPart: string): Record<string, unknown> => {
+      const fn = Object.entries(template.findResources('AWS::Lambda::Function')).find(([id]) =>
+        id.includes(idPart),
+      );
+      return (fn?.[1].Properties.Environment?.Variables ?? {}) as Record<string, unknown>;
+    };
+    expect(JSON.stringify(envOf('ParserFn').QUARANTINE_BUCKET)).toContain('QuarantineBucket');
+    expect(JSON.stringify(envOf('ApiRestHandler').QUARANTINE_BUCKET)).toContain('QuarantineBucket');
   });
 
   it('lets the send paths write sent bodies and the readers load stored bodies', () => {
