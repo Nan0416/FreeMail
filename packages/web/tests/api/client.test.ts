@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ApiError, FreeMailClient } from '../../src/api/client.js';
+import { ApiError, FreeMailClient, xhrUpload, type UploadTransport } from '../../src/api/client.js';
 
 function json(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -214,32 +214,90 @@ describe('FreeMailClient (cookie auth)', () => {
     });
   });
 
-  it('putUpload PUTs the bytes straight to S3 — no cookies, no auth header', async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 200 }));
-    const client = makeClient(fetchMock);
+  it('putUpload PUTs the bytes straight to S3 with their type, reporting progress', async () => {
+    const uploadImpl = vi.fn<UploadTransport>(async (_url, file, _type, onProgress) => {
+      onProgress(1);
+      onProgress(file.size);
+      return 200;
+    });
+    const client = new FreeMailClient({ baseUrl: BASE, fetchImpl: vi.fn(), uploadImpl });
     const file = new Blob(['abc'], { type: 'application/pdf' });
+    const progress: number[] = [];
 
-    await client.putUpload('https://bucket.s3.example/uploads/u1?sig', file);
+    await client.putUpload('https://bucket.s3.example/uploads/u1?sig', file, (loaded) =>
+      progress.push(loaded),
+    );
 
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, body, contentType] = uploadImpl.mock.calls[0];
     expect(url).toBe('https://bucket.s3.example/uploads/u1?sig');
-    expect(init?.method).toBe('PUT');
-    expect(init?.body).toBe(file);
-    expect(init?.credentials).toBeUndefined();
-    expect(init?.headers).toEqual({ 'Content-Type': 'application/pdf' });
+    expect(body).toBe(file);
+    expect(contentType).toBe('application/pdf');
+    expect(progress).toEqual([1, 3]);
   });
 
-  it('putUpload fails with an ApiError when S3 rejects the upload', async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 403 }));
-    const client = makeClient(fetchMock);
+  it('putUpload fails with an ApiError when S3 rejects the upload or it never completes', async () => {
+    for (const outcome of [async () => 403, async () => Promise.reject(new Error('offline'))]) {
+      const client = new FreeMailClient({
+        baseUrl: BASE,
+        fetchImpl: vi.fn(),
+        uploadImpl: outcome,
+      });
+      await expect(client.putUpload('https://s3/u1', new Blob(['x']))).rejects.toMatchObject({
+        code: 'upload_failed',
+        message: 'The attachment could not be uploaded.',
+      });
+    }
+  });
 
-    await expect(client.putUpload('https://s3/u1', new Blob(['x']))).rejects.toBeInstanceOf(
-      ApiError,
-    );
+  it('xhrUpload PUTs without cookies and reports bytes sent as they go', async () => {
+    class FakeXhr {
+      static last: FakeXhr;
+      method = '';
+      url = '';
+      headers: Record<string, string> = {};
+      withCredentials = false;
+      status = 0;
+      body: unknown;
+      upload: { onprogress: ((event: { loaded: number }) => void) | null } = { onprogress: null };
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      constructor() {
+        FakeXhr.last = this;
+      }
+      open(method: string, url: string): void {
+        this.method = method;
+        this.url = url;
+      }
+      setRequestHeader(name: string, value: string): void {
+        this.headers[name] = value;
+      }
+      send(body: unknown): void {
+        this.body = body;
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', FakeXhr);
+    try {
+      const file = new Blob(['abcd'], { type: 'text/plain' });
+      const progress: number[] = [];
+      const done = xhrUpload('https://s3/u1?sig', file, 'text/plain', (loaded) =>
+        progress.push(loaded),
+      );
+      const xhr = FakeXhr.last;
+      xhr.upload.onprogress?.({ loaded: 2 });
+      xhr.upload.onprogress?.({ loaded: 4 });
+      xhr.status = 200;
+      xhr.onload?.();
+
+      expect(await done).toBe(200);
+      expect(xhr.method).toBe('PUT');
+      expect(xhr.url).toBe('https://s3/u1?sig');
+      expect(xhr.headers).toEqual({ 'Content-Type': 'text/plain' });
+      expect(xhr.withCredentials).toBe(false);
+      expect(xhr.body).toBe(file);
+      expect(progress).toEqual([2, 4]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('logout posts to the revoke endpoint with no body and resolves on a 2xx', async () => {

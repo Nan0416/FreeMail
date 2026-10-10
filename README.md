@@ -107,21 +107,23 @@ After the deploy:
 
 1. Open the **`WebAppUrl`** from the stack outputs and **sign in**. On a fresh deployment the first password you enter **becomes** the account password (trust-on-first-use), so type it carefully and do it promptly — until you do, the account is unclaimed.
 2. **Request [SES production access](https://docs.aws.amazon.com/ses/latest/dg/request-production-access.html)** — SES starts every account in _sandbox_ mode (verified recipients only). This is a one-time, **manual, per-AWS-account** step that cannot be automated.
-3. To let agents send, create an **API key** in the web app (shown once) and hand it to your agent as `x-api-key`.
+3. To let agents send, open **MCP server** in the web app: it shows the server URL and a ready-to-paste Claude Code `.mcp.json`, and creates the **access key** (shown once) your agent sends as `x-api-key`.
 
 Full walkthrough — hosted-zone setup, custom domains, inbound, DNS records, and troubleshooting — is in **[`docs/DEPLOY.md`](./docs/DEPLOY.md)**.
 
 ## Agent / MCP example
 
-FreeMail exposes a stateless MCP server at **`POST {api}/mcp`**, authenticated with the API key you created in the web app. It always offers **`send_email`** (and **`create_attachment_upload`** for files); when **inbound is enabled** it also offers the read tools **`list_emails`**, **`get_email`**, and **`get_email_attachment_url`** so agents can read received mail. (Inbound email is untrusted external content — the read tools flag it as data, not instructions.)
+FreeMail exposes a stateless MCP server at **`POST https://<apiDomain>/mcp`**, authenticated with an access key you created on the web app's **MCP server** page. It always offers **`send_email`** (and **`create_attachment_upload`** for files); when **inbound is enabled** it also offers the read tools **`list_emails`**, **`get_email`**, and **`get_email_attachment_url`** so agents can read received mail. (Inbound email is untrusted external content — the read tools flag it as data, not instructions.)
 
 ```jsonc
-// MCP client config — point your agent at the FreeMail MCP endpoint.
+// .mcp.json for Claude Code. It expands ${FREEMAIL_API_KEY} from the environment,
+// so the key stays out of the file: export FREEMAIL_API_KEY=fm_<your-access-key>
 {
   "mcpServers": {
     "freemail": {
-      "url": "https://<your-api-endpoint>/mcp", // ApiEndpoint output, or your apiDomain
-      "headers": { "x-api-key": "fm_<your-api-key>" },
+      "type": "http",
+      "url": "https://<apiDomain>/mcp",
+      "headers": { "x-api-key": "${FREEMAIL_API_KEY}" },
     },
   },
 }

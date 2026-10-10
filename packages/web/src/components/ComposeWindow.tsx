@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ApiError } from '../api/client.js';
 import { useAuth } from '../auth/auth-context.js';
+import { forEachConcurrently } from '../lib/concurrency.js';
 import { deleteDraft, newDraftId, saveDraft, setLastSender, type Draft } from '../lib/drafts.js';
 import { formatBytes } from '../lib/format.js';
 import { parseRecipients } from '../lib/people.js';
@@ -50,6 +51,9 @@ const AUTOSAVE_MS = 800;
  */
 const UPLOAD_REUSE_MS = 12 * 60 * 60 * 1000;
 
+/** How many attachments upload at once — under the ~6 connections a browser opens per host. */
+const UPLOAD_CONCURRENCY = 4;
+
 /** A file already uploaded from this window: its upload id, and when it was uploaded. */
 interface FinishedUpload {
   readonly uploadId: string;
@@ -78,8 +82,8 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   const [showToolbar, setShowToolbar] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  /** While attachments upload: "Uploading 2 of 3…" on the send button. */
-  const [progress, setProgress] = useState<string | null>(null);
+  /** While attachments upload: the bytes sent so far for each file. Empty otherwise. */
+  const [uploadProgress, setUploadProgress] = useState<ReadonlyMap<File, number>>(new Map());
   // The re-entrancy guard. `busy` drives the UI but only lands on the next render, so
   // a second ⌘↵ in the same tick would still see it false and send twice.
   const sending = useRef(false);
@@ -227,26 +231,44 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     sending.current = true;
     setBusy(true);
     try {
-      // Each file goes straight to S3 (a presigned PUT); the send references it by upload id.
-      const attachments: EmailAttachmentRef[] = [];
-      for (let index = 0; index < files.length; index += 1) {
-        const file = files[index];
+      // Each file goes straight to S3 (a presigned PUT), several at once; the send references
+      // it by upload id. A file an earlier attempt already uploaded is not uploaded again.
+      const uploadIds = new Map<File, string>();
+      const pending: File[] = [];
+      for (const file of files) {
         const previous = uploaded.current.get(file);
         if (previous && Date.now() - previous.uploadedAt < UPLOAD_REUSE_MS) {
-          attachments.push({ uploadId: previous.uploadId });
-          continue;
+          uploadIds.set(file, previous.uploadId);
+        } else {
+          pending.push(file);
         }
-        setProgress(`Uploading ${index + 1} of ${files.length}…`);
+      }
+      if (files.length > 0) {
+        setUploadProgress(
+          new Map(files.map((file) => [file, uploadIds.has(file) ? file.size : 0])),
+        );
+      }
+      await forEachConcurrently(pending, UPLOAD_CONCURRENCY, async (file) => {
         const upload = await auth.client.createUpload({
           filename: file.name,
           contentType: file.type || 'application/octet-stream',
           sizeBytes: file.size,
         });
-        await auth.client.putUpload(upload.uploadUrl, file);
+        await auth.client.putUpload(upload.uploadUrl, file, (loadedBytes) =>
+          setUploadProgress((prev) => new Map(prev).set(file, loadedBytes)),
+        );
         uploaded.current.set(file, { uploadId: upload.uploadId, uploadedAt: Date.now() });
-        attachments.push({ uploadId: upload.uploadId });
+        uploadIds.set(file, upload.uploadId);
+      });
+      setUploadProgress(new Map());
+      // In the order they were attached, whatever order the uploads finished in.
+      const attachments: EmailAttachmentRef[] = [];
+      for (const file of files) {
+        const uploadId = uploadIds.get(file);
+        if (uploadId) {
+          attachments.push({ uploadId });
+        }
       }
-      setProgress(null);
       const request: SendEmailRequest = {
         from: from.trim(),
         ...(fromName.trim() ? { fromName: fromName.trim() } : {}),
@@ -270,11 +292,18 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     } finally {
       sending.current = false;
       setBusy(false);
-      setProgress(null);
+      setUploadProgress(new Map());
     }
   }
 
   const title = subject.trim() || 'New message';
+  let uploadTotal = 0;
+  let uploadSent = 0;
+  for (const [file, sent] of uploadProgress) {
+    uploadTotal += file.size;
+    uploadSent += Math.min(sent, file.size);
+  }
+  const uploading = uploadTotal > 0;
 
   if (mode === 'minimized') {
     return (
@@ -427,24 +456,47 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
 
         {files.length > 0 && (
           <ul aria-label="Attachments" className="flex shrink-0 flex-wrap gap-1.5 px-4 pb-2">
-            {files.map((file, index) => (
-              <li
-                key={`${file.name}-${index}`}
-                className="flex max-w-56 items-center gap-1.5 rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs"
-              >
-                <Paperclip className="size-3 shrink-0 text-muted-foreground" />
-                <span className="truncate">{file.name}</span>
-                <span className="shrink-0 text-muted-foreground">{formatBytes(file.size)}</span>
-                <button
-                  type="button"
-                  aria-label={`Remove ${file.name}`}
-                  onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
-                  className="grid size-4 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground"
+            {files.map((file, index) => {
+              const sent = uploadProgress.get(file);
+              const percent =
+                sent === undefined ? null : percentOf(Math.min(sent, file.size), file.size);
+              return (
+                <li
+                  key={`${file.name}-${index}`}
+                  className="relative flex max-w-56 items-center gap-1.5 overflow-hidden rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs"
                 >
-                  <X className="size-3" />
-                </button>
-              </li>
-            ))}
+                  <Paperclip className="size-3 shrink-0 text-muted-foreground" />
+                  <span className="truncate">{file.name}</span>
+                  <span className="shrink-0 text-muted-foreground tabular-nums">
+                    {percent === null ? formatBytes(file.size) : `${percent}%`}
+                  </span>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${file.name}`}
+                    disabled={busy}
+                    onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
+                    className="grid size-4 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                  >
+                    <X className="size-3" />
+                  </button>
+                  {percent !== null && (
+                    <span
+                      role="progressbar"
+                      aria-label={`Uploading ${file.name}`}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={percent}
+                      className="absolute inset-x-0 bottom-0 h-0.5 bg-primary/15"
+                    >
+                      <span
+                        className="block h-full bg-primary transition-[width] duration-200 ease-out motion-reduce:transition-none"
+                        style={{ width: `${percent}%` }}
+                      />
+                    </span>
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
 
@@ -455,8 +507,17 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
         )}
 
         <footer className="flex shrink-0 items-center gap-1 border-t px-3 py-2">
-          <Button size="sm" onClick={() => void send()} disabled={busy} className="px-4">
-            {busy ? (progress ?? 'Sending…') : 'Send'}
+          <Button
+            size="sm"
+            onClick={() => void send()}
+            disabled={busy}
+            className="px-4 tabular-nums"
+          >
+            {!busy
+              ? 'Send'
+              : uploading
+                ? `Uploading ${percentOf(uploadSent, uploadTotal)}%`
+                : 'Sending…'}
           </Button>
           <span className="ml-1 hidden text-[11px] text-muted-foreground sm:inline">⌘↵</span>
           <WindowButton
@@ -466,7 +527,11 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
           >
             <Type />
           </WindowButton>
-          <WindowButton label="Attach files" onClick={() => fileInput.current?.click()}>
+          <WindowButton
+            label="Attach files"
+            onClick={() => fileInput.current?.click()}
+            disabled={busy}
+          >
             <Paperclip />
           </WindowButton>
           <input
@@ -499,6 +564,11 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   );
 }
 
+/** Whole percent, rounded down so 100% means done. */
+function percentOf(part: number, whole: number): number {
+  return Math.floor((part / whole) * 100);
+}
+
 const fieldInput =
   'h-9 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground/80';
 
@@ -526,6 +596,7 @@ function WindowButton(props: {
   onClick: () => void;
   className?: string;
   dark?: boolean;
+  disabled?: boolean;
   children: React.ReactNode;
 }): React.JSX.Element {
   return (
@@ -537,6 +608,7 @@ function WindowButton(props: {
           size="icon-sm"
           aria-label={props.label}
           onClick={props.onClick}
+          disabled={props.disabled}
           className={cn(
             'size-7 text-muted-foreground [&_svg]:size-4',
             props.dark && 'text-background/70 hover:bg-white/10 hover:text-background',

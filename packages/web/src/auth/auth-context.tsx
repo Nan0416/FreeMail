@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { FreeMailClient } from '../api/client.js';
+import { FreeMailClient, type UploadTransport } from '../api/client.js';
 
 type Status = 'loading' | 'authenticated' | 'unauthenticated';
 
@@ -22,6 +22,8 @@ export interface AuthProviderProps {
   readonly apiBaseUrl: string;
   /** Injectable for tests (fetch stub). */
   readonly fetchImpl?: typeof fetch;
+  /** Injectable for tests (the S3 upload stub). */
+  readonly uploadImpl?: UploadTransport;
   readonly children: React.ReactNode;
 }
 
@@ -34,12 +36,13 @@ export function AuthProvider(props: AuthProviderProps): React.JSX.Element {
       new FreeMailClient({
         baseUrl: props.apiBaseUrl,
         fetchImpl: props.fetchImpl,
+        uploadImpl: props.uploadImpl,
         onAuthLost: () => {
           setSubject(null);
           setStatus('unauthenticated');
         },
       }),
-    [props.apiBaseUrl, props.fetchImpl],
+    [props.apiBaseUrl, props.fetchImpl, props.uploadImpl],
   );
 
   // The session cookies are httpOnly, so the SPA cannot tell whether it has one

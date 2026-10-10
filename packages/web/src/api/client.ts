@@ -37,6 +37,35 @@ export class ApiError extends Error {
 
 type Method = 'GET' | 'POST' | 'DELETE';
 
+/**
+ * PUT a file to a presigned URL, calling `onProgress` with the bytes sent so far. Resolves
+ * with the HTTP status; rejects only when the request never completes (network failure).
+ */
+export type UploadTransport = (
+  url: string,
+  file: Blob,
+  contentType: string,
+  onProgress: (loadedBytes: number) => void,
+) => Promise<number>;
+
+/**
+ * The browser's upload transport. XMLHttpRequest rather than `fetch`, because only XHR
+ * reports how much of a request body has been sent. `withCredentials` stays false: the URL
+ * is the whole credential, and S3 would reject cookies anyway.
+ */
+export const xhrUpload: UploadTransport = (url, file, contentType, onProgress) =>
+  new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', url);
+    xhr.setRequestHeader('Content-Type', contentType);
+    xhr.upload.onprogress = (event) => onProgress(event.loaded);
+    xhr.onload = () => resolve(xhr.status);
+    xhr.onerror = () => reject(new Error('The upload did not complete.'));
+    xhr.onabort = xhr.onerror;
+    xhr.ontimeout = xhr.onerror;
+    xhr.send(file);
+  });
+
 export interface FreeMailClientOptions {
   /**
    * Absolute API base URL from the runtime `config.json` (#47) — e.g.
@@ -46,6 +75,8 @@ export interface FreeMailClientOptions {
   readonly baseUrl: string;
   /** Injectable for tests; defaults to a `fetch` that keeps the global binding. */
   readonly fetchImpl?: typeof fetch;
+  /** Injectable for tests; defaults to {@link xhrUpload}. */
+  readonly uploadImpl?: UploadTransport;
   /** Invoked when auth is irrecoverably lost (a refresh failed) so the UI can drop to the sign-in screen. */
   readonly onAuthLost?: () => void;
 }
@@ -70,8 +101,10 @@ export interface FreeMailClientOptions {
  *    server has already cleared both cookies on that path).
  */
 export class FreeMailClient {
-  private readonly baseUrl: string;
+  /** The API base, exactly as configured (absolute when deployed; `/api` under `vite dev`). */
+  readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly uploadImpl: UploadTransport;
   private readonly onAuthLost?: () => void;
   private refreshInFlight: Promise<boolean> | null = null;
 
@@ -79,6 +112,7 @@ export class FreeMailClient {
     this.baseUrl = opts.baseUrl;
     // Wrap rather than pass `fetch` directly so the global `this` binding is kept.
     this.fetchImpl = opts.fetchImpl ?? ((input, init) => fetch(input, init));
+    this.uploadImpl = opts.uploadImpl ?? xhrUpload;
     this.onAuthLost = opts.onAuthLost;
   }
 
@@ -127,15 +161,26 @@ export class FreeMailClient {
   /**
    * PUT a file's bytes to its presigned upload URL — straight to S3, never through the API.
    * The URL is the whole credential: no cookies, no auth header (S3 would reject them anyway).
+   * `onProgress` hears the bytes sent so far.
    */
-  async putUpload(uploadUrl: string, file: Blob): Promise<void> {
-    const res = await this.fetchImpl(uploadUrl, {
-      method: 'PUT',
-      body: file,
-      headers: { 'Content-Type': file.type || 'application/octet-stream' },
-    });
-    if (!res.ok) {
-      throw new ApiError(res.status, 'upload_failed', 'The attachment could not be uploaded.');
+  async putUpload(
+    uploadUrl: string,
+    file: Blob,
+    onProgress: (loadedBytes: number) => void = () => {},
+  ): Promise<void> {
+    let status: number;
+    try {
+      status = await this.uploadImpl(
+        uploadUrl,
+        file,
+        file.type || 'application/octet-stream',
+        onProgress,
+      );
+    } catch {
+      status = 0;
+    }
+    if (status < 200 || status >= 300) {
+      throw new ApiError(status, 'upload_failed', 'The attachment could not be uploaded.');
     }
   }
 

@@ -114,14 +114,13 @@ export class ApiConstruct extends Construct {
   readonly mcpHandler: NodejsFunction;
   /** The API's custom domain (from `FreeMailConfig.apiDomain`) — always set as of #47. */
   readonly customDomainName: string;
+  /** Where `/d/{token}` download links point: `https://<apiDomain>`. */
+  readonly downloadBaseUrl: string;
   private readonly restIntegration: HttpLambdaIntegration;
 
   constructor(scope: Construct, id: string, props: ApiConstructProps) {
     super(scope, id);
 
-    // Created before the handlers so its endpoint can be baked into their env as the
-    // public base for `/d/{token}` download links (DOWNLOAD_BASE_URL). The Api resource
-    // itself has no dependency on the handlers (only the Routes do), so this is acyclic.
     this.httpApi = new HttpApi(this, 'HttpApi', {
       apiName: 'FreeMail',
       description: 'FreeMail REST + MCP API.',
@@ -159,6 +158,11 @@ export class ApiConstruct extends Construct {
       },
     });
 
+    // The public base for `/d/{token}` download links (DOWNLOAD_BASE_URL): the API's own
+    // domain, which is what recipients see in the message — never the generated execute-api
+    // URL. (That one still answers, so links minted before this switch keep working.)
+    this.downloadBaseUrl = `https://${props.customDomain.domainName}`;
+
     this.restHandler = this.nodeFunction('RestHandler', 'service-handler.ts', {
       description: 'FreeMail REST API (auth + app routes).',
       timeout: SEND_TIMEOUT,
@@ -173,8 +177,8 @@ export class ApiConstruct extends Construct {
         EMAIL_DOMAIN: props.emailDomain,
         SES_CONFIGURATION_SET: props.sesConfigurationSetName,
         ...embedEnv(props.attachments),
-        // Public base for `/d/{token}` links — the API's own endpoint (no bucket exposure).
-        DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
+        // Public base for `/d/{token}` links — the API's own domain (no bucket exposure).
+        DOWNLOAD_BASE_URL: this.downloadBaseUrl,
       },
     });
     props.authTable.grantReadWriteData(this.restHandler);
@@ -229,7 +233,7 @@ export class ApiConstruct extends Construct {
         EMAIL_DOMAIN: props.emailDomain,
         SES_CONFIGURATION_SET: props.sesConfigurationSetName,
         ...embedEnv(props.attachments),
-        DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
+        DOWNLOAD_BASE_URL: this.downloadBaseUrl,
         // Gates the read tools (#13); the handler treats only exactly 'true' as enabled.
         INBOUND_ENABLED: String(props.inboundEnabled),
       },
