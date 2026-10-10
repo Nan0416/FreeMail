@@ -27,10 +27,12 @@ import {
 } from '@freemail/shared';
 import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
 import type {
+  CreateSentEmailInput,
   EmailsDao,
   SentAttachmentDescriptor,
   UpdateSentEmailStatusInput,
 } from '../data/emails-dao.js';
+import type { MailBodyStore } from '../facades/s3-mail-body-store.js';
 import type { OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { appendDownloadLinks, type DownloadLink } from '../utils/attachment-links.js';
 import {
@@ -41,6 +43,7 @@ import {
 import { emailErrors } from '../utils/errors.js';
 import { buildRawMime, type RawMimeAttachment, type RawMimeInput } from '../utils/mime.js';
 import type { SesSender } from '../facades/ses-email-facade.js';
+import { bodyKey, estimateRowBytes, storeEmailBody } from './email-body-storage.js';
 
 export interface EmailServiceDeps {
   readonly ses: SesSender;
@@ -52,6 +55,8 @@ export interface EmailServiceDeps {
    * octet-stream disposition suits all three — attachments are only ever served as downloads.
    */
   readonly objectStore: OutboundObjectStore;
+  /** Stores a sent body too large to keep inline in the row (`bodies/sent/<id>.json`). */
+  readonly bodies: MailBodyStore;
   /** Persists the download tokens minted for large attachments (#14). */
   readonly tokensDao: DownloadTokensDao;
   /** Public base URL for download links — the API's own endpoint (`https://…`). */
@@ -81,6 +86,7 @@ export class EmailService {
   private readonly ses: SesSender;
   private readonly emailsDao: EmailsDao;
   private readonly objectStore: OutboundObjectStore;
+  private readonly bodies: MailBodyStore;
   private readonly tokensDao: DownloadTokensDao;
   private readonly downloadBaseUrl: string;
   private readonly emailDomain: string;
@@ -93,6 +99,7 @@ export class EmailService {
     this.ses = deps.ses;
     this.emailsDao = deps.emailsDao;
     this.objectStore = deps.objectStore;
+    this.bodies = deps.bodies;
     this.tokensDao = deps.tokensDao;
     this.downloadBaseUrl = deps.downloadBaseUrl;
     this.emailDomain = normalizeDomain(deps.emailDomain);
@@ -181,14 +188,15 @@ export class EmailService {
     const sentAt = nowDate.toISOString();
     const rawS3Key = sentRawKey(id);
 
-    // Write-before-send (#29), FAIL-CLOSED: archive the EXACT composed MIME and a downloadable
-    // copy of every embedded attachment, then record the attempt as `status:'sending'` — all
+    // Write-before-send (#29), FAIL-CLOSED: archive the EXACT composed MIME, a downloadable
+    // copy of every embedded attachment, and the body (inline, or `bodies/sent/<id>.json`),
+    // then record the attempt as `status:'sending'` — all
     // BEFORE SES. A failure in any throws (no send), so we never send a message we couldn't
     // archive + record; the caller can retry with a fresh id. Orphan objects from a later
     // failure are harmless (RETAINed).
     await this.objectStore.put(rawS3Key, raw);
     const attachments = await this.storeAttachmentCopies(processed, linkedKeys, id);
-    await this.emailsDao.createSentEmail({
+    const record: CreateSentEmailInput = {
       id,
       from,
       to,
@@ -201,7 +209,16 @@ export class EmailService {
       status: 'sending',
       rawS3Key,
       attachments,
+    };
+    // The body exactly as sent (download links included), so opening it never re-parses the
+    // archive — sized against the rest of the row, which the send path does not cap.
+    const storedBody = await storeEmailBody(this.bodies, {
+      key: bodyKey('sent', id),
+      text: body.text,
+      html: body.html,
+      otherRowBytes: estimateRowBytes(record),
     });
+    await this.emailsDao.createSentEmail({ ...record, body: storedBody });
 
     let messageId: string;
     try {
@@ -399,7 +416,7 @@ const MAX_ERROR_LENGTH = 1000;
 
 /**
  * S3 key for a sent message's archived composed raw MIME. Opaque, namespaced by the send id;
- * mirrors the inbound layout (`inbound/<id>`). The read path re-parses this on demand.
+ * mirrors the inbound layout (`inbound/<id>`). Permanent — it backs the `.eml` download.
  */
 export function sentRawKey(id: string): string {
   return `sent/${id}`;

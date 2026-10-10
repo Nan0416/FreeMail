@@ -26,6 +26,7 @@
  * S3 source stream) rejects, so the async invocation retries.
  */
 import type { Readable, Transform } from 'node:stream';
+import { MAX_READ_BODY_BYTES } from '@freemail/shared';
 import { Joiner, Splitter, type ErrorWithCode } from '@zone-eu/mailsplit';
 import { MailParser, type AddressObject } from 'mailparser';
 import type { InboundAttachmentDescriptor, InboundParseStatus } from '../data/emails-dao.js';
@@ -39,7 +40,6 @@ import {
   MAX_HTML_BODY_BYTES,
   MAX_MIME_PARTS,
   MAX_RAW_MESSAGE_BYTES,
-  MAX_SNIPPET_SOURCE_BYTES,
   MAX_TEXT_BODY_BYTES,
   MAX_TOTAL_BODY_BYTES,
 } from './inbound-limits.js';
@@ -73,9 +73,9 @@ export interface ParsedInbound {
   readonly verdicts: Verdicts;
   /** Whether attachments were extracted / body retained (parse ok AND virus `PASS`). */
   readonly exposed: boolean;
-  /** Plain-text body, retained only when exposed — for the snippet. */
+  /** Plain-text body, retained only when exposed — the stored body + the snippet source. */
   readonly textBody?: string;
-  /** HTML body, retained only when exposed — for the snippet. */
+  /** HTML body, retained only when exposed — the stored body + the snippet source. */
   readonly htmlBody?: string;
   /** Attachments actually seen (whether or not stored). */
   readonly attachmentCount: number;
@@ -107,8 +107,11 @@ export interface ParseLimits {
   readonly maxHtmlBodyBytes: number;
   /** Cumulative text+HTML budget across ALL nodes — bounds MailParser's aggregate. */
   readonly maxTotalBodyBytes: number;
-  /** How much body we RETAIN for snippet derivation — a small slice; we never hold the full body. */
-  readonly maxSnippetSourceBytes: number;
+  /**
+   * How much of each text/HTML body we RETAIN (in characters): enough for the stored body the
+   * reader shows, never the full attacker-controlled body. The snippet is derived from it.
+   */
+  readonly maxRetainedBodyChars: number;
 }
 
 /**
@@ -131,7 +134,7 @@ const DEFAULT_LIMITS: ParseLimits = {
   maxTextBodyBytes: MAX_TEXT_BODY_BYTES,
   maxHtmlBodyBytes: MAX_HTML_BODY_BYTES,
   maxTotalBodyBytes: MAX_TOTAL_BODY_BYTES,
-  maxSnippetSourceBytes: MAX_SNIPPET_SOURCE_BYTES,
+  maxRetainedBodyChars: MAX_READ_BODY_BYTES,
 };
 
 /**
@@ -298,13 +301,13 @@ export function parseInbound(
         pending++;
         void handleAttachment(data as AttachmentNode, attachmentCount - 1);
       } else {
-        // Retain only a snippet-sized slice — never hold the full body (the BodyLimiter
+        // Retain only a bounded slice — never hold the full body (the BodyLimiter
         // already capped/quarantined an over-cap body upstream, before aggregation).
         if (typeof data.text === 'string') {
-          textBody = data.text.slice(0, limits.maxSnippetSourceBytes);
+          textBody = data.text.slice(0, limits.maxRetainedBodyChars);
         }
         if (typeof data.html === 'string') {
-          htmlBody = data.html.slice(0, limits.maxSnippetSourceBytes);
+          htmlBody = data.html.slice(0, limits.maxRetainedBodyChars);
         }
       }
     });

@@ -1,5 +1,10 @@
-import { EMAIL_LIST_INDEX_ATTRIBUTES, EMAIL_LIST_INDEX_NAME } from '@freemail/shared/storage';
-import { RemovalPolicy } from 'aws-cdk-lib';
+import {
+  EMAIL_LIST_INDEX_ATTRIBUTES,
+  EMAIL_LIST_INDEX_NAME,
+  INBOUND_INGESTED_TAG,
+  INBOUND_RAW_RETENTION_DAYS,
+} from '@freemail/shared/storage';
+import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { AttributeType, BillingMode, ProjectionType, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
@@ -24,7 +29,7 @@ export class DataConstruct extends Construct {
   readonly emailsTable: Table;
   /** Large-attachment download tokens (TTL on `ttl`). */
   readonly downloadTokensTable: Table;
-  /** Inbound raw MIME, parsed attachments, and outbound large attachments. */
+  /** Inbound raw MIME (expiring), stored bodies, parsed attachments, sent MIME + attachments. */
   readonly mailBucket: Bucket;
 
   constructor(scope: Construct, id: string) {
@@ -69,6 +74,18 @@ export class DataConstruct extends Construct {
     });
 
     this.mailBucket = this.privateBucket('MailBucket');
+    // SES's raw inbound MIME becomes staging once ingest has fully extracted the message (body +
+    // attachments): the parser then tags it, and only then does it expire — it backs just the
+    // short-lived "Download original". Untagged raw MIME (a message that failed to parse, one
+    // whose ingest dead-lettered, anything from before tagging) is the only copy and is kept.
+    // Scoped to `inbound/` ONLY — stored bodies, attachments, and the sent archive are
+    // permanent, and sent-mail attachment downloads point at `attachments/outbound/*`.
+    this.mailBucket.addLifecycleRule({
+      id: 'ExpireIngestedInboundRawMime',
+      prefix: 'inbound/',
+      tagFilters: { [INBOUND_INGESTED_TAG.key]: INBOUND_INGESTED_TAG.value },
+      expiration: Duration.days(INBOUND_RAW_RETENTION_DAYS),
+    });
   }
 
   private privateBucket(id: string): Bucket {

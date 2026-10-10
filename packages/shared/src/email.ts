@@ -111,10 +111,9 @@ export function isValidEmailAddress(value: string): boolean {
  * The stored index has two partitions — sent (`pk='SENT'`) and received
  * (`pk='INBOUND'`) — merged into one newest-first timeline. Every message is
  * addressed by an OPAQUE `id` handle (minted by the list, echoed on read); the
- * client never constructs it and the raw S3 key never appears on the wire. Bodies
- * are materialized on demand from the archived raw MIME — received mail from
- * `inbound/<id>` (verdict-gated), sent mail from `sent/<id>` (#29, always exposable).
- * A sent row written before #29 has no archive, so its detail is envelope-only.
+ * client never constructs it and the raw S3 key never appears on the wire. Bodies are
+ * stored when a message is received (verdict-gated) or sent, so reading one never re-parses
+ * raw MIME; a row stored before that falls back to its raw MIME while it still exists.
  * ------------------------------------------------------------------ */
 
 /** Which partition a stored message came from. */
@@ -209,7 +208,8 @@ export interface EmailDetail {
   readonly bodyTruncated?: boolean;
   /**
    * True when the original message (`.eml`) can be downloaded via `GET /emails/{id}/raw`:
-   * sent mail with an archive, and received mail that passed the virus scan.
+   * sent mail with an archive, and received mail that passed the virus scan — for fully
+   * processed mail, only while it is younger than the raw-MIME retention window (14 days).
    */
   readonly rawAvailable?: boolean;
   readonly attachments: readonly EmailAttachmentInfo[];
@@ -255,9 +255,10 @@ export const MAX_EMAIL_PAGE_SIZE = 100;
 export const ATTACHMENT_URL_TTL_SECONDS = 60;
 
 /**
- * Per-body-part raw UTF-8 byte cap for the reader. Received bodies are materialized from
- * raw MIME on demand; each part (text / html) is truncated to this many bytes. A larger
- * body is truncated (`bodyTruncated: true`); the raw message is always retained in S3.
+ * Per-body-part raw UTF-8 byte cap for the reader. A message's body is stored when it is
+ * received or sent, with each part (text / html) truncated to this many bytes; a larger body
+ * is flagged `bodyTruncated: true`, and its full original stays downloadable as `.eml` (sent
+ * mail always; received mail while its raw message is still retained).
  */
 export const MAX_READ_BODY_BYTES = 1024 * 1024;
 

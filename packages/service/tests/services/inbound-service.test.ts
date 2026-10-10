@@ -11,6 +11,8 @@ import type {
   UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
 import type { InboundObjectStore, ObjectHead } from '../../src/facades/s3-inbound-object-store.js';
+import type { MailBodyContent, MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
+import { MAX_INLINE_BODY_BYTES } from '../../src/services/email-body-storage.js';
 import { MAX_ATTACHMENTS } from '../../src/utils/inbound-limits.js';
 import { ATTACHMENTS_PREFIX, InboundProcessor } from '../../src/services/inbound-service.js';
 
@@ -21,6 +23,10 @@ class FakeStore implements InboundObjectStore {
   readonly objects = new Map<string, string>();
   readonly putKeys: string[] = [];
   readonly deletedKeys: string[] = [];
+  /** Raw keys tagged as fully ingested (so the lifecycle rule may expire them). */
+  readonly taggedKeys: string[] = [];
+  /** Runs inside markIngested — lets a test record the order of writes. */
+  onTag?: (key: string) => void;
   headCalls = 0;
   getCalls = 0;
   /** Optional: make putAttachment fail (simulate an S3 infra error). */
@@ -47,6 +53,11 @@ class FakeStore implements InboundObjectStore {
   }
   deleteObject(key: string): Promise<void> {
     this.deletedKeys.push(key);
+    return Promise.resolve();
+  }
+  markIngested(key: string): Promise<void> {
+    this.onTag?.(key);
+    this.taggedKeys.push(key);
     return Promise.resolve();
   }
 }
@@ -78,6 +89,20 @@ class FakeDao implements EmailsDao {
   }
 }
 
+class FakeBodyStore implements MailBodyStore {
+  readonly puts = new Map<string, MailBodyContent>();
+  /** Runs inside putBody — lets a test record the order of writes. */
+  onPut?: (key: string) => void;
+  putBody(key: string, body: MailBodyContent): Promise<void> {
+    this.onPut?.(key);
+    this.puts.set(key, body);
+    return Promise.resolve();
+  }
+  getBody(key: string): Promise<MailBodyContent | null> {
+    return Promise.resolve(this.puts.get(key) ?? null);
+  }
+}
+
 /** Seed a store with one object at inbound/<id>. */
 function seed(store: FakeStore, id: string, raw: string, sizeBytes = raw.length): void {
   const key = `inbound/${id}`;
@@ -97,6 +122,19 @@ const CLEAN_TEXT = [
   'Hello there',
   '',
 ].join('\r\n');
+
+function cleanWithBody(body: string): string {
+  return [
+    'X-SES-Spam-Verdict: PASS',
+    'X-SES-Virus-Verdict: PASS',
+    'From: a@x.com',
+    'Subject: Body',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    body,
+    '',
+  ].join('\r\n');
+}
 
 function withAttachment(virus: string): string {
   return [
@@ -145,7 +183,9 @@ describe('InboundProcessor', () => {
     const store = new FakeStore();
     const repo = new FakeDao();
     seed(store, 'MSG1', CLEAN_TEXT);
-    const result = await new InboundProcessor(store, repo).process({ rawKey: 'inbound/MSG1' });
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/MSG1',
+    });
 
     expect(result).toEqual({ outcome: 'indexed', messageId: 'MSG1' });
     const row = repo.inbound[0]!;
@@ -161,11 +201,97 @@ describe('InboundProcessor', () => {
     expect(row.attachments).toEqual([]);
   });
 
+  it('stores a small body inline on the row — opening it needs no raw-MIME parse', async () => {
+    const store = new FakeStore();
+    const repo = new FakeDao();
+    const bodies = new FakeBodyStore();
+    seed(store, 'SMALL', CLEAN_TEXT);
+    await new InboundProcessor(store, repo, bodies).process({ rawKey: 'inbound/SMALL' });
+
+    const row = repo.inbound[0]!;
+    expect(row.body).toEqual({ kind: 'inline', text: expect.stringContaining('Hello there') });
+    expect(bodies.puts.size).toBe(0);
+  });
+
+  it('stores a large body in S3 BEFORE writing the row, and points the row at it', async () => {
+    const store = new FakeStore();
+    const events: string[] = [];
+    const repo = new FakeDao();
+    const createInbound = repo.createInboundEmail.bind(repo);
+    repo.createInboundEmail = (record) => {
+      events.push('row');
+      return createInbound(record);
+    };
+    const bodies = new FakeBodyStore();
+    bodies.onPut = (key) => events.push(`body:${key}`);
+    // Several lines so no single line is absurdly long; together well over the inline cap.
+    const line = 'x'.repeat(999);
+    const big = Array.from({ length: Math.ceil(MAX_INLINE_BODY_BYTES / 1000) + 10 }, () => line);
+    seed(store, 'LARGE', cleanWithBody(big.join('\r\n')));
+
+    await new InboundProcessor(store, repo, bodies).process({ rawKey: 'inbound/LARGE' });
+
+    expect(events).toEqual(['body:bodies/inbound/LARGE.json', 'row']);
+    expect(repo.inbound[0]!.body).toEqual({ kind: 's3', s3Key: 'bodies/inbound/LARGE.json' });
+    expect(bodies.puts.get('bodies/inbound/LARGE.json')!.text!.length).toBeGreaterThan(
+      MAX_INLINE_BODY_BYTES,
+    );
+  });
+
+  it('tags the raw copy for expiry only AFTER the fully extracted row is committed', async () => {
+    const store = new FakeStore();
+    const events: string[] = [];
+    const repo = new FakeDao();
+    const createInbound = repo.createInboundEmail.bind(repo);
+    repo.createInboundEmail = (record) => {
+      events.push('row');
+      return createInbound(record);
+    };
+    store.onTag = (key) => events.push(`tag:${key}`);
+    seed(store, 'TAGGED', CLEAN_TEXT);
+
+    await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/TAGGED',
+    });
+
+    expect(events).toEqual(['row', 'tag:inbound/TAGGED']);
+  });
+
+  it('stores an empty inline body for attachment-only mail — never mistaken for legacy', async () => {
+    const store = new FakeStore();
+    const repo = new FakeDao();
+    seed(
+      store,
+      'PDFONLY',
+      [
+        'X-SES-Spam-Verdict: PASS',
+        'X-SES-Virus-Verdict: PASS',
+        'From: a@x.com',
+        'Subject: scan',
+        'Content-Type: application/pdf',
+        'Content-Disposition: attachment; filename="scan.pdf"',
+        'Content-Transfer-Encoding: base64',
+        '',
+        'SGVsbG8gUERG',
+        '',
+      ].join('\r\n'),
+    );
+
+    await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/PDFONLY',
+    });
+
+    expect(repo.inbound[0]!.body).toEqual({ kind: 'inline' });
+    expect(store.taggedKeys).toEqual(['inbound/PDFONLY']);
+  });
+
   it('extracts attachments to a key OUTSIDE inbound/ (no recursive re-trigger)', async () => {
     const store = new FakeStore();
     const repo = new FakeDao();
     seed(store, 'MSG2', withAttachment('PASS'));
-    const result = await new InboundProcessor(store, repo).process({ rawKey: 'inbound/MSG2' });
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/MSG2',
+    });
 
     expect(result.outcome).toBe('indexed');
     expect(store.putKeys).toEqual([`${ATTACHMENTS_PREFIX}MSG2/0`]);
@@ -183,7 +309,9 @@ describe('InboundProcessor', () => {
     const store = new FakeStore();
     const repo = new FakeDao();
     seed(store, 'MSG3', withAttachment('FAIL'));
-    const result = await new InboundProcessor(store, repo).process({ rawKey: 'inbound/MSG3' });
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/MSG3',
+    });
 
     expect(result.outcome).toBe('quarantined');
     const row = repo.inbound[0]!;
@@ -193,7 +321,9 @@ describe('InboundProcessor', () => {
     expect(row.attachmentCount).toBe(1);
     expect(row.attachments).toEqual([]);
     expect(row.snippet).toBeUndefined();
+    expect(row.body).toBeUndefined(); // nothing readable is stored for a non-PASS message
     expect(store.putKeys).toEqual([]); // never materialized the malware
+    expect(store.taggedKeys).toEqual([]); // raw MIME is the only copy: never expires
   });
 
   it('oversize object: quarantined WITHOUT downloading or parsing', async () => {
@@ -201,7 +331,9 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     // HEAD reports a size over the raw cap; the body is never fetched.
     store.heads.set('inbound/BIG', { sizeBytes: 41 * 1024 * 1024, lastModified: RECEIVED });
-    const result = await new InboundProcessor(store, repo).process({ rawKey: 'inbound/BIG' });
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/BIG',
+    });
 
     expect(result.outcome).toBe('quarantined');
     expect(store.getCalls).toBe(0); // never downloaded
@@ -216,12 +348,16 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     // One more attachment than the default cap → limit_exceeded after the cap is filled.
     seed(store, 'MANY', manyAttachments(MAX_ATTACHMENTS + 1));
-    const result = await new InboundProcessor(store, repo).process({ rawKey: 'inbound/MANY' });
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/MANY',
+    });
 
     expect(result.outcome).toBe('quarantined');
     const row = repo.inbound[0]!;
     expect(row.parseStatus).toBe('limit_exceeded');
     expect(row.attachments).toEqual([]); // no partial publish
+    expect(row.body).toBeUndefined();
+    expect(store.taggedKeys).toEqual([]); // clean but unparsed: its raw MIME is the only copy
     // Everything written this attempt was cleaned up (and is unreferenced regardless).
     expect(store.putKeys.length).toBeGreaterThan(0);
     expect(store.deletedKeys.sort()).toEqual([...store.putKeys].sort());
@@ -232,14 +368,18 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     repo.existingIds.add('MSG1');
     seed(store, 'MSG1', CLEAN_TEXT);
-    const result = await new InboundProcessor(store, repo).process({ rawKey: 'inbound/MSG1' });
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/MSG1',
+    });
     expect(result).toEqual({ outcome: 'duplicate', messageId: 'MSG1' });
+    // A retry after a failed tag lands here: the raw copy is (re-)tagged all the same.
+    expect(store.taggedKeys).toEqual(['inbound/MSG1']);
   });
 
   it('malformed event key: skipped, never touches S3 or DDB', async () => {
     const store = new FakeStore();
     const repo = new FakeDao();
-    const result = await new InboundProcessor(store, repo).process({
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
       rawKey: 'inbound/a/b/traversal',
     });
     expect(result.outcome).toBe('skipped');
@@ -250,7 +390,9 @@ describe('InboundProcessor', () => {
   it('missing object: skipped (HEAD returns null)', async () => {
     const store = new FakeStore();
     const repo = new FakeDao();
-    const result = await new InboundProcessor(store, repo).process({ rawKey: 'inbound/GONE' });
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore()).process({
+      rawKey: 'inbound/GONE',
+    });
     expect(result.outcome).toBe('skipped');
     expect(result.reason).toBe('object not found');
     expect(repo.inbound).toEqual([]);
@@ -262,7 +404,7 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     seed(store, 'MSG2', withAttachment('PASS'));
     await expect(
-      new InboundProcessor(store, repo).process({ rawKey: 'inbound/MSG2' }),
+      new InboundProcessor(store, repo, new FakeBodyStore()).process({ rawKey: 'inbound/MSG2' }),
     ).rejects.toThrow('s3 put failed');
     expect(repo.inbound).toEqual([]); // no row committed on an infra failure
   });

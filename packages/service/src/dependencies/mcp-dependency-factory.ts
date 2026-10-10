@@ -13,6 +13,7 @@ import { DdbDownloadTokensDao } from '../data/ddb-download-tokens-dao.js';
 import { DdbEmailsDao } from '../data/ddb-emails-dao.js';
 import { createDocumentClient } from '../data/document-client.js';
 import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
+import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { S3AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import { EmailReadService } from '../services/email-read-service.js';
@@ -40,6 +41,7 @@ export class McpDependencyFactory {
 
     const emailsDao = new DdbEmailsDao(doc, this.config.emailsTable);
     const downloadTokensDao = new DdbDownloadTokensDao(doc, this.config.downloadTokensTable);
+    const bodyStore = new S3MailBodyStore(s3, this.config.mailBucket);
 
     const emailService = new EmailService({
       ses: new SesV2Sender({
@@ -48,6 +50,7 @@ export class McpDependencyFactory {
       }),
       emailsDao,
       objectStore: new S3OutboundObjectStore(s3, this.config.mailBucket),
+      bodies: bodyStore,
       tokensDao: downloadTokensDao,
       downloadBaseUrl: this.config.downloadBaseUrl,
       emailDomain: this.config.emailDomain,
@@ -62,6 +65,7 @@ export class McpDependencyFactory {
       readService: new EmailReadService({
         emailsDao,
         presigner: new S3AttachmentPresigner(s3, this.config.mailBucket),
+        bodies: bodyStore,
         rawMime: new S3InboundObjectStore(s3, this.config.mailBucket),
       }),
       inboundEnabled: true,

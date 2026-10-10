@@ -9,7 +9,7 @@
  *      pathological (e.g. control-char-dense) body is halved until it fits.
  *
  * Normal bodies pass untouched; anything truncated is flagged so the client can offer the
- * raw message. The raw message is always retained in S3 regardless.
+ * raw message (`.eml`) while it is still available.
  */
 
 /** Truncate a string to at most `maxBytes` UTF-8 bytes, cutting on a character boundary. */

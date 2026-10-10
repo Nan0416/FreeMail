@@ -2,7 +2,11 @@ import { App } from 'aws-cdk-lib';
 import { Annotations, Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import type { FreeMailConfig } from '@freemail/shared/config';
-import { EMAIL_LIST_INDEX_ATTRIBUTES } from '@freemail/shared/storage';
+import {
+  EMAIL_LIST_INDEX_ATTRIBUTES,
+  INBOUND_INGESTED_TAG,
+  INBOUND_RAW_RETENTION_DAYS,
+} from '@freemail/shared/storage';
 import { FreeMailStack } from '../src/freemail-stack.js';
 
 function makeConfig(overrides: Partial<FreeMailConfig> = {}): FreeMailConfig {
@@ -22,6 +26,32 @@ function makeConfig(overrides: Partial<FreeMailConfig> = {}): FreeMailConfig {
 function synth(config: FreeMailConfig): Template {
   const stack = new FreeMailStack(new App(), 'TestStack', { config });
   return Template.fromStack(stack);
+}
+
+/** True when the role named by `rolePrefix` holds `action` on the mail bucket's `prefix` keys. */
+function canOnMailPrefix(
+  template: Template,
+  rolePrefix: string,
+  action: string,
+  prefix: string,
+): boolean {
+  const policies = Object.values(template.findResources('AWS::IAM::Policy'));
+  return policies.some((policy) => {
+    if (!JSON.stringify(policy.Properties.Roles).includes(rolePrefix)) {
+      return false;
+    }
+    return (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some(
+      (statement) => {
+        const actions = ([] as unknown[]).concat(statement.Action);
+        const resources = JSON.stringify(statement.Resource);
+        return (
+          actions.includes(action) &&
+          resources.includes('MailBucket') &&
+          resources.includes(`/${prefix}`)
+        );
+      },
+    );
+  });
 }
 
 /** True when the role named by `rolePrefix` may `dynamodb:Query` the emails table's indexes. */
@@ -113,6 +143,49 @@ describe('FreeMailStack', () => {
       );
     expect(canDescribe('RestHandler')).toBe(true);
     expect(canDescribe('McpHandler')).toBe(true);
+  });
+
+  it('expires only fully ingested raw inbound MIME after the retention window', () => {
+    const template = synth(makeConfig());
+    // Exactly one rule: inbound/ AND the ingested tag. Untagged raw MIME (failed or
+    // dead-lettered mail — the only copy) is kept; bodies, attachments, and the sent archive
+    // are permanent (sent-mail downloads point at attachments/outbound/*).
+    template.hasResourceProperties('AWS::S3::Bucket', {
+      LifecycleConfiguration: {
+        Rules: [
+          {
+            Id: 'ExpireIngestedInboundRawMime',
+            Prefix: 'inbound/',
+            TagFilters: [{ Key: INBOUND_INGESTED_TAG.key, Value: INBOUND_INGESTED_TAG.value }],
+            ExpirationInDays: INBOUND_RAW_RETENTION_DAYS,
+            Status: 'Enabled',
+          },
+        ],
+      },
+    });
+    expect(INBOUND_RAW_RETENTION_DAYS).toBe(14);
+  });
+
+  it('lets the inbound parser tag the raw MIME it has fully ingested', () => {
+    const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
+    expect(canOnMailPrefix(template, 'ParserFn', 's3:PutObjectTagging', '*')).toBe(true);
+  });
+
+  it('lets the send paths write sent bodies and the readers load stored bodies', () => {
+    const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
+    expect(canOnMailPrefix(template, 'RestHandler', 's3:PutObject', 'bodies/sent/*')).toBe(true);
+    expect(canOnMailPrefix(template, 'RestHandler', 's3:GetObject*', 'bodies/*')).toBe(true);
+    expect(canOnMailPrefix(template, 'McpHandler', 's3:PutObject', 'bodies/sent/*')).toBe(true);
+    expect(canOnMailPrefix(template, 'McpHandler', 's3:GetObject*', 'bodies/*')).toBe(true);
+    // Negative controls: neither send path may write inbound bodies (only the parser does),
+    // and the body grant is put-only — no deletes.
+    expect(canOnMailPrefix(template, 'RestHandler', 's3:PutObject', 'bodies/*')).toBe(false);
+    expect(canOnMailPrefix(template, 'RestHandler', 's3:DeleteObject*', 'bodies/sent/*')).toBe(
+      false,
+    );
+    expect(canOnMailPrefix(template, 'McpHandler', 's3:DeleteObject*', 'bodies/sent/*')).toBe(
+      false,
+    );
   });
 
   it('buckets block public access and enforce SSL', () => {

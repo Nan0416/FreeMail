@@ -230,7 +230,9 @@ SES receipt rule sets are an **account-global, region-wide singleton** — only 
 
 ### How inbound works once enabled
 
-SES receipt rule → writes raw MIME to the mail S3 bucket → a parser Lambda extracts metadata + attachments (honoring SES spam/virus verdicts) → indexes them in DynamoDB. The web app's **Inbox** tab then lists received mail; the reader renders HTML in a sandboxed iframe with a strict CSP. Inbound is region-restricted, and `us-east-1` (the pinned region) supports it.
+SES receipt rule → writes raw MIME to the mail S3 bucket → a parser Lambda extracts metadata, the decoded body, and attachments (honoring SES spam/virus verdicts) → indexes them in DynamoDB. The web app's **Inbox** tab then lists received mail; the reader renders HTML in a sandboxed iframe with a strict CSP. Inbound is region-restricted, and `us-east-1` (the pinned region) supports it.
+
+**Raw messages are kept for 14 days once fully processed.** When the parser extracts a message completely (body and attachments), SES's raw copy under `inbound/` is only needed for **Download original (.eml)**: the parser tags it, and a lifecycle rule deletes tagged copies after 14 days. For such mail the `.eml` download is offered only while it is younger than that, and a body part over 1 MB keeps only its truncated stored copy afterwards. A raw copy that is still the only copy of a message is never tagged and never expires: mail that failed to parse, a message whose processing dead-lettered (redrive it from the parser DLQ, which keeps events for 14 days), and anything received before tagging existed. Sent mail's original is kept permanently.
 
 ## 8. Attachments
 

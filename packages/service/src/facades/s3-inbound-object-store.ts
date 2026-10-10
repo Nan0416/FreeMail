@@ -14,8 +14,10 @@ import {
   GetObjectCommand,
   HeadObjectCommand,
   PutObjectCommand,
+  PutObjectTaggingCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
+import { INBOUND_INGESTED_TAG } from '@freemail/shared/storage';
 
 /** Trusted object metadata from a HEAD — the size gate + the stable receipt time. */
 export interface ObjectHead {
@@ -28,6 +30,11 @@ export interface InboundObjectStore {
   head(key: string): Promise<ObjectHead | null>;
   /** Open a readable stream over an object's bytes. */
   getStream(key: string): Promise<Readable>;
+  /**
+   * Tag a raw `inbound/` object as fully ingested — only then may the lifecycle rule expire it
+   * (see `INBOUND_INGESTED_TAG`).
+   */
+  markIngested(key: string): Promise<void>;
   /** Store an extracted attachment (always as a non-inline download). */
   putAttachment(key: string, body: Buffer): Promise<void>;
   /** Best-effort delete — used to clean up attachments written during a failed attempt. */
@@ -60,6 +67,16 @@ export class S3InboundObjectStore implements InboundObjectStore {
       }
       throw err;
     }
+  }
+
+  async markIngested(key: string): Promise<void> {
+    await this.client.send(
+      new PutObjectTaggingCommand({
+        Bucket: this.bucket,
+        Key: key,
+        Tagging: { TagSet: [{ Key: INBOUND_INGESTED_TAG.key, Value: INBOUND_INGESTED_TAG.value }] },
+      }),
+    );
   }
 
   async getStream(key: string): Promise<Readable> {

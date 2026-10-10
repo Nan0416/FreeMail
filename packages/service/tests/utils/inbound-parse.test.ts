@@ -40,7 +40,7 @@ const looseLimits = (over: Partial<ParseLimits> = {}): ParseLimits => ({
   maxTextBodyBytes: 10 * 1024 * 1024,
   maxHtmlBodyBytes: 10 * 1024 * 1024,
   maxTotalBodyBytes: 10 * 1024 * 1024,
-  maxSnippetSourceBytes: 512 * 1024,
+  maxRetainedBodyChars: 512 * 1024,
   ...over,
 });
 
@@ -411,7 +411,7 @@ describe('parseInbound — limits', () => {
         '',
       ]),
       new FakeSink(),
-      looseLimits({ maxTextBodyBytes: 1024 * 1024, maxSnippetSourceBytes: 100 }),
+      looseLimits({ maxTextBodyBytes: 1024 * 1024, maxRetainedBodyChars: 100 }),
     );
     expect(p.parseStatus).toBe('ok');
     expect(p.exposed).toBe(true);
