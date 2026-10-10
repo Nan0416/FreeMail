@@ -266,7 +266,10 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
 
       {folder === 'mcp' ? (
         <main className="min-w-0 flex-1">
-          <McpServerView onOpenNav={() => setNavOpen(true)} />
+          <McpServerView
+            onOpenNav={() => setNavOpen(true)}
+            inboundEnabled={props.inboundEnabled ?? false}
+          />
         </main>
       ) : (
         <>

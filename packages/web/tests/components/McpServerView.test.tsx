@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { McpServerView, mcpJson } from '../../src/components/McpServerView.js';
 import { json, renderWithApp } from '../helpers.js';
 
-function renderPage(fetchImpl: typeof fetch) {
-  return renderWithApp(<McpServerView />, fetchImpl);
+function renderPage(fetchImpl: typeof fetch, inboundEnabled = true) {
+  return renderWithApp(<McpServerView inboundEnabled={inboundEnabled} />, fetchImpl);
 }
 
 const RAW_KEY = 'fm_kid1_thesecretpart';
@@ -28,6 +28,17 @@ describe('McpServerView', () => {
         },
       },
     });
+    await screen.findByText('No access keys yet.');
+  });
+
+  it('only promises reading mail when inbound is enabled', async () => {
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      const path = new URL(String(url)).pathname;
+      return path === '/me' ? json(200, { subject: 'owner' }) : json(200, { keys: [] });
+    });
+    renderPage(fetchMock, false);
+
+    expect(screen.getByText(/it can send email, as you/)).toBeInTheDocument();
     await screen.findByText('No access keys yet.');
   });
 

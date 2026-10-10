@@ -102,15 +102,15 @@ The Lambda handlers are bundled from source at synth (esbuild), so no separate h
 
 `cdk deploy` prints outputs you'll use immediately:
 
-| Output                                                                | Use                                                                                                                                                |
-| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`WebAppUrl`**                                                       | Open this to sign in and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                                   |
-| **`ApiEndpoint`**                                                     | The generated execute-api URL. Nothing should use it — clients, MCP agents and download links all use `ApiCustomDomainUrl`.                        |
-| **`ApiCustomDomainUrl`**                                              | The API domain. Used by **both** the web app (cross-origin) and agents (`x-api-key`).                                                              |
-| **`HostedZoneNameServers`**                                           | Present only when FreeMail **created** the zone. **Set these at your registrar** to activate the zone (see [§5](#5-dns-and-email-authentication)). |
-| **`SesProductionAccessNote`**                                         | A link to the SES account dashboard to request production access (see [§4](#4-ses-production-access-sandbox-exit)).                                |
-| **`SesMailFromDomain`**, **`SesBounceComplaintTopicArn`**             | The custom MAIL FROM subdomain and the SNS topic that receives bounce/complaint notifications.                                                     |
-| **`MailBucketName`**, **`QuarantineBucketName`**, **`WebBucketName`** | The S3 buckets (mail and quarantine are retained on teardown — see [§10](#10-troubleshooting)).                                                    |
+| Output                                                                | Use                                                                                                                                                                                            |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`WebAppUrl`**                                                       | Open this to sign in and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                                                                               |
+| **`ApiEndpoint`**                                                     | The generated execute-api URL. New clients, MCP agents and download links all use `ApiCustomDomainUrl`; keep it enabled — download links sent before that switch point here until they expire. |
+| **`ApiCustomDomainUrl`**                                              | The API domain. Used by **both** the web app (cross-origin) and agents (`x-api-key`).                                                                                                          |
+| **`HostedZoneNameServers`**                                           | Present only when FreeMail **created** the zone. **Set these at your registrar** to activate the zone (see [§5](#5-dns-and-email-authentication)).                                             |
+| **`SesProductionAccessNote`**                                         | A link to the SES account dashboard to request production access (see [§4](#4-ses-production-access-sandbox-exit)).                                                                            |
+| **`SesMailFromDomain`**, **`SesBounceComplaintTopicArn`**             | The custom MAIL FROM subdomain and the SNS topic that receives bounce/complaint notifications.                                                                                                 |
+| **`MailBucketName`**, **`QuarantineBucketName`**, **`WebBucketName`** | The S3 buckets (mail and quarantine are retained on teardown — see [§10](#10-troubleshooting)).                                                                                                |
 
 ### After deploying
 
@@ -262,8 +262,8 @@ A download-token **revoke** endpoint is [#35](https://github.com/Nan0416/FreeMai
 
 Agents send email through the MCP server — no browser, no cookies:
 
-1. In the web app, open **API keys** and **create a key**. It's shown **once** (copy it then); it's stored hashed and can't be retrieved again. An API key authorizes an agent to **send and (when inbound is enabled) read the mailbox via the MCP server** — it does **not** grant key management or the REST mailbox-read routes, which require signing in to the web app with your password (the cookie session).
-2. Point your MCP client at **`POST https://{apiDomain}/mcp`** with header **`x-api-key: fm_<your-key>`**.
+1. In the web app, open **MCP server** and **create an access key**. It's shown **once** (copy it then); it's stored hashed and can't be retrieved again. An access key authorizes an agent to **send and (when inbound is enabled) read the mailbox via the MCP server** — it does **not** grant key management or the REST mailbox-read routes, which require signing in to the web app with your password (the cookie session).
+2. Point your MCP client at **`POST https://{apiDomain}/mcp`** with header **`x-api-key: fm_<your-key>`**. For Claude Code, the **MCP server** page shows a ready-to-paste `.mcp.json` that reads the key from `$FREEMAIL_API_KEY`.
 3. Call the **`send_email`** tool. A valid call needs **`from`** (an address under your domain), **at least one recipient** across `to`/`cc`/`bcc`, and **at least one body** — `text` and/or `html`:
 
 ```jsonc

@@ -24,6 +24,8 @@ import { KeyRevealPanel } from './KeyRevealPanel.js';
 export interface McpServerViewProps {
   /** Shown below `lg`, where the sidebar collapses into a sheet. */
   readonly onOpenNav?: () => void;
+  /** The read tools exist only when inbound is enabled. */
+  readonly inboundEnabled: boolean;
 }
 
 /** The environment variable the `.mcp.json` sample reads the access key from. */
@@ -135,8 +137,8 @@ export function McpServerView(props: McpServerViewProps): React.JSX.Element {
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-2xl px-6 py-8">
           <p className="text-[13px] leading-relaxed text-muted-foreground">
-            Connect an AI agent to your mailbox. Through this MCP server it can send email and read
-            your mail, as you.
+            Connect an AI agent to your mailbox. Through this MCP server it can{' '}
+            {props.inboundEnabled ? 'send email and read your mail' : 'send email'}, as you.
           </p>
 
           <h2 className="mt-8 text-[13px] font-semibold">Server URL</h2>

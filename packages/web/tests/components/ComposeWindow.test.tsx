@@ -305,12 +305,19 @@ describe('ComposeWindow — attachments', () => {
     expect(screen.getByRole('button', { name: 'Attach files' })).toBeDisabled();
   });
 
-  it('waits for the uploads still running before reporting a failed one', async () => {
+  it('waits for the uploads still running before reporting a failed one, then retries only it', async () => {
     const fetchImpl = perFileUploadsApi();
     const s3 = heldUploads();
-    const onClose = renderWithUploads(fetchImpl, async (url, file, type, onProgress) =>
-      url.endsWith('/bad.txt') ? 403 : s3.uploadImpl(url, file, type, onProgress),
-    );
+    let badAttempts = 0;
+    const onClose = renderWithUploads(fetchImpl, async (url, file, type, onProgress) => {
+      if (url.endsWith('/bad.txt')) {
+        badAttempts += 1;
+        if (badAttempts === 1) {
+          return 403;
+        }
+      }
+      return s3.uploadImpl(url, file, type, onProgress);
+    });
     fireEvent.change(screen.getByLabelText('Attach files', { selector: 'input' }), {
       target: {
         files: ['bad.txt', 'slow.txt'].map((name) => new File(['x'], name, { type: 'text/plain' })),
@@ -324,6 +331,21 @@ describe('ComposeWindow — attachments', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('could not be uploaded');
     expect(callsTo(fetchImpl, '/emails', 'POST')).toHaveLength(0);
     expect(onClose).not.toHaveBeenCalled();
+
+    // Sending again uploads only the failed file; the finished one is reused.
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(s3.open.has('bad.txt')).toBe(true));
+    await act(async () => s3.open.get('bad.txt')?.finish());
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    const uploads = callsTo(fetchImpl, '/attachments/uploads', 'POST').map(
+      (call) => JSON.parse(String(call[1]?.body)).filename,
+    );
+    expect(uploads.sort()).toEqual(['bad.txt', 'bad.txt', 'slow.txt']);
+    const [[, sendInit]] = callsTo(fetchImpl, '/emails', 'POST');
+    expect(JSON.parse(String(sendInit?.body)).attachments).toEqual([
+      { uploadId: 'bad.txt' },
+      { uploadId: 'slow.txt' },
+    ]);
   });
 
   it('keeps the window open when an upload fails', async () => {

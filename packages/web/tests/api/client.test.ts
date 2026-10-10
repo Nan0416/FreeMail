@@ -21,6 +21,35 @@ function authHeader(init: RequestInit | undefined): string | undefined {
   return (init?.headers as Record<string, string> | undefined)?.authorization;
 }
 
+/** Records what `xhrUpload` does to its request; the test fires the events. */
+class FakeXhr {
+  static last: FakeXhr;
+  method = '';
+  url = '';
+  headers: Record<string, string> = {};
+  withCredentials = false;
+  status = 0;
+  body: unknown;
+  upload: { onprogress: ((event: { loaded: number }) => void) | null } = { onprogress: null };
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  ontimeout: (() => void) | null = null;
+  constructor() {
+    FakeXhr.last = this;
+  }
+  open(method: string, url: string): void {
+    this.method = method;
+    this.url = url;
+  }
+  setRequestHeader(name: string, value: string): void {
+    this.headers[name] = value;
+  }
+  send(body: unknown): void {
+    this.body = body;
+  }
+}
+
 describe('FreeMailClient (cookie auth)', () => {
   it('never sends an Authorization header and always includes credentials', async () => {
     const fetchMock = vi
@@ -250,31 +279,6 @@ describe('FreeMailClient (cookie auth)', () => {
   });
 
   it('xhrUpload PUTs without cookies and reports bytes sent as they go', async () => {
-    class FakeXhr {
-      static last: FakeXhr;
-      method = '';
-      url = '';
-      headers: Record<string, string> = {};
-      withCredentials = false;
-      status = 0;
-      body: unknown;
-      upload: { onprogress: ((event: { loaded: number }) => void) | null } = { onprogress: null };
-      onload: (() => void) | null = null;
-      onerror: (() => void) | null = null;
-      constructor() {
-        FakeXhr.last = this;
-      }
-      open(method: string, url: string): void {
-        this.method = method;
-        this.url = url;
-      }
-      setRequestHeader(name: string, value: string): void {
-        this.headers[name] = value;
-      }
-      send(body: unknown): void {
-        this.body = body;
-      }
-    }
     vi.stubGlobal('XMLHttpRequest', FakeXhr);
     try {
       const file = new Blob(['abcd'], { type: 'text/plain' });
@@ -295,6 +299,19 @@ describe('FreeMailClient (cookie auth)', () => {
       expect(xhr.withCredentials).toBe(false);
       expect(xhr.body).toBe(file);
       expect(progress).toEqual([2, 4]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('xhrUpload rejects when the request never completes', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeXhr);
+    try {
+      for (const event of ['onerror', 'onabort', 'ontimeout'] as const) {
+        const done = xhrUpload('https://s3/u1', new Blob(['x']), 'text/plain', () => {});
+        FakeXhr.last[event]?.();
+        await expect(done).rejects.toThrow('The upload did not complete.');
+      }
     } finally {
       vi.unstubAllGlobals();
     }

@@ -115,17 +115,17 @@ Full walkthrough — hosted-zone setup, custom domains, inbound, DNS records, an
 
 FreeMail exposes a stateless MCP server at **`POST https://<apiDomain>/mcp`**, authenticated with an access key you created on the web app's **MCP server** page. It always offers **`send_email`** (and **`create_attachment_upload`** for files); when **inbound is enabled** it also offers the read tools **`list_emails`**, **`get_email`**, and **`get_email_attachment_url`** so agents can read received mail. (Inbound email is untrusted external content — the read tools flag it as data, not instructions.)
 
-```jsonc
-// .mcp.json for Claude Code. It expands ${FREEMAIL_API_KEY} from the environment,
-// so the key stays out of the file: export FREEMAIL_API_KEY=fm_<your-access-key>
+For Claude Code, save this as `.mcp.json` in your project. Claude Code expands `${FREEMAIL_API_KEY}` from the environment (`export FREEMAIL_API_KEY=fm_<your-access-key>`), so the key stays out of the file:
+
+```json
 {
   "mcpServers": {
     "freemail": {
       "type": "http",
       "url": "https://<apiDomain>/mcp",
-      "headers": { "x-api-key": "${FREEMAIL_API_KEY}" },
-    },
-  },
+      "headers": { "x-api-key": "${FREEMAIL_API_KEY}" }
+    }
+  }
 }
 ```
 
