@@ -9,6 +9,7 @@
  * full items. Every put is conditional (`attribute_not_exists(pk)`) so a re-used id can never
  * clobber an existing row — and for inbound, so an at-least-once S3 redelivery is a no-op.
  */
+import { DescribeTableCommand } from '@aws-sdk/client-dynamodb';
 import {
   DynamoDBDocumentClient,
   GetCommand,
@@ -49,6 +50,9 @@ function toRow(item: Record<string, unknown>): GetEmailOutput {
 
 const logger = getLogger('DdbEmailsDao');
 
+/** How long to trust a "list index not readable yet" answer before asking DynamoDB again. */
+const INDEX_RECHECK_MS = 30_000;
+
 type SentSummaryFields = Omit<
   Extract<EmailSummary, { readonly direction: 'sent' }>,
   'direction' | 'sk'
@@ -71,22 +75,22 @@ function toSummary(item: Record<string, unknown>, direction: 'sent' | 'inbound')
   return { ...(item as unknown as SentSummaryFields), direction: 'sent', sk };
 }
 
-/**
- * DynamoDB rejects a query on an index that is still backfilling, or that a deploy has not
- * created yet. CloudFormation does NOT wait for a newly added GSI to finish backfilling before
- * it updates the Lambdas that read it, so these are expected for a few minutes after the deploy
- * that adds the index.
- */
+/** DynamoDB's answer to a query on an index the table does not have (removed, or never created). */
 function isIndexNotReadable(err: unknown): boolean {
   return (
     err instanceof Error &&
     err.name === 'ValidationException' &&
-    /backfilling global secondary index|does not have the specified index/i.test(err.message)
+    /does not have the specified index/i.test(err.message)
   );
 }
 
 export class DdbEmailsDao implements EmailsDao {
   private readonly doc: DynamoDBDocumentClient;
+  /** A list index confirmed readable stays trusted until a query reports it missing. */
+  private listIndexReadable = false;
+  private listIndexCheckedAtMs: number | undefined;
+  /** The DescribeTable call in flight, shared so concurrent first calls ask only once. */
+  private listIndexCheck: Promise<boolean> | undefined;
 
   constructor(
     doc: DynamoDBDocumentClient,
@@ -206,23 +210,77 @@ export class DdbEmailsDao implements EmailsDao {
   }
 
   async listEmailSummaries(input: ListEmailSummariesInput): Promise<ListEmailSummariesOutput> {
+    // Until the index is readable, serve the page from the table: same keys, same order, same
+    // paging — just larger reads. So the list is never incomplete while a new index builds.
     let items: Record<string, unknown>[];
-    try {
-      items = await this.queryPartition(input, EMAIL_LIST_INDEX_NAME);
-    } catch (err) {
-      if (!isIndexNotReadable(err)) {
-        throw err;
-      }
-      // Until the index is readable, serve the page from the table: same keys, same order,
-      // same paging — just larger reads. No list outage while a new index backfills. Logged,
-      // so a fallback that outlasts a deploy (a renamed or missing index) is visible.
-      logger.warn(
-        `List index "${EMAIL_LIST_INDEX_NAME}" not readable; listing from the table.`,
-        err,
-      );
+    if (!(await this.isListIndexReadable())) {
       items = await this.queryPartition(input);
+    } else {
+      try {
+        items = await this.queryPartition(input, EMAIL_LIST_INDEX_NAME);
+      } catch (err) {
+        if (!isIndexNotReadable(err)) {
+          throw err;
+        }
+        logger.warn(
+          `List index "${EMAIL_LIST_INDEX_NAME}" is missing; listing from the table.`,
+          err,
+        );
+        this.listIndexReadable = false;
+        items = await this.queryPartition(input);
+      }
     }
     return { emails: items.map((item) => toSummary(item, input.direction)) };
+  }
+
+  /**
+   * True once the list index is fully built (ACTIVE, or UPDATING a setting on a built index)
+   * and not backfilling. A backfilling GSI is NOT rejected by DynamoDB — it answers queries with
+   * whatever it has indexed so far, silently partial — and CloudFormation does not wait for a
+   * newly added GSI to backfill before it updates the Lambdas that read it. So readiness is asked
+   * of DescribeTable (covered by the table's read grant), cached once confirmed, and re-asked at
+   * most every {@link INDEX_RECHECK_MS} until then; concurrent first calls share one request.
+   */
+  private async isListIndexReadable(): Promise<boolean> {
+    if (this.listIndexReadable) {
+      return true;
+    }
+    if (this.listIndexCheck !== undefined) {
+      return this.listIndexCheck;
+    }
+    const nowMs = Date.now();
+    if (
+      this.listIndexCheckedAtMs !== undefined &&
+      nowMs - this.listIndexCheckedAtMs < INDEX_RECHECK_MS
+    ) {
+      return false;
+    }
+    this.listIndexCheckedAtMs = nowMs;
+    this.listIndexCheck = this.describeListIndex().finally(() => {
+      this.listIndexCheck = undefined;
+    });
+    return this.listIndexCheck;
+  }
+
+  /** Ask DescribeTable about the list index. Logged when not readable, so a lasting fallback shows. */
+  private async describeListIndex(): Promise<boolean> {
+    try {
+      const out = await this.doc.send(new DescribeTableCommand({ TableName: this.tableName }));
+      const index = out.Table?.GlobalSecondaryIndexes?.find(
+        (candidate) => candidate.IndexName === EMAIL_LIST_INDEX_NAME,
+      );
+      const built = index?.IndexStatus === 'ACTIVE' || index?.IndexStatus === 'UPDATING';
+      this.listIndexReadable = built && index?.Backfilling !== true;
+    } catch (err) {
+      logger.warn('Could not describe the emails table; listing from the table for now.', err);
+      return false;
+    }
+    if (!this.listIndexReadable) {
+      logger.warn(
+        `List index "${EMAIL_LIST_INDEX_NAME}" is not built yet; listing from the table.`,
+      );
+    }
+    return this.listIndexReadable;
   }
 
   /**

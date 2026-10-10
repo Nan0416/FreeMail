@@ -99,6 +99,22 @@ describe('FreeMailStack', () => {
     expect(canQueryEmailIndexes(template, 'AuthorizerHandler')).toBe(false);
   });
 
+  it('lets every mailbox reader DescribeTable — how the DAO knows the index is ACTIVE', () => {
+    const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
+    const canDescribe = (rolePrefix: string): boolean =>
+      Object.values(template.findResources('AWS::IAM::Policy')).some(
+        (policy) =>
+          JSON.stringify(policy.Properties.Roles).includes(rolePrefix) &&
+          (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some(
+            (statement) =>
+              ([] as unknown[]).concat(statement.Action).includes('dynamodb:DescribeTable') &&
+              JSON.stringify(statement.Resource).includes('EmailsTable'),
+          ),
+      );
+    expect(canDescribe('RestHandler')).toBe(true);
+    expect(canDescribe('McpHandler')).toBe(true);
+  });
+
   it('buckets block public access and enforce SSL', () => {
     const template = synth(makeConfig());
     template.hasResourceProperties('AWS::S3::Bucket', {
