@@ -23,6 +23,7 @@ export function App(
     fetchImpl?: typeof fetch;
   } = {},
 ): React.JSX.Element {
+  // Default applied once: the effect below and its deps must see the same function.
   const loadConfig = props.loadConfig ?? loadRuntimeConfig;
   const [boot, setBoot] = useState<Boot>({ status: 'loading' });
 

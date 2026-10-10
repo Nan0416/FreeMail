@@ -33,7 +33,8 @@ edge cases; the tag says what catches a violation.
 6. **Service methods take one `<Method>ServiceRequest` named `request`** and return the
    full response shape; genuinely void stays `Promise<void>`. _Review_ · §5
 7. **Interface and type-alias fields are `readonly`.** _ESLint `no-restricted-syntax`_ · §9
-8. **`import type` for type-only imports; relative imports end in `.js`.** _Compiler_ · §9
+8. **`import type` for type-only imports; relative imports end in `.js`.** _Compiler_ (`NodeNext`
+   packages); _review_ in `packages/web`, whose `bundler` resolution accepts either · §9
 
 ---
 
@@ -204,7 +205,7 @@ export interface ApiKeysDao {
 | A list                     | `interface ListApiKeysOutput { readonly apiKeys: [...] }`  | `Promise<ReadonlyArray<GetApiKeyOutput>>` |
 | May be absent              | `Promise<GetApiKeyOutput \| null>`                         | `undefined`, or a `found` flag            |
 | Same shape as another type | `interface GetLockoutOutput extends LockoutState {}`       | `type GetLockoutOutput = LockoutState`    |
-| One of several shapes      | `type GetEmailOutput = SentRow \| InboundRow`              | —                                         |
+| One of several shapes      | `type GetEmailOutput = (sent row) \| (inbound row)`        | —                                         |
 
 An implementation names an unused empty Input `_input`. A union is the one place a `type`
 alias stands in for an Output, because an interface cannot be a union.
@@ -396,7 +397,7 @@ style, or the style will not typecheck.
   }
   const result = await dao.createApiKey(...);       // not const { created } = ...
   if (result.created) { ... }
-  function Sidebar(props: SidebarProps) { ... props.view ... }
+  function Sidebar(props: SidebarProps) { ... props.folder ... }
   ```
 
   Parameter names follow the layer: DAO methods take `input`, service methods `request`,

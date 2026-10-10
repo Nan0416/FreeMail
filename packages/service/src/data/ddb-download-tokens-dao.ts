@@ -19,10 +19,10 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import type {
   ClaimDownloadTokenInput,
+  ClaimDownloadTokenOutput,
   CreateDownloadTokenInput,
   CreateDownloadTokenOutput,
   DownloadTokensDao,
-  ClaimDownloadTokenOutput,
 } from './download-tokens-dao.js';
 import { CONDITIONAL_CHECK_FAILED, DownloadTokenEntity } from './entities.js';
 

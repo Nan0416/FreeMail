@@ -71,9 +71,9 @@ export { DdbEmailsDao } from './ddb-emails-dao.js';
 
 export type {
   ClaimDownloadTokenInput,
+  ClaimDownloadTokenOutput,
   CreateDownloadTokenInput,
   CreateDownloadTokenOutput,
   DownloadTokensDao,
-  ClaimDownloadTokenOutput,
 } from './download-tokens-dao.js';
 export { DdbDownloadTokensDao } from './ddb-download-tokens-dao.js';

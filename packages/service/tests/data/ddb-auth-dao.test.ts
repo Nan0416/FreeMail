@@ -56,11 +56,10 @@ class FakeDoc {
     }
     if (command instanceof PutCommand) {
       this.beforePutHooks.shift()?.();
-      const input = command.input;
-      this.puts.push(input);
-      const item = input.Item as Record<string, unknown>;
+      this.puts.push(command.input);
+      const item = command.input.Item as Record<string, unknown>;
       const existing = this.store.get(keyOf(item));
-      if (!this.conditionHolds(input, existing)) {
+      if (!this.conditionHolds(command.input, existing)) {
         return Promise.reject(conditionalCheckFailed());
       }
       this.store.set(keyOf(item), item);

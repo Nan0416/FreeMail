@@ -44,10 +44,12 @@ class FakeDoc {
       return Promise.resolve({ Item: this.store.get(String(command.input.Key?.keyId)) });
     }
     if (command instanceof PutCommand) {
-      const input = command.input;
-      const item = input.Item as Record<string, unknown>;
+      const item = command.input.Item as Record<string, unknown>;
       const key = String(item.keyId);
-      if (input.ConditionExpression === 'attribute_not_exists(keyId)' && this.store.has(key)) {
+      if (
+        command.input.ConditionExpression === 'attribute_not_exists(keyId)' &&
+        this.store.has(key)
+      ) {
         return Promise.reject(conditionalCheckFailed());
       }
       this.store.set(key, item);
