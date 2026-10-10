@@ -4,8 +4,8 @@
  * The Lambda entry points live in `handlers/` and are bundled directly by CDK, so nothing
  * here is on a runtime path. This barrel re-exports the layers that are useful outside the
  * service (and unit-testable without AWS), following the layering the source is organised
- * into: `services/` business logic, `facades/` external-system adapters, `data/` DAOs,
- * `utils/` pure helpers.
+ * into: `services/` business logic, `processors/` event-triggered work, `facades/`
+ * external-system adapters, `data/` DAOs, `utils/` pure helpers.
  */
 import { healthOk, type HealthReport } from '@freemail/shared';
 
@@ -14,6 +14,7 @@ export function serviceHealth(): HealthReport {
 }
 
 export * from './services/index.js';
+export * from './processors/index.js';
 export * from './facades/index.js';
 export * from './data/index.js';
 export { AuthError, EmailError, authErrors, emailErrors } from './utils/errors.js';

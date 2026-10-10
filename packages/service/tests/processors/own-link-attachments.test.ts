@@ -9,8 +9,8 @@ import type {
 import {
   MAX_LINKED_ATTACHMENTS,
   OwnLinkAttachments,
-  type ResolveLinkedAttachmentsServiceRequest,
-} from '../../src/services/own-link-attachments.js';
+  type ResolveLinkedAttachmentsRequest,
+} from '../../src/processors/own-link-attachments.js';
 
 const BASE = 'https://abc123.execute-api.us-east-1.amazonaws.com';
 const RECEIVED_AT = '2026-10-10T00:00:00.000Z';
@@ -71,8 +71,8 @@ function link(n: number): string {
 /** A request for a message from me@example.com that passed SES's DMARC check. */
 function request(
   bodies: readonly (string | undefined)[],
-  over: Partial<ResolveLinkedAttachmentsServiceRequest> = {},
-): ResolveLinkedAttachmentsServiceRequest {
+  over: Partial<ResolveLinkedAttachmentsRequest> = {},
+): ResolveLinkedAttachmentsRequest {
   return {
     bodies,
     from: 'me@example.com',
@@ -84,9 +84,9 @@ function request(
 
 async function attachedKeys(
   links: OwnLinkAttachments,
-  req: ResolveLinkedAttachmentsServiceRequest,
+  req: ResolveLinkedAttachmentsRequest,
 ): Promise<string[]> {
-  return (await links.resolve(req)).attachments.map((a) => a.s3Key);
+  return (await links.resolveLinkedAttachments(req)).attachments.map((a) => a.s3Key);
 }
 
 afterEach(() => {
@@ -98,7 +98,7 @@ describe('OwnLinkAttachments.resolve', () => {
     const tokens = new FakeTokens().add(record(0), record(1));
     const links = new OwnLinkAttachments(tokens, BASE);
 
-    const resolved = await links.resolve(
+    const resolved = await links.resolveLinkedAttachments(
       request([`Files:\n- ${link(0)}\n- ${link(1)}`, `<a href="${link(0)}">file-0.pdf</a>`], {
         from: 'Me@Example.com',
       }),
@@ -156,7 +156,9 @@ describe('OwnLinkAttachments.resolve', () => {
     tokens.failToken = token(1);
     const links = new OwnLinkAttachments(tokens, BASE);
 
-    const resolved = await links.resolve(request([`${link(0)} ${link(1)} ${link(2)}`]));
+    const resolved = await links.resolveLinkedAttachments(
+      request([`${link(0)} ${link(1)} ${link(2)}`]),
+    );
 
     expect(resolved.attachments.map((a) => a.s3Key)).toEqual(['attachments/sent/e1/2']);
     expect(resolved.attachments[0]?.id).toBe('link-0');
@@ -164,7 +166,7 @@ describe('OwnLinkAttachments.resolve', () => {
 
   it('attaches a file once even when two of its tokens are linked', async () => {
     const tokens = new FakeTokens().add(record(0), record(1, { s3Key: 'attachments/sent/e1/0' }));
-    const resolved = await new OwnLinkAttachments(tokens, BASE).resolve(
+    const resolved = await new OwnLinkAttachments(tokens, BASE).resolveLinkedAttachments(
       request([`${link(0)} ${link(1)}`]),
     );
     expect(resolved.attachments).toHaveLength(1);
@@ -175,7 +177,7 @@ describe('OwnLinkAttachments — which links are looked up', () => {
   it('only this deployment’s own, well-formed links', async () => {
     const tokens = new FakeTokens();
     const links = new OwnLinkAttachments(tokens, `${BASE}/`);
-    await links.resolve(
+    await links.resolveLinkedAttachments(
       request([
         [
           link(0),
@@ -194,7 +196,7 @@ describe('OwnLinkAttachments — which links are looked up', () => {
   it('at most 20 per message', async () => {
     const tokens = new FakeTokens();
     const many = Array.from({ length: 30 }, (_, n) => link(n)).join(' ');
-    await new OwnLinkAttachments(tokens, BASE).resolve(request([many]));
+    await new OwnLinkAttachments(tokens, BASE).resolveLinkedAttachments(request([many]));
     expect(tokens.lookups).toHaveLength(MAX_LINKED_ATTACHMENTS);
     expect(MAX_LINKED_ATTACHMENTS).toBe(20);
   });

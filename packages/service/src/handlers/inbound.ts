@@ -1,7 +1,7 @@
 /**
  * Inbound-mail parser Lambda. Triggered by S3 `ObjectCreated` on the `inbound/`
  * prefix (see the infra construct) — one raw MIME object per record. All the work is
- * in {@link InboundProcessor.process}; this file is the entry point + a bounded diagnostic
+ * in {@link InboundProcessor.processInboundEmail}; this file is the entry point + a bounded diagnostic
  * log. A handled failure (bad key / oversize / malformed / over-limit) is logged and
  * returns normally; only an infra error propagates, so the async invocation retries
  * and eventually DLQs.
@@ -32,7 +32,7 @@ export const handler = async (event: S3Event): Promise<void> => {
   const instance = init();
   for (const record of event.Records) {
     const rawKey = record.s3.object.key;
-    const result = await instance.processor.process({ rawKey });
+    const result = await instance.processor.processInboundEmail({ rawKey });
     console.log(
       JSON.stringify({
         msg: 'inbound.processed',

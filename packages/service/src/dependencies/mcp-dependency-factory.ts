@@ -16,7 +16,7 @@ import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { S3UploadStore } from '../facades/s3-upload-store.js';
-import { AttachmentUploadService } from '../services/attachment-upload-service.js';
+import { AttachmentService } from '../services/attachment-service.js';
 import { createUploadPresignClient, embedLimits } from './uploads.js';
 import { S3AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import { EmailReadService } from '../services/email-read-service.js';
@@ -27,7 +27,7 @@ import type { McpConfig } from '../handlers/mcp-config.js';
 export interface McpDependencies {
   readonly emailService: EmailService;
   /** Backs the `create_attachment_upload` tool — always available, like `send_email`. */
-  readonly uploadService: AttachmentUploadService;
+  readonly attachmentService: AttachmentService;
   /** Present only when inbound is enabled — see the note above. */
   readonly readService: EmailReadService | undefined;
   readonly inboundEnabled: boolean;
@@ -48,7 +48,13 @@ export class McpDependencyFactory {
     const downloadTokensDao = new DdbDownloadTokensDao(doc, this.config.downloadTokensTable);
     const bodyStore = new S3MailBodyStore(s3, this.config.mailBucket);
     const uploadStore = new S3UploadStore(s3, createUploadPresignClient(), this.config.mailBucket);
-    const uploadService = new AttachmentUploadService({ uploads: uploadStore });
+    const presigner = new S3AttachmentPresigner(s3, this.config.mailBucket);
+    // The MCP tools only create uploads; the link-download method is never called here.
+    const attachmentService = new AttachmentService({
+      uploads: uploadStore,
+      tokensDao: downloadTokensDao,
+      presigner,
+    });
 
     const emailService = new EmailService({
       ses: new SesV2Sender({
@@ -66,15 +72,15 @@ export class McpDependencyFactory {
     });
 
     if (!this.config.inboundEnabled) {
-      return { emailService, uploadService, readService: undefined, inboundEnabled: false };
+      return { emailService, attachmentService, readService: undefined, inboundEnabled: false };
     }
 
     return {
       emailService,
-      uploadService,
+      attachmentService,
       readService: new EmailReadService({
         emailsDao,
-        presigner: new S3AttachmentPresigner(s3, this.config.mailBucket),
+        presigner,
         bodies: bodyStore,
         rawMime: new S3InboundObjectStore(s3, this.config.mailBucket),
       }),

@@ -20,7 +20,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const sendMock = vi.hoisted(() => vi.fn());
 vi.mock('../../src/services/email-service.js', () => ({
   EmailService: class {
-    send = sendMock;
+    sendEmail = sendMock;
   },
 }));
 

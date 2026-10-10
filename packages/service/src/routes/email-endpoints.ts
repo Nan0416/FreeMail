@@ -22,7 +22,7 @@ import type { Express, NextFunction, Request, Response } from 'express';
 import { emailErrors } from '../utils/errors.js';
 import { parseListEmailsQuery } from '../utils/list-query.js';
 import type { EmailReadService, ListEmailsServiceRequest } from '../services/email-read-service.js';
-import type { AttachmentUploadService } from '../services/attachment-upload-service.js';
+import type { AttachmentService } from '../services/attachment-service.js';
 import type { EmailService } from '../services/email-service.js';
 import { requireAccessScheme } from '../middleware/auth-middleware.js';
 import { requireJsonContentType } from '../middleware/json-content-type.js';
@@ -43,7 +43,7 @@ export class EmailEndpoints implements Endpoints {
   constructor(
     emailService: EmailService,
     readService: EmailReadService,
-    uploadService: AttachmentUploadService,
+    attachmentService: AttachmentService,
   ) {
     this.router = Router();
 
@@ -56,7 +56,7 @@ export class EmailEndpoints implements Endpoints {
         try {
           const request = parseCreateUploadBody(requireBody(req));
           logger.info('POST /attachments/uploads.');
-          res.status(201).json(await uploadService.create(request));
+          res.status(201).json(await attachmentService.createAttachmentUpload(request));
         } catch (err) {
           next(err);
         }
@@ -71,7 +71,7 @@ export class EmailEndpoints implements Endpoints {
         try {
           const request = parseSendEmailBody(requireBody(req));
           logger.info('POST /emails.');
-          res.status(200).json(await emailService.send(request));
+          res.status(200).json(await emailService.sendEmail(request));
         } catch (err) {
           next(err);
         }
