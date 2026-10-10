@@ -1,7 +1,7 @@
 import { Mail } from 'lucide-react';
 
 /** Centred frame shared by the boot, loading, and sign-in screens. */
-export function AuthScreen({ children }: { children?: React.ReactNode }): React.JSX.Element {
+export function AuthScreen(props: { children?: React.ReactNode }): React.JSX.Element {
   return (
     <main className="grid min-h-full place-items-center bg-sidebar px-4 py-12">
       <div className="w-full max-w-sm">
@@ -11,7 +11,7 @@ export function AuthScreen({ children }: { children?: React.ReactNode }): React.
           </span>
           <span className="text-lg font-semibold tracking-tight">FreeMail</span>
         </div>
-        {children}
+        {props.children}
       </div>
     </main>
   );

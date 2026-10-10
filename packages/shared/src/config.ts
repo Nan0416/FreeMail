@@ -203,19 +203,22 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
     throw new Error(formatIssues(result.error));
   }
 
-  const { region, hostedZone, emailDomain, appDomain, apiDomain, sesIdentity, inbound } =
-    result.data;
   return {
-    region,
+    region: result.data.region,
     hostedZone: {
-      mode: hostedZone.mode,
-      zoneName: hostedZone.zoneName,
-      ...(hostedZone.hostedZoneId ? { hostedZoneId: hostedZone.hostedZoneId } : {}),
+      mode: result.data.hostedZone.mode,
+      zoneName: result.data.hostedZone.zoneName,
+      ...(result.data.hostedZone.hostedZoneId
+        ? { hostedZoneId: result.data.hostedZone.hostedZoneId }
+        : {}),
     },
-    emailDomain,
-    appDomain,
-    apiDomain,
-    sesIdentity: { mode: sesIdentity.mode },
-    inbound: { enabled: inbound.enabled, confirmInboundMx: inbound.confirmInboundMx },
+    emailDomain: result.data.emailDomain,
+    appDomain: result.data.appDomain,
+    apiDomain: result.data.apiDomain,
+    sesIdentity: { mode: result.data.sesIdentity.mode },
+    inbound: {
+      enabled: result.data.inbound.enabled,
+      confirmInboundMx: result.data.inbound.confirmInboundMx,
+    },
   };
 }

@@ -21,9 +21,9 @@ export async function optimisticUpdate<T>(
   maxAttempts = 8,
 ): Promise<T> {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    const { value, version } = await read();
-    const next = compute(value);
-    if (await writeIfVersion(next, version)) {
+    const current = await read();
+    const next = compute(current.value);
+    if (await writeIfVersion(next, current.version)) {
       return next;
     }
   }

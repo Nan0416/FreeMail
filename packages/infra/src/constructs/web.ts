@@ -162,7 +162,6 @@ export class WebConstruct extends Construct {
 
   constructor(scope: Construct, id: string, props: WebConstructProps) {
     super(scope, id);
-    const { apiBaseUrl, assetPath, inboundEnabled, customDomain } = props;
 
     // This construct OWNS the SPA's private origin bucket. Unlike the mail bucket
     // (real email → RETAIN), the web bucket holds only the redeployable SPA build,
@@ -180,10 +179,10 @@ export class WebConstruct extends Construct {
     // written into the hosted zone). The cert must be in the CloudFront cert region —
     // us-east-1 — which the stack is pinned to, so no cross-region cert stack is needed.
     const certificate = new Certificate(this, 'Certificate', {
-      domainName: customDomain.domainName,
-      validation: CertificateValidation.fromDns(customDomain.hostedZone),
+      domainName: props.customDomain.domainName,
+      validation: CertificateValidation.fromDns(props.customDomain.hostedZone),
     });
-    this.customDomainName = customDomain.domainName;
+    this.customDomainName = props.customDomain.domainName;
 
     // Strict security headers for the SPA document + assets. This is the app CSP layer
     // of the four independent HTML-render controls; it also sets frame-ancestors 'none'
@@ -193,7 +192,7 @@ export class WebConstruct extends Construct {
       comment: 'FreeMail SPA: strict CSP + security headers.',
       securityHeadersBehavior: {
         contentSecurityPolicy: {
-          contentSecurityPolicy: appContentSecurityPolicy(apiBaseUrl),
+          contentSecurityPolicy: appContentSecurityPolicy(props.apiBaseUrl),
           override: true,
         },
         contentTypeOptions: { override: true },
@@ -213,7 +212,7 @@ export class WebConstruct extends Construct {
     this.distribution = new Distribution(this, 'Distribution', {
       comment: 'FreeMail web app',
       defaultRootObject: 'index.html',
-      domainNames: [customDomain.domainName],
+      domainNames: [props.customDomain.domainName],
       certificate,
       // SPA client routing (#47): with no API behind this distribution, a distribution-wide
       // fallback is safe again — S3 answers 403 (OAC, object absent) or 404, and both mean
@@ -239,13 +238,13 @@ export class WebConstruct extends Construct {
     // (not a token) and CDK's FQDN handling appends the zone correctly.
     const aliasTarget = RecordTarget.fromAlias(new CloudFrontTarget(this.distribution));
     new ARecord(this, 'AliasRecord', {
-      zone: customDomain.hostedZone,
-      recordName: customDomain.domainName,
+      zone: props.customDomain.hostedZone,
+      recordName: props.customDomain.domainName,
       target: aliasTarget,
     });
     new AaaaRecord(this, 'AliasRecordAaaa', {
-      zone: customDomain.hostedZone,
-      recordName: customDomain.domainName,
+      zone: props.customDomain.hostedZone,
+      recordName: props.customDomain.domainName,
       target: aliasTarget,
     });
 
@@ -254,7 +253,7 @@ export class WebConstruct extends Construct {
     // harmless (unique filenames, tiny, single-tenant traffic).
     new BucketDeployment(this, 'SpaAssets', {
       destinationBucket: this.webBucket,
-      sources: [Source.asset(assetPath, { exclude: ['index.html'] })],
+      sources: [Source.asset(props.assetPath, { exclude: ['index.html'] })],
       cacheControl: [
         CacheControl.setPublic(),
         CacheControl.maxAge(Duration.days(365)),
@@ -269,8 +268,11 @@ export class WebConstruct extends Construct {
     new BucketDeployment(this, 'SpaRoot', {
       destinationBucket: this.webBucket,
       sources: [
-        Source.asset(assetPath, { exclude: ['assets/**'] }),
-        Source.jsonData('config.json', webRuntimeConfigJson(apiBaseUrl, inboundEnabled)),
+        Source.asset(props.assetPath, { exclude: ['assets/**'] }),
+        Source.jsonData(
+          'config.json',
+          webRuntimeConfigJson(props.apiBaseUrl, props.inboundEnabled),
+        ),
       ],
       cacheControl: [CacheControl.noCache(), CacheControl.mustRevalidate()],
       prune: false,

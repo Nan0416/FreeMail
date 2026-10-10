@@ -45,12 +45,17 @@ export function decodeEmailRef(handle: string): EmailRef {
   if (typeof parsed !== 'object' || parsed === null) {
     throw emailErrors.notFound('No such message.');
   }
-  const { v, pk, sk } = parsed as Record<string, unknown>;
-  if (v !== 1 || typeof pk !== 'string' || typeof sk !== 'string' || sk.length === 0) {
+  const record = parsed as Record<string, unknown>;
+  if (
+    record.v !== 1 ||
+    typeof record.pk !== 'string' ||
+    typeof record.sk !== 'string' ||
+    record.sk.length === 0
+  ) {
     throw emailErrors.notFound('No such message.');
   }
-  if (!EMAIL_PARTITIONS.has(pk)) {
+  if (!EMAIL_PARTITIONS.has(record.pk)) {
     throw emailErrors.notFound('No such message.');
   }
-  return { pk, sk };
+  return { pk: record.pk, sk: record.sk };
 }

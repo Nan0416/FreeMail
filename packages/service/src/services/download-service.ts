@@ -54,15 +54,14 @@ export class DownloadService {
   async resolve(
     request: ResolveDownloadServiceRequest,
   ): Promise<ResolveDownloadServiceResponse | null> {
-    const { token } = request;
     // Reject anything not shaped like a minted token BEFORE any DB call — an overlong
     // token would otherwise throw a DynamoDB ValidationException (500), breaking the
     // uniform-404 contract. Empty / invalid-char tokens fail closed here too.
-    if (!isValidDownloadToken(token)) {
+    if (!isValidDownloadToken(request.token)) {
       return null;
     }
     const record = await this.tokensDao.claimDownloadToken({
-      token,
+      token: request.token,
       nowIso: this.now().toISOString(),
     });
     if (!record) {

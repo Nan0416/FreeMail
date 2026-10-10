@@ -38,8 +38,8 @@ export interface CreateDownloadTokenInput {
   readonly maxDownloads?: number;
 }
 
-/** One stored token row, as read back after a successful claim. */
-export type GetDownloadTokenOutput = CreateDownloadTokenInput;
+/** Nothing to report: the conditional put either landed or threw. */
+export interface CreateDownloadTokenOutput {}
 
 export interface ClaimDownloadTokenInput {
   /** The presented token — the capability itself. */
@@ -48,12 +48,15 @@ export interface ClaimDownloadTokenInput {
   readonly nowIso: string;
 }
 
+/** One stored token row, as read back after a successful claim. */
+export interface ClaimDownloadTokenOutput extends CreateDownloadTokenInput {}
+
 export interface DownloadTokensDao {
   /**
    * Store a new token row. Conditional on the token not already existing, so an
    * (astronomically unlikely) token collision can never clobber an existing row.
    */
-  createDownloadToken(input: CreateDownloadTokenInput): Promise<void>;
+  createDownloadToken(input: CreateDownloadTokenInput): Promise<CreateDownloadTokenOutput>;
 
   /**
    * Atomically gate + consume one download: succeeds ONLY if the token exists, is not
@@ -62,5 +65,5 @@ export interface DownloadTokensDao {
    * on success, or `null` when any gate fails (missing / revoked / expired / exhausted) — a
    * single uniform "no" with no oracle, and race-safe under concurrency.
    */
-  claimDownloadToken(input: ClaimDownloadTokenInput): Promise<GetDownloadTokenOutput | null>;
+  claimDownloadToken(input: ClaimDownloadTokenInput): Promise<ClaimDownloadTokenOutput | null>;
 }

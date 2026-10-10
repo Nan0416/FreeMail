@@ -20,23 +20,22 @@ export interface FreeMailStackProps extends StackProps {
  */
 export class FreeMailStack extends Stack {
   constructor(scope: Construct, id: string, props: FreeMailStackProps) {
-    const { config } = props;
-    super(scope, id, { ...props, env: { ...props.env, region: config.region } });
+    super(scope, id, { ...props, env: { ...props.env, region: props.config.region } });
 
-    this.assertInboundAcknowledged(config);
-    this.warnCustomDomainDelegation(config);
+    this.assertInboundAcknowledged(props.config);
+    this.warnCustomDomainDelegation(props.config);
 
-    const dns = new DnsConstruct(this, 'Dns', { hostedZone: config.hostedZone });
+    const dns = new DnsConstruct(this, 'Dns', { hostedZone: props.config.hostedZone });
     const data = new DataConstruct(this, 'Data');
     const ses = new SesConstruct(this, 'Ses', {
       hostedZone: dns.hostedZone,
-      emailDomain: config.emailDomain,
-      region: config.region,
-      sesIdentityMode: config.sesIdentity.mode,
+      emailDomain: props.config.emailDomain,
+      region: props.config.region,
+      sesIdentityMode: props.config.sesIdentity.mode,
       // SES owns inbound too: pass the mail stores only when inbound is enabled, and
       // the construct instantiates the receipt pipeline as a child. The confirmInboundMx
       // acknowledgement gate (assertInboundAcknowledged, above) still fires first.
-      ...(config.inbound.enabled
+      ...(props.config.inbound.enabled
         ? { inbound: { mailBucket: data.mailBucket, emailsTable: data.emailsTable } }
         : {}),
     });
@@ -44,8 +43,8 @@ export class FreeMailStack extends Stack {
     // Both custom domains are required (#47), so these origins always exist. The app
     // origin is what the API's CORS policy allowlists; the api origin is what the SPA
     // calls and what the app CSP's connect-src names.
-    const appOrigin = `https://${config.appDomain}`;
-    const apiBaseUrl = `https://${config.apiDomain}`;
+    const appOrigin = `https://${props.config.appDomain}`;
+    const apiBaseUrl = `https://${props.config.apiDomain}`;
 
     const api = new ApiConstruct(this, 'Api', {
       authTable: data.authTable,
@@ -53,10 +52,10 @@ export class FreeMailStack extends Stack {
       emailsTable: data.emailsTable,
       downloadTokensTable: data.downloadTokensTable,
       mailBucket: data.mailBucket,
-      emailDomain: config.emailDomain,
+      emailDomain: props.config.emailDomain,
       sesConfigurationSetName: ses.configurationSet.configurationSetName,
-      inboundEnabled: config.inbound.enabled,
-      customDomain: { domainName: config.apiDomain, hostedZone: dns.hostedZone },
+      inboundEnabled: props.config.inbound.enabled,
+      customDomain: { domainName: props.config.apiDomain, hostedZone: dns.hostedZone },
       appOrigin,
     });
 
@@ -66,12 +65,12 @@ export class FreeMailStack extends Stack {
     const web = new WebConstruct(this, 'Web', {
       apiBaseUrl,
       assetPath: resolveWebAssetPath(),
-      inboundEnabled: config.inbound.enabled,
-      customDomain: { domainName: config.appDomain, hostedZone: dns.hostedZone },
+      inboundEnabled: props.config.inbound.enabled,
+      customDomain: { domainName: props.config.appDomain, hostedZone: dns.hostedZone },
     });
 
     new CfnOutput(this, 'HostedZoneId', { value: dns.hostedZone.hostedZoneId });
-    if (config.hostedZone.mode === 'create' && dns.nameServers) {
+    if (props.config.hostedZone.mode === 'create' && dns.nameServers) {
       new CfnOutput(this, 'HostedZoneNameServers', {
         description:
           'Set these name servers at your domain registrar to activate the created zone.',
@@ -115,10 +114,10 @@ export class FreeMailStack extends Stack {
     // than the construct — in import mode there is no construct to read from.
     new CfnOutput(this, 'SesIdentityName', {
       description:
-        config.sesIdentity.mode === 'import'
+        props.config.sesIdentity.mode === 'import'
           ? 'SES domain identity (IMPORTED — FreeMail did not create it or its auth records).'
           : 'SES domain identity created by FreeMail.',
-      value: config.emailDomain,
+      value: props.config.emailDomain,
     });
     if (ses.mailFromDomain) {
       new CfnOutput(this, 'SesMailFromDomain', { value: ses.mailFromDomain });
@@ -133,7 +132,7 @@ export class FreeMailStack extends Stack {
         'SES starts in SANDBOX mode (verified recipients only, ~200 msgs/day). Request production ' +
         'access (SES console → Account dashboard → Request production access) before sending to ' +
         'arbitrary recipients — a one-time manual per-account step.',
-      value: `https://console.aws.amazon.com/ses/home?region=${config.region}#/account`,
+      value: `https://console.aws.amazon.com/ses/home?region=${props.config.region}#/account`,
     });
   }
 

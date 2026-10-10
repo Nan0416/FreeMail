@@ -28,7 +28,7 @@ import {
   type RawEmailDownloadResponse,
 } from '@freemail/shared';
 import {
-  type EmailsReadDao,
+  type EmailsDao,
   INBOUND_PARTITION,
   SENT_PARTITION,
   type GetEmailOutput,
@@ -74,7 +74,7 @@ export type ParseInbound = (
 ) => Promise<ParsedInbound>;
 
 export interface EmailReadServiceDeps {
-  readonly emailsDao: EmailsReadDao;
+  readonly emailsDao: EmailsDao;
   readonly presigner: AttachmentPresigner;
   readonly rawMime: RawMimeSource;
   readonly now?: () => Date;
@@ -143,7 +143,7 @@ export interface GetRawUrlServiceRequest {
 }
 
 export class EmailReadService {
-  private readonly emailsDao: EmailsReadDao;
+  private readonly emailsDao: EmailsDao;
   private readonly presigner: AttachmentPresigner;
   private readonly rawMime: RawMimeSource;
   private readonly now: () => Date;
@@ -160,7 +160,8 @@ export class EmailReadService {
   /** List the merged (or direction-filtered) timeline, newest-first, one opaque-cursor page. */
   async listEmails(request: ListEmailsServiceRequest): Promise<ListEmailsResponse> {
     const page = await listEmailsPage({
-      query: (direction, opts) => this.emailsDao.queryEmailsByDirection({ direction, ...opts }),
+      query: async (direction, opts) =>
+        (await this.emailsDao.queryEmailsByDirection({ direction, ...opts })).emails,
       ...(request.direction ? { direction: request.direction } : {}),
       limit: request.limit,
       ...(request.cursor ? { cursor: request.cursor } : {}),
@@ -173,13 +174,15 @@ export class EmailReadService {
 
   /** Read one message. Received + exposable → body materialized; otherwise envelope-only. */
   async getEmail(request: GetEmailServiceRequest): Promise<GetEmailServiceResponse> {
-    const { handle } = request;
-    const row = await this.loadRow(handle);
+    const row = await this.loadRow(request.handle);
     // Size the envelope first so the body budget accounts for the WHOLE response, not just
     // the body — the combined serialized bytes must stay under the Lambda response limit.
-    const envelopeBytes = Buffer.byteLength(JSON.stringify(this.toDetail(row, handle, {})), 'utf8');
+    const envelopeBytes = Buffer.byteLength(
+      JSON.stringify(this.toDetail(row, request.handle, {})),
+      'utf8',
+    );
     const body = await this.materializeBody(row, envelopeBytes);
-    return this.toDetail(row, handle, body);
+    return this.toDetail(row, request.handle, body);
   }
 
   /**
@@ -191,9 +194,8 @@ export class EmailReadService {
   async getAttachmentUrl(
     request: GetAttachmentUrlServiceRequest,
   ): Promise<AttachmentDownloadResponse> {
-    const { handle, attachmentId } = request;
-    const row = await this.loadRow(handle);
-    const descriptor = rowAttachments(row).find((a) => a.id === attachmentId);
+    const row = await this.loadRow(request.handle);
+    const descriptor = rowAttachments(row).find((a) => a.id === request.attachmentId);
     if (!descriptor) {
       throw emailErrors.notFound('No such attachment.');
     }

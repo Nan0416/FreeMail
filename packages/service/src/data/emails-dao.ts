@@ -1,7 +1,7 @@
 /**
  * Persistence port for email metadata. Kept an interface so the {@link EmailService}
- * (sent side) and the inbound processor are testable with a fake, and so the read
- * slice (#11) can extend the same store without either knowing about DynamoDB.
+ * (sent side), the inbound processor, and the read service are all testable with a fake
+ * without knowing about DynamoDB.
  *
  * Both directions share one table: sent messages under `pk='SENT'`, received under
  * `pk='INBOUND'`, each `sk='<iso>#<id>'` so the read slice lists either partition
@@ -57,6 +57,9 @@ export interface CreateSentEmailInput {
   readonly attachments?: readonly SentAttachmentDescriptor[];
 }
 
+/** Nothing to report: the conditional put either landed or threw. */
+export interface CreateSentEmailOutput {}
+
 /**
  * A stored attachment of a sent message. Same shape as the inbound descriptor so the read path
  * presigns either direction the same way; `s3Key` is server-side only.
@@ -77,6 +80,9 @@ export interface UpdateSentEmailStatusInput {
   /** Set on `send_failed` — a short reason. */
   readonly error?: string;
 }
+
+/** Nothing to report: the conditional update either landed or threw. */
+export interface UpdateSentEmailStatusOutput {}
 
 /**
  * SES scan verdicts, normalized. `PASS` is the ONLY affirmative-clean value —
@@ -152,25 +158,6 @@ export interface CreateInboundEmailOutput {
   readonly created: boolean;
 }
 
-export interface EmailsDao {
-  /**
-   * Record a sent message before the SES call (`status:'sending'`, with `rawS3Key` +
-   * metadata, no `sesMessageId` yet). Conditional on the id not already existing, so a
-   * reused id can never clobber an existing row.
-   */
-  createSentEmail(input: CreateSentEmailInput): Promise<void>;
-
-  /**
-   * Apply the terminal status transition after the SES call — `sent` (+ `sesMessageId`) or
-   * `send_failed` (+ `error`). Conditional on the row existing (it was just written); a
-   * plain `SET`, it never moves the row (the sort key derives from the unchanged `sentAt`).
-   */
-  updateSentEmailStatus(input: UpdateSentEmailStatusInput): Promise<void>;
-
-  /** Record a received message, idempotently. */
-  createInboundEmail(input: CreateInboundEmailInput): Promise<CreateInboundEmailOutput>;
-}
-
 /**
  * A stored row plus its DynamoDB sort key — the input fields plus what the server derives.
  * The read slice (#11) needs `sk` to mint the opaque message handle and the pagination
@@ -192,17 +179,36 @@ export interface QueryEmailsByDirectionInput {
   readonly afterSk?: string | undefined;
 }
 
-/** The read half, split out so a component can be granted reads without the write surface. */
-export interface EmailsReadDao {
+export interface QueryEmailsByDirectionOutput {
+  /** Newest-first, at most the requested `limit`. */
+  readonly emails: ReadonlyArray<GetEmailOutput>;
+}
+
+export interface EmailsDao {
+  /**
+   * Record a sent message before the SES call (`status:'sending'`, with `rawS3Key` +
+   * metadata, no `sesMessageId` yet). Conditional on the id not already existing, so a
+   * reused id can never clobber an existing row.
+   */
+  createSentEmail(input: CreateSentEmailInput): Promise<CreateSentEmailOutput>;
+
+  /**
+   * Apply the terminal status transition after the SES call — `sent` (+ `sesMessageId`) or
+   * `send_failed` (+ `error`). Conditional on the row existing (it was just written); a
+   * plain `SET`, it never moves the row (the sort key derives from the unchanged `sentAt`).
+   */
+  updateSentEmailStatus(input: UpdateSentEmailStatusInput): Promise<UpdateSentEmailStatusOutput>;
+
+  /** Record a received message, idempotently. */
+  createInboundEmail(input: CreateInboundEmailInput): Promise<CreateInboundEmailOutput>;
+
   /**
    * One partition (`'sent'` → `pk='SENT'`, `'inbound'` → `pk='INBOUND'`), newest-first, at
    * most `limit` rows strictly older than `afterSk` (omit `afterSk` to start from the
    * newest). Fewer than `limit` rows means the partition is exhausted past that point — the
    * read service uses that to decide when a direction is drained.
    */
-  queryEmailsByDirection(
-    input: QueryEmailsByDirectionInput,
-  ): Promise<ReadonlyArray<GetEmailOutput>>;
+  queryEmailsByDirection(input: QueryEmailsByDirectionInput): Promise<QueryEmailsByDirectionOutput>;
 
   /** Fetch exactly one row by its full primary key, or `null` if absent. */
   getEmail(input: GetEmailInput): Promise<GetEmailOutput | null>;

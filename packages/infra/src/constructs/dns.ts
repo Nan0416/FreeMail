@@ -17,18 +17,17 @@ export class DnsConstruct extends Construct {
 
   constructor(scope: Construct, id: string, props: DnsConstructProps) {
     super(scope, id);
-    const { hostedZone } = props;
 
-    if (hostedZone.mode === 'import') {
-      if (!hostedZone.hostedZoneId) {
+    if (props.hostedZone.mode === 'import') {
+      if (!props.hostedZone.hostedZoneId) {
         throw new Error('DnsConstruct: hostedZoneId is required to import an existing zone.');
       }
       this.hostedZone = HostedZone.fromHostedZoneAttributes(this, 'Zone', {
-        hostedZoneId: hostedZone.hostedZoneId,
-        zoneName: hostedZone.zoneName,
+        hostedZoneId: props.hostedZone.hostedZoneId,
+        zoneName: props.hostedZone.zoneName,
       });
     } else {
-      const zone = new HostedZone(this, 'Zone', { zoneName: hostedZone.zoneName });
+      const zone = new HostedZone(this, 'Zone', { zoneName: props.hostedZone.zoneName });
       this.hostedZone = zone;
       this.nameServers = zone.hostedZoneNameServers;
     }

@@ -94,18 +94,6 @@ export class ApiConstruct extends Construct {
 
   constructor(scope: Construct, id: string, props: ApiConstructProps) {
     super(scope, id);
-    const {
-      authTable,
-      apiKeysTable,
-      emailsTable,
-      downloadTokensTable,
-      mailBucket,
-      emailDomain,
-      sesConfigurationSetName,
-      inboundEnabled,
-      customDomain,
-      appOrigin,
-    } = props;
 
     // Created before the handlers so its endpoint can be baked into their env as the
     // public base for `/d/{token}` download links (DOWNLOAD_BASE_URL). The Api resource
@@ -132,7 +120,7 @@ export class ApiConstruct extends Construct {
       // still reaches the authorizer, which is why no-Origin `x-api-key` agent calls
       // are entirely unaffected.
       corsPreflight: {
-        allowOrigins: [appOrigin],
+        allowOrigins: [props.appOrigin],
         allowMethods: [
           CorsHttpMethod.GET,
           CorsHttpMethod.POST,
@@ -151,39 +139,39 @@ export class ApiConstruct extends Construct {
       description: 'FreeMail REST API (auth + app routes).',
       memorySize: 1024, // more vCPU so the scrypt hash on login stays sub-second
       environment: {
-        AUTH_TABLE: authTable.tableName,
-        API_KEYS_TABLE: apiKeysTable.tableName,
-        EMAILS_TABLE: emailsTable.tableName,
-        DOWNLOAD_TOKENS_TABLE: downloadTokensTable.tableName,
-        MAIL_BUCKET: mailBucket.bucketName,
-        EMAIL_DOMAIN: emailDomain,
-        SES_CONFIGURATION_SET: sesConfigurationSetName,
+        AUTH_TABLE: props.authTable.tableName,
+        API_KEYS_TABLE: props.apiKeysTable.tableName,
+        EMAILS_TABLE: props.emailsTable.tableName,
+        DOWNLOAD_TOKENS_TABLE: props.downloadTokensTable.tableName,
+        MAIL_BUCKET: props.mailBucket.bucketName,
+        EMAIL_DOMAIN: props.emailDomain,
+        SES_CONFIGURATION_SET: props.sesConfigurationSetName,
         // Public base for `/d/{token}` links — the API's own endpoint (no bucket exposure).
         DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
       },
     });
-    authTable.grantReadWriteData(this.restHandler);
+    props.authTable.grantReadWriteData(this.restHandler);
     // The REST handler mints, lists, and revokes keys.
-    apiKeysTable.grantReadWriteData(this.restHandler);
+    props.apiKeysTable.grantReadWriteData(this.restHandler);
     // The send route records sent-email metadata; the read routes list/get it.
-    emailsTable.grantReadWriteData(this.restHandler);
+    props.emailsTable.grantReadWriteData(this.restHandler);
     // Large-attachment tokens: send mints them, GET /d/{token} claims (conditional update).
-    downloadTokensTable.grantReadWriteData(this.restHandler);
+    props.downloadTokensTable.grantReadWriteData(this.restHandler);
     // The read routes re-parse raw inbound MIME (for bodies) and presign attachment
     // downloads — scoped to the inbound raw + extracted-attachment prefixes only.
-    mailBucket.grantRead(this.restHandler, 'inbound/*');
-    mailBucket.grantRead(this.restHandler, 'attachments/inbound/*');
+    props.mailBucket.grantRead(this.restHandler, 'inbound/*');
+    props.mailBucket.grantRead(this.restHandler, 'attachments/inbound/*');
     // Outbound large attachments: the send route writes them, GET /d/{token} presigns them.
-    mailBucket.grantReadWrite(this.restHandler, 'attachments/outbound/*');
+    props.mailBucket.grantReadWrite(this.restHandler, 'attachments/outbound/*');
     // Sent raw MIME archive (#29): the send route writes it; the always-available
     // GET /emails/{id} re-parses it for the sent body.
-    mailBucket.grantReadWrite(this.restHandler, 'sent/*');
+    props.mailBucket.grantReadWrite(this.restHandler, 'sent/*');
     // Sent embedded-attachment copies: the send route writes them; the attachment route
     // presigns them (linked ones are presigned from attachments/outbound/*, granted above).
-    mailBucket.grantReadWrite(this.restHandler, 'attachments/sent/*');
+    props.mailBucket.grantReadWrite(this.restHandler, 'attachments/sent/*');
 
     // The REST `/emails` route sends.
-    this.grantSesSend(this.restHandler, emailDomain, sesConfigurationSetName);
+    this.grantSesSend(this.restHandler, props.emailDomain, props.sesConfigurationSetName);
 
     // MCP server: its own handler, but reuses the same EmailService (send) and, when
     // inbound is enabled, the same EmailReadService (#13 read tools). It gets the
@@ -194,53 +182,53 @@ export class ApiConstruct extends Construct {
       description: 'FreeMail MCP server (send_email + read tools).',
       memorySize: 512,
       environment: {
-        EMAILS_TABLE: emailsTable.tableName,
-        DOWNLOAD_TOKENS_TABLE: downloadTokensTable.tableName,
-        MAIL_BUCKET: mailBucket.bucketName,
-        EMAIL_DOMAIN: emailDomain,
-        SES_CONFIGURATION_SET: sesConfigurationSetName,
+        EMAILS_TABLE: props.emailsTable.tableName,
+        DOWNLOAD_TOKENS_TABLE: props.downloadTokensTable.tableName,
+        MAIL_BUCKET: props.mailBucket.bucketName,
+        EMAIL_DOMAIN: props.emailDomain,
+        SES_CONFIGURATION_SET: props.sesConfigurationSetName,
         DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
         // Gates the read tools (#13); the handler treats only exactly 'true' as enabled.
-        INBOUND_ENABLED: String(inboundEnabled),
+        INBOUND_ENABLED: String(props.inboundEnabled),
       },
     });
-    emailsTable.grantWriteData(this.mcpHandler);
+    props.emailsTable.grantWriteData(this.mcpHandler);
     // Send-only: mint tokens + upload the bytes; the MCP handler never serves downloads.
-    downloadTokensTable.grantWriteData(this.mcpHandler);
-    mailBucket.grantWrite(this.mcpHandler, 'attachments/outbound/*');
+    props.downloadTokensTable.grantWriteData(this.mcpHandler);
+    props.mailBucket.grantWrite(this.mcpHandler, 'attachments/outbound/*');
     // Sent raw MIME archive (#29): send_email writes it. Write-only here — reading it back is
     // the get_email path, granted below only when inbound (and thus the read tools) is enabled.
-    mailBucket.grantWrite(this.mcpHandler, 'sent/*');
+    props.mailBucket.grantWrite(this.mcpHandler, 'sent/*');
     // Sent embedded-attachment copies: send_email writes them (read granted below, like sent/*).
-    mailBucket.grantWrite(this.mcpHandler, 'attachments/sent/*');
-    this.grantSesSend(this.mcpHandler, emailDomain, sesConfigurationSetName);
+    props.mailBucket.grantWrite(this.mcpHandler, 'attachments/sent/*');
+    this.grantSesSend(this.mcpHandler, props.emailDomain, props.sesConfigurationSetName);
     // #13 read tools: read-only access scoped to exactly what EmailReadService touches —
     // the emails table (list/get), the inbound raw MIME + extracted-attachment prefixes
     // (body re-parse + attachment presign), the sent raw MIME archive (#29, sent body
     // re-parse), and the sent attachments — embedded copies + linked large uploads — for
     // get_email_attachment_url. Added only when inbound is enabled (fail-closed, gates get_email too).
-    if (inboundEnabled) {
-      emailsTable.grantReadData(this.mcpHandler);
-      mailBucket.grantRead(this.mcpHandler, 'inbound/*');
-      mailBucket.grantRead(this.mcpHandler, 'attachments/inbound/*');
-      mailBucket.grantRead(this.mcpHandler, 'sent/*');
-      mailBucket.grantRead(this.mcpHandler, 'attachments/sent/*');
-      mailBucket.grantRead(this.mcpHandler, 'attachments/outbound/*');
+    if (props.inboundEnabled) {
+      props.emailsTable.grantReadData(this.mcpHandler);
+      props.mailBucket.grantRead(this.mcpHandler, 'inbound/*');
+      props.mailBucket.grantRead(this.mcpHandler, 'attachments/inbound/*');
+      props.mailBucket.grantRead(this.mcpHandler, 'sent/*');
+      props.mailBucket.grantRead(this.mcpHandler, 'attachments/sent/*');
+      props.mailBucket.grantRead(this.mcpHandler, 'attachments/outbound/*');
     }
 
     this.authorizerHandler = this.nodeFunction('AuthorizerHandler', 'authorizer.ts', {
       description: 'FreeMail Lambda authorizer (access tokens + API keys).',
       environment: {
-        API_KEYS_TABLE: apiKeysTable.tableName,
-        AUTH_TABLE: authTable.tableName,
+        API_KEYS_TABLE: props.apiKeysTable.tableName,
+        AUTH_TABLE: props.authTable.tableName,
       },
     });
     // The authorizer only reads hashed keys to validate a presented one.
-    apiKeysTable.grantReadData(this.authorizerHandler);
+    props.apiKeysTable.grantReadData(this.authorizerHandler);
     // Read-only on the auth table for the HS256 signing key (#42 item 1b). The REST
     // handler generates and persists it; the authorizer never writes and fails closed
     // when the row is absent.
-    authTable.grantReadData(this.authorizerHandler);
+    props.authTable.grantReadData(this.authorizerHandler);
 
     this.authorizer = new HttpLambdaAuthorizer('Authorizer', this.authorizerHandler, {
       authorizerName: 'FreeMailAuthorizer',
@@ -302,11 +290,11 @@ export class ApiConstruct extends Construct {
     // `execute-api` URL keeps working, but nothing depends on it any more: the session
     // cookies are `__Host-` and therefore host-locked to THIS domain.
     const certificate = new Certificate(this, 'Certificate', {
-      domainName: customDomain.domainName,
-      validation: CertificateValidation.fromDns(customDomain.hostedZone),
+      domainName: props.customDomain.domainName,
+      validation: CertificateValidation.fromDns(props.customDomain.hostedZone),
     });
     const domainName = new DomainName(this, 'DomainName', {
-      domainName: customDomain.domainName,
+      domainName: props.customDomain.domainName,
       certificate,
     });
     new ApiMapping(this, 'ApiMapping', {
@@ -321,16 +309,16 @@ export class ApiConstruct extends Construct {
       ),
     );
     new ARecord(this, 'AliasRecord', {
-      zone: customDomain.hostedZone,
-      recordName: customDomain.domainName,
+      zone: props.customDomain.hostedZone,
+      recordName: props.customDomain.domainName,
       target: aliasTarget,
     });
     new AaaaRecord(this, 'AliasRecordAaaa', {
-      zone: customDomain.hostedZone,
-      recordName: customDomain.domainName,
+      zone: props.customDomain.hostedZone,
+      recordName: props.customDomain.domainName,
       target: aliasTarget,
     });
-    this.customDomainName = customDomain.domainName;
+    this.customDomainName = props.customDomain.domainName;
   }
 
   /**

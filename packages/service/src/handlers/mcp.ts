@@ -50,13 +50,11 @@ function buildHandler(): ApiGatewayHandler {
 
   logger.info('Creating new MCP handler instance.');
 
-  const { emailService, readService, inboundEnabled } = new McpDependencyFactory(
-    getMcpConfig(),
-  ).build();
+  const deps = new McpDependencyFactory(getMcpConfig()).build();
   const serverDeps: McpServerDeps = {
-    emailService,
-    inboundEnabled,
-    ...(readService ? { readService } : {}),
+    emailService: deps.emailService,
+    inboundEnabled: deps.inboundEnabled,
+    ...(deps.readService ? { readService: deps.readService } : {}),
   };
 
   const service = new FreeMailService({

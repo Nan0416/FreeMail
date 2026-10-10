@@ -65,28 +65,28 @@ describe('BodyLimiter', () => {
   }
 
   it('captures the root node header block for verdicts', async () => {
-    const { limiter } = await run([
+    const result = await run([
       node('multipart/mixed', {
         root: true,
         multipart: 'mixed',
         headers: 'X-SES-Virus-Verdict: PASS\r\n\r\n',
       }),
     ]);
-    expect(limiter.rootHeaderBlock).toContain('X-SES-Virus-Verdict: PASS');
+    expect(result.limiter.rootHeaderBlock).toContain('X-SES-Virus-Verdict: PASS');
   });
 
   it('caps a text/plain node body and breaches past the per-node cap', async () => {
-    const { breach } = await run([node('text/plain'), body(60), body(60)]);
-    expect(breach).toBe('text/html body exceeds per-node size cap');
+    const result = await run([node('text/plain'), body(60), body(60)]);
+    expect(result.breach).toBe('text/html body exceeds per-node size cap');
   });
 
   it('caps text/html independently', async () => {
-    const { breach } = await run([node('text/html'), body(150)], {
+    const result = await run([node('text/html'), body(150)], {
       maxTextBodyBytes: 1000,
       maxHtmlBodyBytes: 100,
       maxTotalBodyBytes: 10_000,
     });
-    expect(breach).toBe('text/html body exceeds per-node size cap');
+    expect(result.breach).toBe('text/html body exceeds per-node size cap');
   });
 
   it('breaches on the CUMULATIVE budget across many under-per-node-cap text nodes', async () => {
@@ -101,44 +101,41 @@ describe('BodyLimiter', () => {
       node('text/plain'),
       body(60),
     ];
-    const { breach } = await run(chunks, {
+    const result = await run(chunks, {
       maxTextBodyBytes: 100,
       maxHtmlBodyBytes: 100,
       maxTotalBodyBytes: 200,
     });
-    expect(breach).toBe('cumulative text/html body exceeds message budget');
+    expect(result.breach).toBe('cumulative text/html body exceeds message budget');
   });
 
   it('does NOT cap attachment (non-text) node bodies — they have their own caps', async () => {
-    const { breach, out } = await run([
-      node('application/pdf', { multipart: false }),
-      body(10_000),
-    ]);
-    expect(breach).toBeUndefined();
-    expect(out).toHaveLength(2); // passed through
+    const result = await run([node('application/pdf', { multipart: false }), body(10_000)]);
+    expect(result.breach).toBeUndefined();
+    expect(result.out).toHaveLength(2); // passed through
   });
 
   it('does NOT charge a text/* ATTACHMENT to the body cap (disposition attachment)', async () => {
-    const { breach } = await run([
+    const result = await run([
       node('text/plain', { disposition: 'attachment', filename: 'notes.txt' }),
       body(10_000), // way over the 100-byte text cap, but it's an attachment
     ]);
-    expect(breach).toBeUndefined();
+    expect(result.breach).toBeUndefined();
   });
 
   it('does NOT charge a text/* attachment identified only by filename to the body cap', async () => {
-    const { breach } = await run([node('text/html', { filename: 'page.html' }), body(10_000)]);
-    expect(breach).toBeUndefined();
+    const result = await run([node('text/html', { filename: 'page.html' }), body(10_000)]);
+    expect(result.breach).toBeUndefined();
   });
 
   it('resets the counter per leaf node (two small text parts do not accumulate)', async () => {
-    const { breach } = await run([node('text/plain'), body(60), node('text/plain'), body(60)]);
-    expect(breach).toBeUndefined(); // each 60 ≤ 100; not summed across nodes
+    const result = await run([node('text/plain'), body(60), node('text/plain'), body(60)]);
+    expect(result.breach).toBeUndefined(); // each 60 ≤ 100; not summed across nodes
   });
 
   it('passes every chunk through unchanged', async () => {
     const chunks = [node('text/plain'), body(10)];
-    const { out } = await run(chunks);
-    expect(out).toEqual(chunks);
+    const result = await run(chunks);
+    expect(result.out).toEqual(chunks);
   });
 });

@@ -77,17 +77,16 @@ export class AuthService {
    * public `POST /auth/set-password` route had, with one fewer step.
    */
   async login(request: LoginServiceRequest): Promise<LoginServiceResponse> {
-    const { password } = request;
     const now = this.now();
 
-    const lockout = (await this.authDao.getLockout()) ?? INITIAL_LOCKOUT_STATE;
+    const lockout = (await this.authDao.getLockout({})) ?? INITIAL_LOCKOUT_STATE;
     if (isLockedOut(lockout, now)) {
       throw authErrors.accountLocked(retryAfterSeconds(lockout, now));
     }
 
-    let storedHash = await this.authDao.getPasswordHash();
+    let storedHash = await this.authDao.getPasswordHash({});
     if (storedHash === null) {
-      if (await this.enroll(password)) {
+      if (await this.enroll(request.password)) {
         // Won enrollment. No lockout can have accrued yet — a failed attempt is only
         // recorded below, which requires a stored hash — so there is nothing to clear.
         return this.issueTokens(now);
@@ -95,13 +94,13 @@ export class AuthService {
       // A concurrent first login claimed the account between the read and the write.
       // Fall through and verify against the winner's hash, exactly as a normal login:
       // matching password → signed in, otherwise invalid_credentials.
-      storedHash = await this.authDao.getPasswordHash();
+      storedHash = await this.authDao.getPasswordHash({});
       if (storedHash === null) {
         throw new Error('Password hash is absent immediately after a lost enrollment race.');
       }
     }
 
-    if (!verifyPassword(password, storedHash.hash)) {
+    if (!verifyPassword(request.password, storedHash.hash)) {
       // Advance the counter atomically so parallel failures can't undercount past
       // the threshold; decide the lock on the committed value.
       const committed = await this.authDao.registerFailedAttempt({ nowSeconds: now });
@@ -111,7 +110,7 @@ export class AuthService {
       throw authErrors.invalidCredentials();
     }
 
-    await this.authDao.clearLockout();
+    await this.authDao.clearLockout({});
     return this.issueTokens(now);
   }
 
@@ -126,8 +125,8 @@ export class AuthService {
     if (passwordPolicyError(password) !== null) {
       throw authErrors.weakPassword();
     }
-    const { created } = await this.authDao.createPasswordHash({ hash: hashPassword(password) });
-    return created;
+    const result = await this.authDao.createPasswordHash({ hash: hashPassword(password) });
+    return result.created;
   }
 
   /**
@@ -136,11 +135,10 @@ export class AuthService {
    * rejected — so a replayed token buys nothing.
    */
   async refresh(request: RefreshServiceRequest): Promise<RefreshServiceResponse> {
-    const { refreshToken } = request;
-    const { consumed } = await this.authDao.consumeRefreshToken({
-      tokenHash: hashRefreshToken(refreshToken),
+    const result = await this.authDao.consumeRefreshToken({
+      tokenHash: hashRefreshToken(request.refreshToken),
     });
-    if (!consumed) {
+    if (!result.consumed) {
       throw authErrors.invalidToken();
     }
     return this.issueTokens(this.now());
@@ -155,8 +153,7 @@ export class AuthService {
    * keeping token verification off the database on the hot path.
    */
   async logout(request: LogoutServiceRequest): Promise<void> {
-    const { refreshToken } = request;
-    await this.authDao.consumeRefreshToken({ tokenHash: hashRefreshToken(refreshToken) });
+    await this.authDao.consumeRefreshToken({ tokenHash: hashRefreshToken(request.refreshToken) });
   }
 
   private async issueTokens(now: number): Promise<TokenPair> {

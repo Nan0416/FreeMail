@@ -3,7 +3,11 @@ import { describe, expect, it } from 'vitest';
 import type {
   CreateInboundEmailInput,
   CreateInboundEmailOutput,
+  CreateSentEmailOutput,
   EmailsDao,
+  GetEmailOutput,
+  QueryEmailsByDirectionOutput,
+  UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
 import type { InboundObjectStore, ObjectHead } from '../../src/facades/s3-inbound-object-store.js';
 import { MAX_ATTACHMENTS } from '../../src/utils/inbound-limits.js';
@@ -49,8 +53,11 @@ class FakeStore implements InboundObjectStore {
 class FakeDao implements EmailsDao {
   readonly inbound: CreateInboundEmailInput[] = [];
   readonly existingIds = new Set<string>();
-  createSentEmail(): Promise<void> {
-    return Promise.resolve();
+  createSentEmail(): Promise<CreateSentEmailOutput> {
+    return Promise.resolve({});
+  }
+  updateSentEmailStatus(): Promise<UpdateSentEmailStatusOutput> {
+    return Promise.resolve({});
   }
   createInboundEmail(record: CreateInboundEmailInput): Promise<CreateInboundEmailOutput> {
     if (this.existingIds.has(record.id)) {
@@ -58,6 +65,12 @@ class FakeDao implements EmailsDao {
     }
     this.inbound.push(record);
     return Promise.resolve({ created: true });
+  }
+  queryEmailsByDirection(): Promise<QueryEmailsByDirectionOutput> {
+    return Promise.resolve({ emails: [] });
+  }
+  getEmail(): Promise<GetEmailOutput | null> {
+    return Promise.resolve(null);
   }
 }
 

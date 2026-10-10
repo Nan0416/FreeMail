@@ -18,7 +18,7 @@ import { AuthScreen } from './AuthScreen.js';
  * instead of silently claiming the account on a mistyped first attempt.
  */
 export function SignInView(): React.JSX.Element {
-  const { login } = useAuth();
+  const auth = useAuth();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -28,7 +28,7 @@ export function SignInView(): React.JSX.Element {
     setError(null);
     setBusy(true);
     try {
-      await login(password);
+      await auth.login(password);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Sign in failed.');
     } finally {

@@ -94,18 +94,17 @@ function bySkDescending(a: GetEmailOutput, b: GetEmailOutput): number {
 
 /** Merge one page across the in-scope partitions and compute the continuation cursor. */
 export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPage> {
-  const { query, limit } = params;
   const decoded = params.cursor ? decodeListCursor(params.cursor) : { v: 1 as const };
   const directions: Direction[] = params.direction ? [params.direction] : ['sent', 'inbound'];
 
   const fetched = {} as Record<Direction, readonly GetEmailOutput[]>;
   for (const dir of directions) {
-    fetched[dir] = await query(dir, { limit, afterSk: decoded[dir] });
+    fetched[dir] = await params.query(dir, { limit: params.limit, afterSk: decoded[dir] });
   }
 
   const pool = directions.flatMap((dir) => fetched[dir]);
   pool.sort(bySkDescending);
-  const rows = pool.slice(0, limit);
+  const rows = pool.slice(0, params.limit);
 
   const positions: Partial<Record<Direction, string>> = {};
   let anyMore = false;
@@ -123,7 +122,7 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
       positions[dir] = lastEmittedSk;
     }
     // More remains if we hit the fetch limit, or some fetched rows lost the merge this page.
-    if (fetched[dir].length === limit || fetched[dir].length > emitted.length) {
+    if (fetched[dir].length === params.limit || fetched[dir].length > emitted.length) {
       anyMore = true;
     }
   }

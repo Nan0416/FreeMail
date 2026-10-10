@@ -65,9 +65,9 @@ function devAgainstDeployedApi(config: FreeMailConfig): Plugin {
   };
 }
 
-export default defineConfig(({ command, mode }) => {
+export default defineConfig((env) => {
   // Vitest also runs as 'serve'; only a real dev server talks to the deployed API.
-  const deployConfig = command === 'serve' && mode !== 'test' ? loadDeployConfig() : null;
+  const deployConfig = env.command === 'serve' && env.mode !== 'test' ? loadDeployConfig() : null;
   return {
     plugins: [
       react(),

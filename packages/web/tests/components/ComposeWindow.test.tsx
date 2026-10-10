@@ -29,21 +29,21 @@ beforeEach(() => {
 
 describe('ComposeWindow — sending', () => {
   it('requires at least one recipient before sending', async () => {
-    const { fetchImpl } = renderCompose({ from: 'me@x.com', html: '<p>hello</p>' });
+    const compose = renderCompose({ from: 'me@x.com', html: '<p>hello</p>' });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('at least one recipient');
-    expect(callsTo(fetchImpl, '/emails')).toHaveLength(0);
+    expect(callsTo(compose.fetchImpl, '/emails')).toHaveLength(0);
   });
 
   it('refuses an empty message', async () => {
-    const { fetchImpl } = renderCompose({ from: 'me@x.com', to: 'a@y.com' });
+    const compose = renderCompose({ from: 'me@x.com', to: 'a@y.com' });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('empty');
-    expect(callsTo(fetchImpl, '/emails')).toHaveLength(0);
+    expect(callsTo(compose.fetchImpl, '/emails')).toHaveLength(0);
   });
 
   it('sends HTML with a plain-text alternative, then clears the draft and closes', async () => {
-    const { fetchImpl, onClose } = renderCompose({
+    const compose = renderCompose({
       draftId: 'd1',
       from: 'me@x.com',
       fromName: 'Me',
@@ -53,8 +53,8 @@ describe('ComposeWindow — sending', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-    const [[url, init]] = callsTo(fetchImpl, '/emails', 'POST');
+    await waitFor(() => expect(compose.onClose).toHaveBeenCalled());
+    const [[url, init]] = callsTo(compose.fetchImpl, '/emails', 'POST');
     expect(url).toBe('http://api.test/emails');
     expect(init?.credentials).toBe('include');
     expect(JSON.parse(String(init?.body))).toEqual({
@@ -79,13 +79,13 @@ describe('ComposeWindow — sending', () => {
         ? json(200, { subject: 'owner' })
         : json(400, { error: 'invalid_sender', message: 'From must be under your domain.' }),
     );
-    const { onClose } = renderCompose(
+    const compose = renderCompose(
       { from: 'me@elsewhere.com', to: 'a@y.com', html: '<p>x</p>' },
       fetchImpl,
     );
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('From must be under your domain.');
-    expect(onClose).not.toHaveBeenCalled();
+    expect(compose.onClose).not.toHaveBeenCalled();
   });
 });
 
@@ -101,10 +101,7 @@ describe('ComposeWindow — send is not re-entrant', () => {
       });
       return json(200, { id: 'm1', messageId: 'ses-1', sentAt: '2026-07-17T00:00:00.000Z' });
     });
-    const { onClose } = renderCompose(
-      { from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' },
-      fetchImpl,
-    );
+    const compose = renderCompose({ from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' }, fetchImpl);
     const dialog = screen.getByRole('dialog');
     fireEvent.keyDown(dialog, { key: 'Enter', metaKey: true });
     fireEvent.keyDown(dialog, { key: 'Enter', metaKey: true });
@@ -112,7 +109,7 @@ describe('ComposeWindow — send is not re-entrant', () => {
 
     await waitFor(() => expect(callsTo(fetchImpl, '/emails', 'POST')).toHaveLength(1));
     release();
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    await waitFor(() => expect(compose.onClose).toHaveBeenCalled());
     expect(callsTo(fetchImpl, '/emails', 'POST')).toHaveLength(1);
   });
 });
@@ -134,20 +131,20 @@ describe('ComposeWindow — drafts', () => {
   });
 
   it('discards a draft, with an undo that restores it', async () => {
-    const { onClose } = renderCompose({ draftId: 'd1', from: 'me@x.com', subject: 'Gone' });
+    const compose = renderCompose({ draftId: 'd1', from: 'me@x.com', subject: 'Gone' });
     fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Gone soon' } });
     fireEvent.click(screen.getByRole('button', { name: 'Discard draft' }));
 
-    expect(onClose).toHaveBeenCalled();
+    expect(compose.onClose).toHaveBeenCalled();
     expect(storedDrafts()).toEqual([]);
     fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
     expect(storedDrafts().map((d) => d.subject)).toEqual(['Gone soon']);
   });
 
   it('does not save an untouched blank window', () => {
-    const { onClose } = renderCompose({ from: 'me@x.com' });
+    const compose = renderCompose({ from: 'me@x.com' });
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(onClose).toHaveBeenCalled();
+    expect(compose.onClose).toHaveBeenCalled();
     expect(storedDrafts()).toEqual([]);
   });
 });

@@ -12,12 +12,10 @@ import { handler } from '../../src/handlers/service-handler.js';
 
 // Stub AuthService so the auth-cookie routes exercise the handler's set/clear/no-store
 // plumbing without DDB. OWNER_SUBJECT is re-exported because the handler imports it.
-const { authMocks } = vi.hoisted(() => ({
-  authMocks: {
-    login: vi.fn(),
-    refresh: vi.fn(),
-    logout: vi.fn(),
-  },
+const authMocks = vi.hoisted(() => ({
+  login: vi.fn(),
+  refresh: vi.fn(),
+  logout: vi.fn(),
 }));
 vi.mock('../../src/services/auth-service.js', () => ({
   OWNER_SUBJECT: 'owner',
@@ -45,7 +43,7 @@ vi.mock('../../src/utils/signing-key.js', () => ({
 }));
 
 // Stub the send service so /emails routing/authorization is exercised without SES.
-const { sendMock } = vi.hoisted(() => ({ sendMock: vi.fn() }));
+const sendMock = vi.hoisted(() => vi.fn());
 vi.mock('../../src/services/email-service.js', () => ({
   EmailService: class {
     send = sendMock;
@@ -54,13 +52,11 @@ vi.mock('../../src/services/email-service.js', () => ({
 
 // Stub the read service so the read routes exercise routing/authorization/validation
 // without DDB or S3.
-const { readMocks } = vi.hoisted(() => ({
-  readMocks: {
-    listEmails: vi.fn(),
-    getEmail: vi.fn(),
-    getAttachmentUrl: vi.fn(),
-    getRawUrl: vi.fn(),
-  },
+const readMocks = vi.hoisted(() => ({
+  listEmails: vi.fn(),
+  getEmail: vi.fn(),
+  getAttachmentUrl: vi.fn(),
+  getRawUrl: vi.fn(),
 }));
 vi.mock('../../src/services/email-read-service.js', () => ({
   EmailReadService: class {
@@ -73,9 +69,7 @@ vi.mock('../../src/services/email-read-service.js', () => ({
 
 // Stub the API-key service so routes that pass the auth/media-type gates exercise the
 // router without DDB (the access-scheme tests below never reach it either way).
-const { keysMocks } = vi.hoisted(() => ({
-  keysMocks: { create: vi.fn(), list: vi.fn(), revoke: vi.fn() },
-}));
+const keysMocks = vi.hoisted(() => ({ create: vi.fn(), list: vi.fn(), revoke: vi.fn() }));
 vi.mock('../../src/services/api-key-service.js', () => ({
   ApiKeyService: class {
     create = keysMocks.create;
@@ -87,7 +81,7 @@ vi.mock('../../src/data/ddb-api-keys-dao.js', () => ({ DdbApiKeysDao: class {} }
 
 // Stub the download service so the public GET /d/{token} route exercises the
 // redirect/uniform-404 plumbing without DDB or S3.
-const { downloadMock } = vi.hoisted(() => ({ downloadMock: { resolve: vi.fn() } }));
+const downloadMock = vi.hoisted(() => ({ resolve: vi.fn() }));
 vi.mock('../../src/services/download-service.js', () => ({
   DownloadService: class {
     resolve = downloadMock.resolve;

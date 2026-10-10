@@ -44,10 +44,12 @@ class FakeDoc {
       return Promise.resolve({ Item: this.store.get(String(command.input.Key?.keyId)) });
     }
     if (command instanceof PutCommand) {
-      const input = command.input;
-      const item = input.Item as Record<string, unknown>;
+      const item = command.input.Item as Record<string, unknown>;
       const key = String(item.keyId);
-      if (input.ConditionExpression === 'attribute_not_exists(keyId)' && this.store.has(key)) {
+      if (
+        command.input.ConditionExpression === 'attribute_not_exists(keyId)' &&
+        this.store.has(key)
+      ) {
         return Promise.reject(conditionalCheckFailed());
       }
       this.store.set(key, item);
@@ -110,7 +112,7 @@ describe('DdbApiKeysDao', () => {
     await dao.createApiKey(record({ keyId: 'b', createdAt: 2 }));
     await dao.createApiKey(record({ keyId: 'c', createdAt: 3 }));
 
-    const ids = (await dao.listApiKeys()).map((r) => r.keyId).sort();
+    const ids = (await dao.listApiKeys({})).apiKeys.map((r) => r.keyId).sort();
     expect(ids).toEqual(['a', 'b', 'c']);
   });
 
@@ -120,6 +122,6 @@ describe('DdbApiKeysDao', () => {
     await dao.createApiKey(record());
     await dao.deleteApiKey({ keyId: 'k1' });
     expect(await dao.getApiKey({ keyId: 'k1' })).toBeNull();
-    await expect(dao.deleteApiKey({ keyId: 'missing' })).resolves.toBeUndefined();
+    await expect(dao.deleteApiKey({ keyId: 'missing' })).resolves.toEqual({});
   });
 });

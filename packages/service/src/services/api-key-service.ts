@@ -61,18 +61,17 @@ export class ApiKeyService {
 
   /** Mint a new key. The raw key is in the response exactly once; only its hash is stored. */
   async create(request: CreateApiKeyServiceRequest): Promise<CreateApiKeyResponse> {
-    const { name } = request;
-    const label = this.normalizeName(name);
+    const label = this.normalizeName(request.name);
     const createdAt = this.now();
     for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt += 1) {
       const generated = generateApiKey();
-      const { created } = await this.apiKeysDao.createApiKey({
+      const result = await this.apiKeysDao.createApiKey({
         keyId: generated.keyId,
         secretHash: generated.secretHash,
         name: label,
         createdAt,
       });
-      if (created) {
+      if (result.created) {
         return {
           ...toSummary({ keyId: generated.keyId, name: label, createdAt }),
           key: generated.key,
@@ -84,14 +83,13 @@ export class ApiKeyService {
 
   /** All keys as summaries (newest first), never exposing the secret. */
   async list(_request: ListApiKeysServiceRequest): Promise<ListApiKeysResponse> {
-    const records = await this.apiKeysDao.listApiKeys();
-    return { keys: [...records].sort((a, b) => b.createdAt - a.createdAt).map(toSummary) };
+    const result = await this.apiKeysDao.listApiKeys({});
+    return { keys: [...result.apiKeys].sort((a, b) => b.createdAt - a.createdAt).map(toSummary) };
   }
 
   /** Revoke a key by id. Idempotent — revoking an unknown/already-revoked id is a no-op. */
   async revoke(request: RevokeApiKeyServiceRequest): Promise<void> {
-    const { keyId } = request;
-    await this.apiKeysDao.deleteApiKey({ keyId });
+    await this.apiKeysDao.deleteApiKey({ keyId: request.keyId });
   }
 
   /**
@@ -100,8 +98,7 @@ export class ApiKeyService {
    * keyId, then a constant-time secret comparison.
    */
   async verify(request: VerifyApiKeyServiceRequest): Promise<VerifyApiKeyServiceResponse | null> {
-    const { rawKey } = request;
-    const parsed = parseApiKey(rawKey);
+    const parsed = parseApiKey(request.rawKey);
     if (!parsed) {
       return null;
     }

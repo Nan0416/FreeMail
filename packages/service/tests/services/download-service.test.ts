@@ -2,7 +2,8 @@ import { DOWNLOAD_PRESIGN_TTL_SECONDS } from '@freemail/shared';
 import { describe, expect, it } from 'vitest';
 import type {
   ClaimDownloadTokenInput,
-  GetDownloadTokenOutput,
+  CreateDownloadTokenOutput,
+  ClaimDownloadTokenOutput,
   DownloadTokensDao,
 } from '../../src/data/download-tokens-dao.js';
 import type {
@@ -13,16 +14,13 @@ import { contentDispositionForDownload } from '../../src/utils/content-dispositi
 import { DownloadService } from '../../src/services/download-service.js';
 
 class FakeTokens implements DownloadTokensDao {
-  claimResult: GetDownloadTokenOutput | null = null;
+  claimResult: ClaimDownloadTokenOutput | null = null;
   readonly claimCalls: { token: string; nowIso: string }[] = [];
-  createDownloadToken(): Promise<void> {
-    return Promise.resolve();
+  createDownloadToken(): Promise<CreateDownloadTokenOutput> {
+    return Promise.resolve({});
   }
-  claimDownloadToken({
-    token,
-    nowIso,
-  }: ClaimDownloadTokenInput): Promise<GetDownloadTokenOutput | null> {
-    this.claimCalls.push({ token, nowIso });
+  claimDownloadToken(input: ClaimDownloadTokenInput): Promise<ClaimDownloadTokenOutput | null> {
+    this.claimCalls.push({ token: input.token, nowIso: input.nowIso });
     return Promise.resolve(this.claimResult);
   }
 }
@@ -36,7 +34,7 @@ class FakePresigner implements AttachmentPresigner {
   }
 }
 
-function record(overrides: Partial<GetDownloadTokenOutput> = {}): GetDownloadTokenOutput {
+function record(overrides: Partial<ClaimDownloadTokenOutput> = {}): ClaimDownloadTokenOutput {
   return {
     token: 'tok-1',
     s3Key: 'attachments/outbound/email-1/0',

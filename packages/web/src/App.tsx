@@ -23,7 +23,8 @@ export function App(
     fetchImpl?: typeof fetch;
   } = {},
 ): React.JSX.Element {
-  const { loadConfig = loadRuntimeConfig, fetchImpl } = props;
+  // Default applied once: the effect below and its deps must see the same function.
+  const loadConfig = props.loadConfig ?? loadRuntimeConfig;
   const [boot, setBoot] = useState<Boot>({ status: 'loading' });
 
   useEffect(() => {
@@ -68,7 +69,7 @@ export function App(
   }
 
   return (
-    <AuthProvider apiBaseUrl={boot.config.apiBaseUrl} fetchImpl={fetchImpl}>
+    <AuthProvider apiBaseUrl={boot.config.apiBaseUrl} fetchImpl={props.fetchImpl}>
       <TooltipProvider delayDuration={400}>
         <AuthGate inboundEnabled={boot.config.inboundEnabled} />
         <Toaster position="bottom-center" />

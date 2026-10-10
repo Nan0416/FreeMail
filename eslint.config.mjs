@@ -3,6 +3,53 @@ import tseslint from 'typescript-eslint';
 import prettier from 'eslint-config-prettier';
 import globals from 'globals';
 
+// Immutable-by-default: every interface field must be `readonly`. Enforced via core
+// selectors (no type-aware linting / no extra dependency). Element-level array immutability
+// (`readonly readonly T[]`) is not selector-expressible; it is applied by hand and covered by
+// review.
+const RESTRICTED_SYNTAX = [
+  {
+    selector: 'TSInterfaceBody > TSPropertySignature[readonly!=true]',
+    message: 'Interface properties must be readonly (immutable by default).',
+  },
+  {
+    selector: 'TSInterfaceBody > TSIndexSignature[readonly!=true]',
+    message: 'Interface index signatures must be readonly (immutable by default).',
+  },
+  // Object-literal type aliases (DTO shapes declared with `type X = { ... }`) are held to the
+  // same bar. Scoped under TSTypeAliasDeclaration so it does NOT flag inline object types in
+  // function params / locals / SDK options, which are implementation detail, not interface
+  // fields.
+  {
+    selector: 'TSTypeAliasDeclaration TSTypeLiteral > TSPropertySignature[readonly!=true]',
+    message: 'Type-alias object properties must be readonly (immutable by default).',
+  },
+  {
+    selector: 'TSTypeAliasDeclaration TSTypeLiteral > TSIndexSignature[readonly!=true]',
+    message: 'Type-alias object index signatures must be readonly (immutable by default).',
+  },
+  // packages/infra imports the AWS CDK: require its service modules via their deep subpaths
+  // (`import { Table } from 'aws-cdk-lib/aws-dynamodb'`) rather than the `aws-cdk-lib`
+  // namespace barrel (`import { aws_dynamodb as dynamodb } from 'aws-cdk-lib'`), so the
+  // dependency surface is explicit. Core exports (Duration, Stack, Fn, …) have no subpath and
+  // stay imported from 'aws-cdk-lib'.
+  {
+    selector:
+      "ImportDeclaration[source.value='aws-cdk-lib'] > ImportSpecifier[imported.name=/^aws_|^custom_resources$/]",
+    message:
+      "Import CDK service modules from their deep subpath (e.g. `import { Table } from 'aws-cdk-lib/aws-dynamodb'`), not the `aws-cdk-lib` namespace barrel.",
+  },
+];
+
+// No object destructuring — in declarations, parameters, loop heads, or catch clauses. Name
+// the object and read fields off it (`input.keyId`, `result.created`), so every use site shows
+// where the value came from. Array destructuring (`const [open, setOpen] = useState()`) is
+// allowed: a tuple has no field names to preserve.
+const NO_OBJECT_DESTRUCTURING = {
+  selector: 'ObjectPattern',
+  message: 'Do not destructure objects; name the object and read its fields (`input.keyId`).',
+};
+
 export default tseslint.config(
   {
     ignores: ['**/dist/**', '**/build/**', '**/cdk.out/**', '**/coverage/**', '**/*.d.ts'],
@@ -42,44 +89,24 @@ export default tseslint.config(
           caughtErrorsIgnorePattern: '^_',
         },
       ],
-      // Immutable-by-default: every interface field must be `readonly`. Enforced
-      // via core selectors (no type-aware linting / no extra dependency).
-      // Element-level array immutability (`readonly readonly T[]`) is not
-      // selector-expressible; it is applied by hand and covered by review.
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: 'TSInterfaceBody > TSPropertySignature[readonly!=true]',
-          message: 'Interface properties must be readonly (immutable by default).',
-        },
-        {
-          selector: 'TSInterfaceBody > TSIndexSignature[readonly!=true]',
-          message: 'Interface index signatures must be readonly (immutable by default).',
-        },
-        // Object-literal type aliases (DTO shapes declared with `type X = { ... }`)
-        // are held to the same bar. Scoped under TSTypeAliasDeclaration so it does
-        // NOT flag inline object types in function params / locals / SDK options,
-        // which are implementation detail, not interface fields.
-        {
-          selector: 'TSTypeAliasDeclaration TSTypeLiteral > TSPropertySignature[readonly!=true]',
-          message: 'Type-alias object properties must be readonly (immutable by default).',
-        },
-        {
-          selector: 'TSTypeAliasDeclaration TSTypeLiteral > TSIndexSignature[readonly!=true]',
-          message: 'Type-alias object index signatures must be readonly (immutable by default).',
-        },
-        // packages/infra imports the AWS CDK: require its service modules via their deep
-        // subpaths (`import { Table } from 'aws-cdk-lib/aws-dynamodb'`) rather than the
-        // `aws-cdk-lib` namespace barrel (`import { aws_dynamodb as dynamodb } from
-        // 'aws-cdk-lib'`), so the dependency surface is explicit. Core exports (Duration,
-        // Stack, Fn, …) have no subpath and stay imported from 'aws-cdk-lib'.
-        {
-          selector:
-            "ImportDeclaration[source.value='aws-cdk-lib'] > ImportSpecifier[imported.name=/^aws_|^custom_resources$/]",
-          message:
-            "Import CDK service modules from their deep subpath (e.g. `import { Table } from 'aws-cdk-lib/aws-dynamodb'`), not the `aws-cdk-lib` namespace barrel.",
-        },
-      ],
+      'no-restricted-syntax': ['error', ...RESTRICTED_SYNTAX, NO_OBJECT_DESTRUCTURING],
+    },
+  },
+  // shadcn/ui components are generated by the shadcn CLI and strip props with
+  // `({ className, ...props })` — an omit-and-spread with no destructuring-free equivalent.
+  // Exempt them so regenerated or newly added components need no hand edits.
+  {
+    files: ['packages/web/src/components/ui/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-syntax': ['error', ...RESTRICTED_SYNTAX],
+    },
+  },
+  // DAO methods always return a named Output interface, so a write with nothing to report
+  // returns an empty one (`interface CreateSentEmailOutput {}`) rather than `void`.
+  {
+    files: ['packages/service/src/data/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-empty-object-type': ['error', { allowInterfaces: 'always' }],
     },
   },
 );

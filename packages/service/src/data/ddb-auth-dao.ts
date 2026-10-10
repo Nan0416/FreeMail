@@ -24,16 +24,22 @@ import type { LockoutState } from '../utils/lockout.js';
 import { optimisticUpdate, type VersionedValue } from './optimistic.js';
 import type {
   AuthDao,
+  ClearLockoutInput,
+  ClearLockoutOutput,
   ConsumeRefreshTokenInput,
   ConsumeRefreshTokenOutput,
   CreatePasswordHashInput,
   CreatePasswordHashOutput,
   CreateSigningKeyInput,
   CreateSigningKeyOutput,
+  GetLockoutInput,
   GetLockoutOutput,
+  GetPasswordHashInput,
   GetPasswordHashOutput,
+  GetSigningKeyInput,
   GetSigningKeyOutput,
   PutRefreshTokenInput,
+  PutRefreshTokenOutput,
   RegisterFailedAttemptInput,
   RegisterFailedAttemptOutput,
 } from './auth-dao.js';
@@ -49,12 +55,12 @@ export class DdbAuthDao implements AuthDao {
     this.doc = doc;
   }
 
-  async createPasswordHash({ hash }: CreatePasswordHashInput): Promise<CreatePasswordHashOutput> {
+  async createPasswordHash(input: CreatePasswordHashInput): Promise<CreatePasswordHashOutput> {
     try {
       await this.doc.send(
         new PutCommand({
           TableName: this.tableName,
-          Item: { ...AuthEntity.password(), hash },
+          Item: { ...AuthEntity.password(), hash: input.hash },
           ConditionExpression: 'attribute_not_exists(pk)',
         }),
       );
@@ -67,7 +73,7 @@ export class DdbAuthDao implements AuthDao {
     }
   }
 
-  async getPasswordHash(): Promise<GetPasswordHashOutput | null> {
+  async getPasswordHash(_input: GetPasswordHashInput): Promise<GetPasswordHashOutput | null> {
     const result = await this.doc.send(
       new GetCommand({ TableName: this.tableName, Key: AuthEntity.password() }),
     );
@@ -75,7 +81,7 @@ export class DdbAuthDao implements AuthDao {
     return typeof hash === 'string' ? { hash } : null;
   }
 
-  async getSigningKey(): Promise<GetSigningKeyOutput | null> {
+  async getSigningKey(_input: GetSigningKeyInput): Promise<GetSigningKeyOutput | null> {
     const result = await this.doc.send(
       new GetCommand({ TableName: this.tableName, Key: AuthEntity.signingKey() }),
     );
@@ -83,14 +89,18 @@ export class DdbAuthDao implements AuthDao {
     return typeof key === 'string' ? { key } : null;
   }
 
-  async createSigningKey({ key }: CreateSigningKeyInput): Promise<CreateSigningKeyOutput> {
+  async createSigningKey(input: CreateSigningKeyInput): Promise<CreateSigningKeyOutput> {
     // Same atomic first-writer-wins idiom as createPasswordHash: the condition is
     // evaluated against THIS item (pk+sk), so it cannot collide with the password row.
     try {
       await this.doc.send(
         new PutCommand({
           TableName: this.tableName,
-          Item: { ...AuthEntity.signingKey(), key, createdAt: Math.floor(Date.now() / 1000) },
+          Item: {
+            ...AuthEntity.signingKey(),
+            key: input.key,
+            createdAt: Math.floor(Date.now() / 1000),
+          },
           ConditionExpression: 'attribute_not_exists(pk)',
         }),
       );
@@ -103,21 +113,21 @@ export class DdbAuthDao implements AuthDao {
     }
   }
 
-  async getLockout(): Promise<GetLockoutOutput | null> {
+  async getLockout(_input: GetLockoutInput): Promise<GetLockoutOutput | null> {
     return (await this.readLockout()).value;
   }
 
-  async registerFailedAttempt({
-    nowSeconds,
-  }: RegisterFailedAttemptInput): Promise<RegisterFailedAttemptOutput> {
+  async registerFailedAttempt(
+    input: RegisterFailedAttemptInput,
+  ): Promise<RegisterFailedAttemptOutput> {
     return optimisticUpdate<LockoutState>(
       () => this.readLockout(),
-      (current) => registerFailure(current ?? INITIAL_LOCKOUT_STATE, nowSeconds),
+      (current) => registerFailure(current ?? INITIAL_LOCKOUT_STATE, input.nowSeconds),
       (next, expectedVersion) => this.writeLockoutIfVersion(next, expectedVersion),
     );
   }
 
-  async clearLockout(): Promise<void> {
+  async clearLockout(_input: ClearLockoutInput): Promise<ClearLockoutOutput> {
     // A successful login resets the counters AND advances the version in one atomic
     // update (never a delete). Advancing the version is what makes the reset safe: a
     // concurrent failure that read the pre-reset version now fails its version-guarded
@@ -133,6 +143,7 @@ export class DdbAuthDao implements AuthDao {
         ExpressionAttributeValues: { ':zero': 0, ':one': 1 },
       }),
     );
+    return {};
   }
 
   private async readLockout(): Promise<VersionedValue<LockoutState>> {
@@ -187,22 +198,21 @@ export class DdbAuthDao implements AuthDao {
     }
   }
 
-  async putRefreshToken({ tokenHash, ttlEpochSeconds }: PutRefreshTokenInput): Promise<void> {
+  async putRefreshToken(input: PutRefreshTokenInput): Promise<PutRefreshTokenOutput> {
     await this.doc.send(
       new PutCommand({
         TableName: this.tableName,
-        Item: { ...AuthEntity.refreshToken(tokenHash), ttl: ttlEpochSeconds },
+        Item: { ...AuthEntity.refreshToken(input.tokenHash), ttl: input.ttlEpochSeconds },
       }),
     );
+    return {};
   }
 
-  async consumeRefreshToken({
-    tokenHash,
-  }: ConsumeRefreshTokenInput): Promise<ConsumeRefreshTokenOutput> {
+  async consumeRefreshToken(input: ConsumeRefreshTokenInput): Promise<ConsumeRefreshTokenOutput> {
     const result = await this.doc.send(
       new DeleteCommand({
         TableName: this.tableName,
-        Key: AuthEntity.refreshToken(tokenHash),
+        Key: AuthEntity.refreshToken(input.tokenHash),
         ReturnValues: 'ALL_OLD',
       }),
     );

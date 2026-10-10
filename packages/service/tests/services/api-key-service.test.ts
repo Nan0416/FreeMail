@@ -5,8 +5,10 @@ import type {
   CreateApiKeyInput,
   CreateApiKeyOutput,
   DeleteApiKeyInput,
+  DeleteApiKeyOutput,
   GetApiKeyInput,
   GetApiKeyOutput,
+  ListApiKeysOutput,
 } from '../../src/data/api-keys-dao.js';
 import { parseApiKey } from '../../src/utils/api-key.js';
 import { ApiKeyService } from '../../src/services/api-key-service.js';
@@ -27,15 +29,15 @@ class FakeApiKeysDao implements ApiKeysDao {
     this.rows.set(record.keyId, record);
     return Promise.resolve({ created: true });
   }
-  getApiKey({ keyId }: GetApiKeyInput): Promise<GetApiKeyOutput | null> {
-    return Promise.resolve(this.rows.get(keyId) ?? null);
+  getApiKey(input: GetApiKeyInput): Promise<GetApiKeyOutput | null> {
+    return Promise.resolve(this.rows.get(input.keyId) ?? null);
   }
-  listApiKeys(): Promise<ReadonlyArray<GetApiKeyOutput>> {
-    return Promise.resolve([...this.rows.values()]);
+  listApiKeys(): Promise<ListApiKeysOutput> {
+    return Promise.resolve({ apiKeys: [...this.rows.values()] });
   }
-  deleteApiKey({ keyId }: DeleteApiKeyInput): Promise<void> {
-    this.rows.delete(keyId);
-    return Promise.resolve();
+  deleteApiKey(input: DeleteApiKeyInput): Promise<DeleteApiKeyOutput> {
+    this.rows.delete(input.keyId);
+    return Promise.resolve({});
   }
 }
 
@@ -88,12 +90,12 @@ describe('ApiKeyService.list', () => {
     service = new ApiKeyService({ apiKeysDao: repo, now: () => NOW + 10 });
     const second = await service.create({ name: 'second' });
 
-    const { keys: summaries } = await service.list({});
-    expect(summaries.map((s) => s.id)).toEqual([second.id, first.id]);
-    expect(JSON.stringify(summaries)).not.toContain(first.key);
-    expect(JSON.stringify(summaries)).not.toContain(second.key);
+    const result = await service.list({});
+    expect(result.keys.map((s) => s.id)).toEqual([second.id, first.id]);
+    expect(JSON.stringify(result.keys)).not.toContain(first.key);
+    expect(JSON.stringify(result.keys)).not.toContain(second.key);
     // Summaries carry no secret material at all.
-    for (const summary of summaries) {
+    for (const summary of result.keys) {
       expect(Object.keys(summary).sort()).toEqual(['createdAt', 'id', 'name']);
     }
   });

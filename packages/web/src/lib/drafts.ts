@@ -87,10 +87,10 @@ export function getLastSender(): Sender {
   try {
     const parsed: unknown = JSON.parse(window.localStorage.getItem(SENDER_KEY) ?? 'null');
     if (parsed && typeof parsed === 'object') {
-      const { address, name } = parsed as Partial<Sender>;
+      const sender = parsed as Partial<Sender>;
       return {
-        address: typeof address === 'string' ? address : '',
-        name: typeof name === 'string' ? name : '',
+        address: typeof sender.address === 'string' ? sender.address : '',
+        name: typeof sender.name === 'string' ? sender.name : '',
       };
     }
   } catch {

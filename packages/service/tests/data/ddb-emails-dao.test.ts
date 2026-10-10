@@ -178,9 +178,9 @@ describe('DdbEmailsDao', () => {
     const doc = new FakeDoc();
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    const { created: written } = await dao.createInboundEmail(inboundRecord());
+    const result = await dao.createInboundEmail(inboundRecord());
 
-    expect(written).toBe(true);
+    expect(result.created).toBe(true);
     const input = doc.commands[0]?.input;
     expect(input?.ConditionExpression).toBe('attribute_not_exists(pk)');
     expect(input?.Item).toMatchObject({
@@ -239,7 +239,7 @@ describe('DdbEmailsDao — reads', () => {
     };
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    const rows = await dao.queryEmailsByDirection({ direction: 'inbound', limit: 10 });
+    const page = await dao.queryEmailsByDirection({ direction: 'inbound', limit: 10 });
 
     const input = (doc.lastCommand as QueryCommand).input;
     expect(input.KeyConditionExpression).toBe('pk = :pk');
@@ -247,7 +247,7 @@ describe('DdbEmailsDao — reads', () => {
     expect(input.ScanIndexForward).toBe(false);
     expect(input.Limit).toBe(10);
     expect(input.ExclusiveStartKey).toBeUndefined();
-    expect(rows[0]).toMatchObject({ direction: 'inbound', sk: 'sk-1' });
+    expect(page.emails[0]).toMatchObject({ direction: 'inbound', sk: 'sk-1' });
   });
 
   it('resumes strictly after a sort key via a server-derived ExclusiveStartKey', async () => {
@@ -272,9 +272,9 @@ describe('DdbEmailsDao — reads', () => {
     doc.result = { Items: [{ ...record(), pk: 'SENT', sk: 'sk-9', direction: 'sent' }] };
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    const rows = await dao.queryEmailsByDirection({ direction: 'sent', limit: 1 });
-    expect(rows[0].direction).toBe('sent');
-    expect(rows[0].sk).toBe('sk-9');
+    const page = await dao.queryEmailsByDirection({ direction: 'sent', limit: 1 });
+    expect(page.emails[0].direction).toBe('sent');
+    expect(page.emails[0].sk).toBe('sk-9');
   });
 
   it('getByKey fetches by the full primary key and returns null when absent', async () => {

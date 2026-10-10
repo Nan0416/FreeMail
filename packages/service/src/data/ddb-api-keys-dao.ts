@@ -19,8 +19,11 @@ import type {
   CreateApiKeyInput,
   CreateApiKeyOutput,
   DeleteApiKeyInput,
+  DeleteApiKeyOutput,
   GetApiKeyInput,
   GetApiKeyOutput,
+  ListApiKeysInput,
+  ListApiKeysOutput,
 } from './api-keys-dao.js';
 import { ApiKeyEntity, isConditionalCheckFailed } from './entities.js';
 
@@ -57,14 +60,14 @@ export class DdbApiKeysDao implements ApiKeysDao {
     }
   }
 
-  async getApiKey({ keyId }: GetApiKeyInput): Promise<GetApiKeyOutput | null> {
+  async getApiKey(input: GetApiKeyInput): Promise<GetApiKeyOutput | null> {
     const result = await this.doc.send(
-      new GetCommand({ TableName: this.tableName, Key: ApiKeyEntity.key(keyId) }),
+      new GetCommand({ TableName: this.tableName, Key: ApiKeyEntity.key(input.keyId) }),
     );
     return toRecord(result.Item);
   }
 
-  async listApiKeys(): Promise<ReadonlyArray<GetApiKeyOutput>> {
+  async listApiKeys(_input: ListApiKeysInput): Promise<ListApiKeysOutput> {
     const records: GetApiKeyOutput[] = [];
     let lastKey: Record<string, unknown> | undefined;
     do {
@@ -79,13 +82,14 @@ export class DdbApiKeysDao implements ApiKeysDao {
       }
       lastKey = result.LastEvaluatedKey;
     } while (lastKey);
-    return records;
+    return { apiKeys: records };
   }
 
-  async deleteApiKey({ keyId }: DeleteApiKeyInput): Promise<void> {
+  async deleteApiKey(input: DeleteApiKeyInput): Promise<DeleteApiKeyOutput> {
     await this.doc.send(
-      new DeleteCommand({ TableName: this.tableName, Key: ApiKeyEntity.key(keyId) }),
+      new DeleteCommand({ TableName: this.tableName, Key: ApiKeyEntity.key(input.keyId) }),
     );
+    return {};
   }
 }
 
