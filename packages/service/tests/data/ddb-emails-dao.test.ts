@@ -1,3 +1,4 @@
+import { DescribeTableCommand } from '@aws-sdk/client-dynamodb';
 import {
   GetCommand,
   PutCommand,
@@ -5,7 +6,7 @@ import {
   UpdateCommand,
   DynamoDBDocumentClient,
 } from '@aws-sdk/lib-dynamodb';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { EMAIL_LIST_INDEX_ATTRIBUTES } from '@freemail/shared/storage';
 import { DdbEmailsDao } from '../../src/data/ddb-emails-dao.js';
 import type { CreateInboundEmailInput, CreateSentEmailInput } from '../../src/data/emails-dao.js';
@@ -239,12 +240,28 @@ class ReadFakeDoc {
  */
 class PagedFakeDoc {
   readonly queries: QueryCommand[] = [];
+  describes = 0;
+  /**
+   * What DescribeTable reports for the list index: `undefined` = the table has no such index;
+   * an Error = DescribeTable itself fails. Defaults to a ready (ACTIVE) index.
+   */
+  indexState: { IndexStatus: string; Backfilling?: boolean } | undefined | Error = {
+    IndexStatus: 'ACTIVE',
+  };
   constructor(
     private readonly pages: (
       { Items: Record<string, unknown>[]; LastEvaluatedKey?: unknown } | Error
     )[],
   ) {}
-  send(command: QueryCommand): Promise<unknown> {
+  send(command: QueryCommand | DescribeTableCommand): Promise<unknown> {
+    if (command instanceof DescribeTableCommand) {
+      this.describes += 1;
+      if (this.indexState instanceof Error) {
+        return Promise.reject(this.indexState);
+      }
+      const indexes = this.indexState ? [{ IndexName: 'list', ...this.indexState }] : [];
+      return Promise.resolve({ Table: { GlobalSecondaryIndexes: indexes } });
+    }
     this.queries.push(command);
     const page = this.pages.shift() ?? { Items: [] };
     if (page instanceof Error) {
@@ -421,9 +438,74 @@ describe('DdbEmailsDao — list index + paging', () => {
     expect(result.emails[0]?.direction).toBe('inbound');
   });
 
-  it('serves the page from the table while the new index is still backfilling', async () => {
+  it('lists from the table while the new index is still backfilling — never a partial page', async () => {
+    // A backfilling GSI answers queries with whatever it has indexed so far, so it must not be read.
+    const doc = new PagedFakeDoc([{ Items: [inboundItem('sk-1')] }]);
+    doc.indexState = { IndexStatus: 'CREATING', Backfilling: true };
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
+
+    expect(doc.queries.map((q) => q.input.IndexName)).toEqual([undefined]);
+    expect(result.emails.map((e) => e.sk)).toEqual(['sk-1']);
+  });
+
+  it('lists from the table when the table has no list index yet', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    doc.indexState = undefined;
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
+
+    expect(doc.queries[0]?.input.IndexName).toBeUndefined();
+  });
+
+  it('lists from the table when DescribeTable itself fails', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    doc.indexState = new Error('AccessDenied');
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
+
+    expect(doc.queries[0]?.input.IndexName).toBeUndefined();
+  });
+
+  it('asks once, then trusts an ACTIVE index for the life of the DAO', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }, { Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
+    await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
+
+    expect(doc.describes).toBe(1);
+    expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', 'list']);
+  });
+
+  it('re-asks at most every 30 s while the index is building, then switches over', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-10T00:00:00.000Z'));
+      const doc = new PagedFakeDoc([{ Items: [] }, { Items: [] }, { Items: [] }]);
+      doc.indexState = { IndexStatus: 'CREATING', Backfilling: true };
+      const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+      await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
+      vi.setSystemTime(new Date('2026-10-10T00:00:10.000Z'));
+      doc.indexState = { IndexStatus: 'ACTIVE' };
+      await dao.listEmailSummaries({ direction: 'sent', limit: 5 }); // inside 30 s: no re-ask
+      vi.setSystemTime(new Date('2026-10-10T00:00:31.000Z'));
+      await dao.listEmailSummaries({ direction: 'sent', limit: 5 }); // re-asks → ACTIVE
+
+      expect(doc.describes).toBe(2);
+      expect(doc.queries.map((q) => q.input.IndexName)).toEqual([undefined, undefined, 'list']);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('falls back to the table if the index disappears after being trusted', async () => {
     const doc = new PagedFakeDoc([
-      validationError('Cannot read from backfilling global secondary index: list'),
+      validationError('The table does not have the specified index: list'),
       { Items: [inboundItem('sk-1')] },
     ]);
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
@@ -432,18 +514,6 @@ describe('DdbEmailsDao — list index + paging', () => {
 
     expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', undefined]);
     expect(result.emails.map((e) => e.sk)).toEqual(['sk-1']);
-  });
-
-  it('serves the page from the table when the index does not exist yet', async () => {
-    const doc = new PagedFakeDoc([
-      validationError('The table does not have the specified index: list'),
-      { Items: [] },
-    ]);
-    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
-
-    expect(doc.queries[1]?.input.IndexName).toBeUndefined();
   });
 
   it('does not mask any other failure behind the fallback', async () => {
