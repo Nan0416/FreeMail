@@ -2,6 +2,7 @@ import { App } from 'aws-cdk-lib';
 import { Annotations, Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import type { FreeMailConfig } from '@freemail/shared/config';
+import { EMAIL_LIST_INDEX_ATTRIBUTES } from '@freemail/shared/storage';
 import { FreeMailStack } from '../src/freemail-stack.js';
 
 function makeConfig(overrides: Partial<FreeMailConfig> = {}): FreeMailConfig {
@@ -21,6 +22,28 @@ function makeConfig(overrides: Partial<FreeMailConfig> = {}): FreeMailConfig {
 function synth(config: FreeMailConfig): Template {
   const stack = new FreeMailStack(new App(), 'TestStack', { config });
   return Template.fromStack(stack);
+}
+
+/** True when the role named by `rolePrefix` may `dynamodb:Query` the emails table's indexes. */
+function canQueryEmailIndexes(template: Template, rolePrefix: string): boolean {
+  const policies = Object.values(template.findResources('AWS::IAM::Policy'));
+  return policies.some((policy) => {
+    const roles = JSON.stringify(policy.Properties.Roles);
+    if (!roles.includes(rolePrefix)) {
+      return false;
+    }
+    return (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some(
+      (statement) => {
+        const actions = ([] as unknown[]).concat(statement.Action);
+        const resources = JSON.stringify(statement.Resource);
+        return (
+          actions.includes('dynamodb:Query') &&
+          resources.includes('EmailsTable') &&
+          resources.includes('/index/*')
+        );
+      },
+    );
+  });
 }
 
 describe('FreeMailStack', () => {
@@ -46,6 +69,34 @@ describe('FreeMailStack', () => {
     expect(buckets.filter((b) => b.DeletionPolicy === 'Delete')).toHaveLength(1);
     // The disposable web bucket is auto-emptied on delete (CFN can't remove a non-empty bucket).
     template.resourceCountIs('Custom::S3AutoDeleteObjects', 1);
+  });
+
+  it('gives the emails table a list index that projects only the list fields', () => {
+    const template = synth(makeConfig());
+    template.hasResourceProperties('AWS::DynamoDB::Table', {
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: 'list',
+          KeySchema: [
+            { AttributeName: 'pk', KeyType: 'HASH' },
+            { AttributeName: 'sk', KeyType: 'RANGE' },
+          ],
+          Projection: {
+            ProjectionType: 'INCLUDE',
+            NonKeyAttributes: [...EMAIL_LIST_INDEX_ATTRIBUTES],
+          },
+        },
+      ],
+    });
+  });
+
+  it('lets every mailbox reader query the list index', () => {
+    // The REST handler always lists; the MCP handler lists only when inbound is enabled.
+    const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
+    expect(canQueryEmailIndexes(template, 'RestHandler')).toBe(true);
+    expect(canQueryEmailIndexes(template, 'McpHandler')).toBe(true);
+    // Negative control: the authorizer never touches the emails table.
+    expect(canQueryEmailIndexes(template, 'AuthorizerHandler')).toBe(false);
   });
 
   it('buckets block public access and enforce SSL', () => {

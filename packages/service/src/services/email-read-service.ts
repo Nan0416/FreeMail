@@ -31,6 +31,7 @@ import {
   type EmailsDao,
   INBOUND_PARTITION,
   SENT_PARTITION,
+  type EmailSummary,
   type GetEmailOutput,
   type InboundAttachmentDescriptor,
 } from '../data/emails-dao.js';
@@ -118,7 +119,7 @@ const NOOP_SINK: AttachmentSink = {
     }),
 };
 
-function refForRow(row: GetEmailOutput): { pk: string; sk: string } {
+function refForRow(row: Pick<EmailSummary, 'direction' | 'sk'>): { pk: string; sk: string } {
   return {
     pk: row.direction === 'inbound' ? INBOUND_PARTITION : SENT_PARTITION,
     sk: row.sk,
@@ -161,7 +162,7 @@ export class EmailReadService {
   async listEmails(request: ListEmailsServiceRequest): Promise<ListEmailsResponse> {
     const page = await listEmailsPage({
       query: async (direction, opts) =>
-        (await this.emailsDao.queryEmailsByDirection({ direction, ...opts })).emails,
+        (await this.emailsDao.listEmailSummaries({ direction, ...opts })).emails,
       ...(request.direction ? { direction: request.direction } : {}),
       limit: request.limit,
       ...(request.cursor ? { cursor: request.cursor } : {}),
@@ -299,7 +300,7 @@ export class EmailReadService {
     };
   }
 
-  private toListItem(row: GetEmailOutput): EmailListItem {
+  private toListItem(row: EmailSummary): EmailListItem {
     const id = encodeEmailRef(refForRow(row));
     if (row.direction === 'sent') {
       return {

@@ -9,6 +9,8 @@ import {
   SENT_PARTITION,
   type GetEmailOutput,
   type QueryEmailsByDirectionInput,
+  type ListEmailSummariesInput,
+  type ListEmailSummariesOutput,
   type QueryEmailsByDirectionOutput,
   type UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
@@ -118,9 +120,10 @@ class FakeDao implements EmailsDao {
   getEmail(key: { pk: string; sk: string }): Promise<GetEmailOutput | null> {
     return Promise.resolve(this.byKey.get(`${key.pk}|${key.sk}`) ?? null);
   }
-  queryEmailsByDirection(
-    input: QueryEmailsByDirectionInput,
-  ): Promise<QueryEmailsByDirectionOutput> {
+  queryEmailsByDirection(): Promise<QueryEmailsByDirectionOutput> {
+    return Promise.resolve({ emails: [] });
+  }
+  listEmailSummaries(input: ListEmailSummariesInput): Promise<ListEmailSummariesOutput> {
     return this.queryImpl(input.direction).then((emails) => ({ emails }));
   }
 }

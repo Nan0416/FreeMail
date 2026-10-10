@@ -6,6 +6,7 @@ import {
   DynamoDBDocumentClient,
 } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
+import { EMAIL_LIST_INDEX_ATTRIBUTES } from '@freemail/shared/storage';
 import { DdbEmailsDao } from '../../src/data/ddb-emails-dao.js';
 import type { CreateInboundEmailInput, CreateSentEmailInput } from '../../src/data/emails-dao.js';
 
@@ -231,6 +232,45 @@ class ReadFakeDoc {
   }
 }
 
+/**
+ * Answers successive Queries from a queue of pages — models DynamoDB's 1 MB page cut. A query
+ * on an index returns only the keys + projected attributes, as the real index does; a queued
+ * Error is thrown instead of answering.
+ */
+class PagedFakeDoc {
+  readonly queries: QueryCommand[] = [];
+  constructor(
+    private readonly pages: (
+      { Items: Record<string, unknown>[]; LastEvaluatedKey?: unknown } | Error
+    )[],
+  ) {}
+  send(command: QueryCommand): Promise<unknown> {
+    this.queries.push(command);
+    const page = this.pages.shift() ?? { Items: [] };
+    if (page instanceof Error) {
+      return Promise.reject(page);
+    }
+    if (command.input.IndexName === undefined) {
+      return Promise.resolve(page);
+    }
+    const projected = new Set<string>(['pk', 'sk', ...EMAIL_LIST_INDEX_ATTRIBUTES]);
+    const items = page.Items.map((item) =>
+      Object.fromEntries(Object.entries(item).filter(([name]) => projected.has(name))),
+    );
+    return Promise.resolve({ ...page, Items: items });
+  }
+}
+
+function validationError(message: string): Error {
+  const err = new Error(message);
+  err.name = 'ValidationException';
+  return err;
+}
+
+function inboundItem(sk: string): Record<string, unknown> {
+  return { ...inboundRecord(), pk: 'INBOUND', sk, direction: 'inbound' };
+}
+
 describe('DdbEmailsDao — reads', () => {
   it('queries a partition newest-first with a limit and no start key', async () => {
     const doc = new ReadFakeDoc();
@@ -289,5 +329,130 @@ describe('DdbEmailsDao — reads', () => {
 
     doc.result = {};
     expect(await dao.getEmail({ pk: 'INBOUND', sk: 'missing' })).toBeNull();
+  });
+});
+
+describe('DdbEmailsDao — list index + paging', () => {
+  it('reads the list from the list index, newest-first', async () => {
+    const doc = new PagedFakeDoc([{ Items: [inboundItem('sk-1')] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 10 });
+
+    const input = doc.queries[0].input;
+    expect(input.IndexName).toBe('list');
+    expect(input.KeyConditionExpression).toBe('pk = :pk');
+    expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'INBOUND' });
+    expect(input.ScanIndexForward).toBe(false);
+    expect(result.emails[0]).toMatchObject({ direction: 'inbound', sk: 'sk-1' });
+  });
+
+  it('keeps the full-row query on the table, not the index', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.queryEmailsByDirection({ direction: 'sent', limit: 5 });
+
+    expect(doc.queries[0].input.IndexName).toBeUndefined();
+  });
+
+  it('follows LastEvaluatedKey after a 1 MB page cut until the page is full', async () => {
+    const doc = new PagedFakeDoc([
+      {
+        Items: [inboundItem('sk-3'), inboundItem('sk-2')],
+        LastEvaluatedKey: { pk: 'INBOUND', sk: 'sk-2' },
+      },
+      { Items: [inboundItem('sk-1')], LastEvaluatedKey: { pk: 'INBOUND', sk: 'sk-1' } },
+    ]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 3 });
+
+    expect(result.emails.map((e) => e.sk)).toEqual(['sk-3', 'sk-2', 'sk-1']);
+    expect(doc.queries).toHaveLength(2);
+    // Each follow-up asks only for what is still missing, resuming where the last page stopped.
+    expect(doc.queries[0].input.Limit).toBe(3);
+    expect(doc.queries[1].input.Limit).toBe(1);
+    expect(doc.queries[1].input.ExclusiveStartKey).toEqual({ pk: 'INBOUND', sk: 'sk-2' });
+  });
+
+  it('returns a short page only when the partition really ends', async () => {
+    const doc = new PagedFakeDoc([
+      { Items: [inboundItem('sk-2')], LastEvaluatedKey: { pk: 'INBOUND', sk: 'sk-2' } },
+      { Items: [inboundItem('sk-1')] },
+    ]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 10 });
+
+    expect(result.emails).toHaveLength(2);
+    expect(doc.queries).toHaveLength(2);
+  });
+
+  it('resumes from a cursor sk on the first page', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5, afterSk: 'sk-9' });
+
+    expect(doc.queries[0].input.ExclusiveStartKey).toEqual({ pk: 'SENT', sk: 'sk-9' });
+  });
+
+  it('returns only the projected list fields from the index', async () => {
+    const doc = new PagedFakeDoc([{ Items: [inboundItem('sk-1')] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const summary = (await dao.listEmailSummaries({ direction: 'inbound', limit: 1 })).emails[0];
+
+    expect(summary).toMatchObject({ direction: 'inbound', sk: 'sk-1', subject: 'Inbound hi' });
+    // Not projected: bodies, descriptors, and S3 pointers never ride along in a list page.
+    expect(summary).not.toHaveProperty('attachments');
+    expect(summary).not.toHaveProperty('rawS3Key');
+  });
+
+  it('takes the direction from the queried partition, not a projected attribute', async () => {
+    const noDirection = inboundItem('sk-1');
+    delete noDirection.direction;
+    const doc = new PagedFakeDoc([{ Items: [noDirection] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 1 });
+
+    expect(result.emails[0]?.direction).toBe('inbound');
+  });
+
+  it('serves the page from the table while the new index is still backfilling', async () => {
+    const doc = new PagedFakeDoc([
+      validationError('Cannot read from backfilling global secondary index: list'),
+      { Items: [inboundItem('sk-1')] },
+    ]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
+
+    expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', undefined]);
+    expect(result.emails.map((e) => e.sk)).toEqual(['sk-1']);
+  });
+
+  it('serves the page from the table when the index does not exist yet', async () => {
+    const doc = new PagedFakeDoc([
+      validationError('The table does not have the specified index: list'),
+      { Items: [] },
+    ]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
+
+    expect(doc.queries[1]?.input.IndexName).toBeUndefined();
+  });
+
+  it('does not mask any other failure behind the fallback', async () => {
+    const doc = new PagedFakeDoc([validationError('ExclusiveStartKey is invalid')]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await expect(dao.listEmailSummaries({ direction: 'sent', limit: 5 })).rejects.toThrow(
+      /ExclusiveStartKey/,
+    );
+    expect(doc.queries).toHaveLength(1);
   });
 });

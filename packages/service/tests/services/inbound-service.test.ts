@@ -6,6 +6,7 @@ import type {
   CreateSentEmailOutput,
   EmailsDao,
   GetEmailOutput,
+  ListEmailSummariesOutput,
   QueryEmailsByDirectionOutput,
   UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
@@ -67,6 +68,9 @@ class FakeDao implements EmailsDao {
     return Promise.resolve({ created: true });
   }
   queryEmailsByDirection(): Promise<QueryEmailsByDirectionOutput> {
+    return Promise.resolve({ emails: [] });
+  }
+  listEmailSummaries(): Promise<ListEmailSummariesOutput> {
     return Promise.resolve({ emails: [] });
   }
   getEmail(): Promise<GetEmailOutput | null> {

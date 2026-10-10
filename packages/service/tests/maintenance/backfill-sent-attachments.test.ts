@@ -7,6 +7,7 @@ import type {
   EmailsDao,
   GetEmailOutput,
   QueryEmailsByDirectionInput,
+  ListEmailSummariesOutput,
   QueryEmailsByDirectionOutput,
   SentAttachmentDescriptor,
   UpdateSentEmailStatusOutput,
@@ -56,6 +57,9 @@ class FakeDao implements EmailsDao {
   ): Promise<QueryEmailsByDirectionOutput> {
     const start = input.afterSk ? this.rows.findIndex((r) => r.sk === input.afterSk) + 1 : 0;
     return Promise.resolve({ emails: this.rows.slice(start, start + input.limit) });
+  }
+  listEmailSummaries(): Promise<ListEmailSummariesOutput> {
+    return Promise.resolve({ emails: [] });
   }
   getEmail(): Promise<GetEmailOutput | null> {
     return Promise.resolve(null);
