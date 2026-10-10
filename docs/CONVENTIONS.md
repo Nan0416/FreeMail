@@ -37,10 +37,12 @@ edge cases; the tag says what catches a violation.
 7. **A method is named after its types** — DAO, service, and processor alike: the method is
    the type's stem, lower-camel-cased — `createApiKey(input: CreateApiKeyInput)`,
    `createApiKey(request: CreateApiKeyServiceRequest)`,
-   `processInboundEmail(request: ProcessInboundEmailRequest)`. The type names the action and
-   what it acts on, so the method does too, and reads the same at the call site as in its
-   class. Facades (and the ports services declare for them) and module-level helper functions
-   are out of scope: they mirror the system or call they wrap. _Review_ · §4, §5
+   `processInboundEmail(request: ProcessInboundEmailRequest)`. Name the _type_ for the action
+   and what it acts on (`CreateApiKey…`, not `Create…`) unless the verb alone is unambiguous in
+   its surface (`Login` / `Refresh` / `Logout` on the auth service); the method then follows
+   the type mechanically. Facades (and the ports services declare for them) and module-level
+   helper functions are out of scope: they mirror the system or call they wrap.
+   _Review_ · §4, §5
 8. **Interface and type-alias fields are `readonly`.** _ESLint `no-restricted-syntax`_ · §9
 9. **`import type` for type-only imports; relative imports end in `.js`.** _Compiler_ (`NodeNext`
    packages); _review_ in `packages/web`, whose `bundler` resolution accepts either · §9
@@ -70,7 +72,7 @@ src/
 adding one means editing five directories anyway — while making "what does the send path
 actually talk to?" unanswerable without opening all of them. Role folders make the
 dependency direction visible: `routes → services → {facades, data}`, and
-`handlers → processors → services`, never backwards.
+`handlers → processors → {services, facades, data}`, never backwards.
 
 **`services/` vs `processors/`.** Both hold business logic and reach AWS only through DAOs
 and facades. A service backs an API surface (a route or an MCP tool); a processor is driven
@@ -304,8 +306,9 @@ Business logic. Reaches storage and AWS only through injected DAOs and facades.
 **Every public method takes a named `<Method>ServiceRequest`** — even for one parameter,
 even for none — the parameter is called `request`, and **the method is named `<method>` after
 the type**: the stem of `CreateApiKeyServiceRequest` is `createApiKey`, so that is the method.
-A bare verb (`create`, `resolve`, `send`) reads fine inside its class and means nothing at the
-call site.
+Name the type for the action and what it acts on (`CreateApiKey…`, not `Create…`) — a bare
+`create` reads fine inside its class and means nothing at the call site — unless the verb alone
+is unambiguous in its surface, as `Login` / `Refresh` / `Logout` are on the auth service.
 
 ```ts
 async login(request: LoginServiceRequest): Promise<LoginServiceResponse>;
@@ -337,7 +340,9 @@ Responses reuse the shared wire types where one exists (`ListApiKeysResponse`,
 no API:
 
 ```ts
-async processInboundEmail(request: ProcessInboundEmailRequest): Promise<ProcessInboundEmailResponse>;
+async processInboundEmail(
+  request: ProcessInboundEmailRequest,
+): Promise<ProcessInboundEmailResponse>;
 ```
 
 ---
@@ -448,8 +453,8 @@ style, or the style will not typecheck.
   function Sidebar(props: SidebarProps) { ... props.folder ... }
   ```
 
-  Parameter names follow the layer: DAO methods take `input`, service methods `request`,
-  React components `props`. Do not swap destructuring for alias lines
+  Parameter names follow the layer: DAO methods take `input`, service and processor methods
+  `request`, React components `props`. Do not swap destructuring for alias lines
   (`const keyId = input.keyId;`); that is the same unpacking spelled out by hand. A local
   copy is fine only when it is genuinely needed: to keep a type narrowing inside a closure,
   to snapshot a value before it changes, or to apply a default once.

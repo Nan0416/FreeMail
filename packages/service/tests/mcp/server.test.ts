@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emailErrors } from '../../src/utils/errors.js';
-import type { AttachmentService } from '../../src/services/attachment-service.js';
+import type { AttachmentUploader } from '../../src/services/attachment-service.js';
 import type { EmailReadService } from '../../src/services/email-read-service.js';
 import type { EmailService } from '../../src/services/email-service.js';
 import { buildMcpServer, type McpServerDeps } from '../../src/mcp/server.js';
@@ -182,7 +182,7 @@ describe('create_attachment_upload tool', () => {
   function connectUpload(create: ReturnType<typeof vi.fn>): Promise<Client> {
     return connectWith({
       emailService: { sendEmail: vi.fn() } as unknown as EmailService,
-      attachmentService: { createAttachmentUpload: create } as unknown as AttachmentService,
+      attachmentService: { createAttachmentUpload: create } satisfies AttachmentUploader,
       inboundEnabled: false,
     });
   }

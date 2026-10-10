@@ -26,8 +26,10 @@ import type { McpConfig } from '../handlers/mcp-config.js';
 
 export interface McpDependencies {
   readonly emailService: EmailService;
-  /** Backs the `create_attachment_upload` tool — always available, like `send_email`. */
-  /** Upload only — the MCP tools never resolve a download link. */
+  /**
+   * Backs the `create_attachment_upload` tool — always available, like `send_email`. Upload
+   * only: the MCP tools never resolve a download link.
+   */
   readonly attachmentService: AttachmentUploader;
   /** Present only when inbound is enabled — see the note above. */
   readonly readService: EmailReadService | undefined;
