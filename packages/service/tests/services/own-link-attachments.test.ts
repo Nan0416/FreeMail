@@ -9,6 +9,7 @@ import type {
 import {
   MAX_LINKED_ATTACHMENTS,
   OwnLinkAttachments,
+  type ResolveLinkedAttachmentsServiceRequest,
 } from '../../src/services/own-link-attachments.js';
 
 const BASE = 'https://abc123.execute-api.us-east-1.amazonaws.com';
@@ -67,6 +68,27 @@ function link(n: number): string {
   return `${BASE}/d/${token(n)}`;
 }
 
+/** A request for a message from me@example.com that passed SES's DMARC check. */
+function request(
+  bodies: readonly (string | undefined)[],
+  over: Partial<ResolveLinkedAttachmentsServiceRequest> = {},
+): ResolveLinkedAttachmentsServiceRequest {
+  return {
+    bodies,
+    from: 'me@example.com',
+    authenticatedDomain: 'example.com',
+    receivedAt: RECEIVED_AT,
+    ...over,
+  };
+}
+
+async function attachedKeys(
+  links: OwnLinkAttachments,
+  req: ResolveLinkedAttachmentsServiceRequest,
+): Promise<string[]> {
+  return (await links.resolve(req)).attachments.map((a) => a.s3Key);
+}
+
 afterEach(() => {
   vi.restoreAllMocks();
 });
@@ -76,13 +98,13 @@ describe('OwnLinkAttachments.resolve', () => {
     const tokens = new FakeTokens().add(record(0), record(1));
     const links = new OwnLinkAttachments(tokens, BASE);
 
-    const attached = await links.resolve({
-      bodies: [`Files:\n- ${link(0)}\n- ${link(1)}`, `<a href="${link(0)}">file-0.pdf</a>`],
-      from: 'Me@Example.com',
-      receivedAt: RECEIVED_AT,
-    });
+    const resolved = await links.resolve(
+      request([`Files:\n- ${link(0)}\n- ${link(1)}`, `<a href="${link(0)}">file-0.pdf</a>`], {
+        from: 'Me@Example.com',
+      }),
+    );
 
-    expect(attached).toEqual([
+    expect(resolved.attachments).toEqual([
       {
         id: 'link-0',
         filename: 'file-0.pdf',
@@ -106,17 +128,26 @@ describe('OwnLinkAttachments.resolve', () => {
     ['from someone else', record(0, { sender: 'other@example.com' })],
     ['revoked', record(0, { revoked: true })],
     ['expired before the message arrived', record(0, { expiresAt: '2026-10-09T00:00:00.000Z' })],
+    ['expiring the instant the message arrived', record(0, { expiresAt: RECEIVED_AT })],
     ['sent to no address of yours', record(0, { ownDomainRecipients: undefined })],
+    ['sent to an empty list of your addresses', record(0, { ownDomainRecipients: [] })],
     ['minted before tokens kept their sender', record(0, { sender: undefined })],
-    ['pointing outside the sent attachments', record(0, { s3Key: 'inbound/abc' })],
+    ['pointing at raw inbound mail', record(0, { s3Key: 'inbound/abc' })],
+    ['pointing at a received attachment', record(0, { s3Key: 'attachments/inbound/abc/0' })],
+    ['pointing at a legacy linked upload', record(0, { s3Key: 'attachments/outbound/e1/0' })],
   ])('leaves a link as just a link when its token is %s', async (_label, stored) => {
     const links = new OwnLinkAttachments(new FakeTokens().add(stored), BASE);
-    const attached = await links.resolve({
-      bodies: [link(0)],
-      from: 'me@example.com',
-      receivedAt: RECEIVED_AT,
-    });
-    expect(attached).toEqual([]);
+    expect(await attachedKeys(links, request([link(0)]))).toEqual([]);
+  });
+
+  it.each([
+    ['SES reported no DMARC pass', { authenticatedDomain: undefined }],
+    ['DMARC passed for another domain', { authenticatedDomain: 'evil.example' }],
+  ])('looks nothing up when %s (the From could be spoofed)', async (_label, over) => {
+    const tokens = new FakeTokens().add(record(0));
+    const links = new OwnLinkAttachments(tokens, BASE);
+    expect(await attachedKeys(links, request([link(0)], over))).toEqual([]);
+    expect(tokens.lookups).toEqual([]);
   });
 
   it('skips a link whose token is unknown, and one whose lookup fails (best-effort)', async () => {
@@ -125,33 +156,27 @@ describe('OwnLinkAttachments.resolve', () => {
     tokens.failToken = token(1);
     const links = new OwnLinkAttachments(tokens, BASE);
 
-    const attached = await links.resolve({
-      bodies: [`${link(0)} ${link(1)} ${link(2)}`],
-      from: 'me@example.com',
-      receivedAt: RECEIVED_AT,
-    });
+    const resolved = await links.resolve(request([`${link(0)} ${link(1)} ${link(2)}`]));
 
-    expect(attached.map((a) => a.s3Key)).toEqual(['attachments/sent/e1/2']);
-    expect(attached[0]?.id).toBe('link-0');
+    expect(resolved.attachments.map((a) => a.s3Key)).toEqual(['attachments/sent/e1/2']);
+    expect(resolved.attachments[0]?.id).toBe('link-0');
   });
 
   it('attaches a file once even when two of its tokens are linked', async () => {
     const tokens = new FakeTokens().add(record(0), record(1, { s3Key: 'attachments/sent/e1/0' }));
-    const attached = await new OwnLinkAttachments(tokens, BASE).resolve({
-      bodies: [`${link(0)} ${link(1)}`],
-      from: 'me@example.com',
-      receivedAt: RECEIVED_AT,
-    });
-    expect(attached).toHaveLength(1);
+    const resolved = await new OwnLinkAttachments(tokens, BASE).resolve(
+      request([`${link(0)} ${link(1)}`]),
+    );
+    expect(resolved.attachments).toHaveLength(1);
   });
 });
 
-describe('OwnLinkAttachments.findTokens', () => {
-  const links = new OwnLinkAttachments(new FakeTokens(), `${BASE}/`);
-
-  it('finds only this deployment’s own, well-formed links', () => {
-    expect(
-      links.findTokens([
+describe('OwnLinkAttachments — which links are looked up', () => {
+  it('only this deployment’s own, well-formed links', async () => {
+    const tokens = new FakeTokens();
+    const links = new OwnLinkAttachments(tokens, `${BASE}/`);
+    await links.resolve(
+      request([
         [
           link(0),
           `${BASE.toUpperCase()}/d/${token(1)}`, // the host matches case-insensitively
@@ -162,12 +187,15 @@ describe('OwnLinkAttachments.findTokens', () => {
         ].join('\n'),
         undefined,
       ]),
-    ).toEqual([token(0), token(1)]);
+    );
+    expect(tokens.lookups).toEqual([token(0), token(1)]);
   });
 
-  it('looks up at most 20 links per message', () => {
+  it('at most 20 per message', async () => {
+    const tokens = new FakeTokens();
     const many = Array.from({ length: 30 }, (_, n) => link(n)).join(' ');
-    expect(links.findTokens([many])).toHaveLength(MAX_LINKED_ATTACHMENTS);
+    await new OwnLinkAttachments(tokens, BASE).resolve(request([many]));
+    expect(tokens.lookups).toHaveLength(MAX_LINKED_ATTACHMENTS);
     expect(MAX_LINKED_ATTACHMENTS).toBe(20);
   });
 });

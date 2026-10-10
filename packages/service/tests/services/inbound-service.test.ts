@@ -625,11 +625,15 @@ describe('InboundProcessor — your own download links become attachments', () =
     }
   }
 
+  /** SES's own DMARC result for the message (it prepends this above the original headers). */
+  const DMARC_PASS = 'Authentication-Results: amazonses.com; dmarc=pass header.from=example.com;';
+
   /** Your own send, as it comes back in: an embedded file plus a link to a large one. */
-  function ownSend(spam = 'PASS', virus = 'PASS'): string {
+  function ownSend(spam = 'PASS', virus = 'PASS', auth = DMARC_PASS): string {
     return [
       `X-SES-Spam-Verdict: ${spam}`,
       `X-SES-Virus-Verdict: ${virus}`,
+      auth,
       'From: Me <me@example.com>',
       'To: team@example.com',
       'Subject: files',
@@ -673,6 +677,43 @@ describe('InboundProcessor — your own download links become attachments', () =
     ]);
     expect(row.attachmentCount).toBe(2);
     expect(row.hasAttachments).toBe(true);
+  });
+
+  it('carries a link-only message’s file as its one attachment (every file over 3 MB is linked)', async () => {
+    const row = await ingest(
+      [
+        'X-SES-Spam-Verdict: PASS',
+        'X-SES-Virus-Verdict: PASS',
+        DMARC_PASS,
+        'From: me@example.com',
+        'To: team@example.com',
+        'Subject: big file',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        `Attachments:\r\n- big.zip: ${BASE}/d/${TOKEN}`,
+        '',
+      ].join('\r\n'),
+      new FakeTokens(stored()),
+    );
+    expect(row.attachments.map((a) => [a.id, a.s3Key])).toEqual([
+      ['link-0', 'attachments/sent/e1/1'],
+    ]);
+    expect(row.attachmentCount).toBe(1);
+    expect(row.hasAttachments).toBe(true);
+  });
+
+  it('never looks links up when the From is not DMARC-authenticated (it could be spoofed)', async () => {
+    const tokens = new FakeTokens(stored());
+    const row = await ingest(
+      ownSend(
+        'PASS',
+        'PASS',
+        'Authentication-Results: amazonses.com; dmarc=fail header.from=example.com;',
+      ),
+      tokens,
+    );
+    expect(tokens.lookups).toEqual([]);
+    expect(row.attachments.map((a) => a.id)).toEqual(['0']);
   });
 
   it('leaves the link alone when its token does not vouch for this message', async () => {

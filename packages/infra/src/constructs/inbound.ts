@@ -64,6 +64,7 @@ const RECORD_TTL = '1800';
 export class InboundConstruct extends Construct {
   readonly ruleSet: ReceiptRuleSet;
   private readonly parser: NodejsFunction;
+  private ownDownloadsLinked = false;
 
   constructor(scope: Construct, id: string, props: InboundConstructProps) {
     super(scope, id);
@@ -98,6 +99,14 @@ export class InboundConstruct extends Construct {
 
     this.activateRuleSet(this.ruleSet.receiptRuleSetName);
     this.parser = this.wireParser(props.mailBucket, props.emailsTable, props.quarantineBucket);
+    // The parser's config requires the token lookup's env, which only linkOwnDownloads sets:
+    // fail the synth rather than deploy a parser that throws on every message.
+    this.node.addValidation({
+      validate: () =>
+        this.ownDownloadsLinked
+          ? []
+          : ['InboundConstruct.linkOwnDownloads(...) was never called — the parser needs it.'],
+    });
   }
 
   /**
@@ -217,5 +226,6 @@ export class InboundConstruct extends Construct {
     this.parser.addEnvironment('DOWNLOAD_TOKENS_TABLE', downloadTokensTable.tableName);
     this.parser.addEnvironment('DOWNLOAD_BASE_URL', downloadBaseUrl);
     downloadTokensTable.grant(this.parser, 'dynamodb:GetItem');
+    this.ownDownloadsLinked = true;
   }
 }

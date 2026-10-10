@@ -659,7 +659,8 @@ describe('EmailService.send — embed or link (#14)', () => {
       request({
         from: 'Me@Example.com',
         to: ['friend@other.com', 'Team@example.com'],
-        cc: ['ops@mail.example.com'],
+        // A subdomain address never comes back in (inbound covers exactly the domain).
+        cc: ['ops@mail.example.com', 'ops@example.com'],
         bcc: ['team@example.com', 'boss@elsewhere.org'],
         attachments: [{ uploadId: big }],
       }),
@@ -667,8 +668,32 @@ describe('EmailService.send — embed or link (#14)', () => {
 
     expect(setup.tokens.created[0]).toMatchObject({
       sender: 'me@example.com',
-      ownDomainRecipients: ['team@example.com', 'ops@mail.example.com'],
+      ownDomainRecipients: ['team@example.com', 'ops@example.com'],
     });
+  });
+
+  it('counts a bcc-only own address as an own-domain recipient', async () => {
+    const setup = makeService();
+    const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
+
+    await setup.service.send(
+      request({
+        to: ['friend@other.com'],
+        bcc: ['me2@example.com'],
+        attachments: [{ uploadId: big }],
+      }),
+    );
+
+    expect(setup.tokens.created[0]?.ownDomainRecipients).toEqual(['me2@example.com']);
+  });
+
+  it('records no own-domain recipients when every recipient is elsewhere', async () => {
+    const setup = makeService();
+    const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
+
+    await setup.service.send(request({ attachments: [{ uploadId: big }] }));
+
+    expect(setup.tokens.created[0]).not.toHaveProperty('ownDomainRecipients');
   });
 
   it('links into an HTML-only body with an escaped anchor', async () => {

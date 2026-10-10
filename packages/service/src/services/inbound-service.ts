@@ -229,11 +229,13 @@ export class InboundProcessor {
     if (this.ownLinks === undefined || !exposure.exposeContent || exposure.quarantined) {
       return [];
     }
-    return this.ownLinks.resolve({
+    const resolved = await this.ownLinks.resolve({
       bodies: [parsed.textBody, parsed.htmlBody],
       from: parsed.from,
+      authenticatedDomain: parsed.dmarcPassDomain,
       receivedAt: base.receivedAt,
     });
+    return [...resolved.attachments];
   }
 
   /** Conditional-put the row (the commit marker) and map the outcome. */

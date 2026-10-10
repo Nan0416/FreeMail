@@ -109,7 +109,12 @@ export class DdbDownloadTokensDao implements DownloadTokensDao {
 
   async getDownloadToken(input: GetDownloadTokenInput): Promise<GetDownloadTokenOutput | null> {
     const out = await this.doc.send(
-      new GetCommand({ TableName: this.tableName, Key: DownloadTokenEntity.key(input.token) }),
+      new GetCommand({
+        TableName: this.tableName,
+        Key: DownloadTokenEntity.key(input.token),
+        // A token minted moments ago (its message just came back in) must not read as missing.
+        ConsistentRead: true,
+      }),
     );
     return toRecord(out.Item);
   }

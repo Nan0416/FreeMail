@@ -180,7 +180,7 @@ export class EmailService {
     );
     const links = await this.mintDownloadLinks(attachments, id, nowDate, {
       sender: from.toLowerCase(),
-      ownDomainRecipients: this.ownDomainRecipients([...to, ...cc, ...bcc]),
+      ownDomainRecipients: this.ownDomainRecipients(recipients),
     });
     const body = appendDownloadLinks(
       {
@@ -336,12 +336,16 @@ export class EmailService {
     return links;
   }
 
-  /** The recipients under the configured domain, lowercased and de-duplicated. */
+  /**
+   * The recipients this deployment receives mail for — exactly the configured domain, as the
+   * inbound receipt rule and MX cover (a subdomain address never comes back in) — lowercased and
+   * de-duplicated. Kept as the list rather than a flag, so a token records who it was for.
+   */
   private ownDomainRecipients(recipients: readonly string[]): string[] {
     const own = new Set<string>();
     for (const address of recipients) {
       const domain = normalizeDomain(address.slice(address.lastIndexOf('@') + 1));
-      if (isSubdomainOrEqual(domain, this.emailDomain)) {
+      if (domain === this.emailDomain) {
         own.add(address.toLowerCase());
       }
     }
