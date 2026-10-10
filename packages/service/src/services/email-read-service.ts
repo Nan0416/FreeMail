@@ -438,9 +438,11 @@ export class EmailReadService {
    * - Sent: our own archive, if the row has one (permanent).
    * - Errors folder: its quarantined copy — offered whatever the verdict (it is the only way to
    *   recover the content), with the detail flagging a non-PASS one as suspicious.
-   * - Received: only on an affirmative virus `PASS`, the same gate as attachments (spam-flagged
-   *   mail stays downloadable — the original is the point), and — for a fully processed row —
-   *   only while SES's raw copy is retained (the lifecycle rule expires tagged copies).
+   * - Received, fully processed (a stored body): only on an affirmative virus `PASS` — spam-
+   *   flagged mail stays downloadable, the original is the point — and only while SES's raw
+   *   copy is retained (the lifecycle rule expires tagged copies).
+   * - Received before stored bodies: its untagged raw copy, kept forever, whatever the verdict —
+   *   flagged suspicious without a virus PASS.
    */
   private rawDownload(
     row: GetEmailOutput,
@@ -453,15 +455,16 @@ export class EmailReadService {
         ? { key: row.quarantineS3Key, presigner: this.quarantinePresigner }
         : undefined;
     }
-    if (row.virusVerdict !== 'PASS') {
-      return undefined;
-    }
-    // A row with a stored body was fully extracted, so ingest tagged its raw copy and the mail
-    // bucket's lifecycle rule expires it after the retention window: offer it only until then.
-    // Any other raw copy is untagged and kept (a row from before stored bodies) — it may be the
-    // only copy, so it stays downloadable.
+    // A row without a stored body predates stored bodies: its raw copy is untagged and kept
+    // forever — the only way to recover the message — so offer it whatever the verdict, like an
+    // Errors-folder original (the detail flags one without a virus PASS as suspicious).
     if (row.body === undefined) {
       return { key: row.rawS3Key, presigner: this.presigner };
+    }
+    // A row with a stored body was fully extracted (virus PASS by construction), so ingest tagged
+    // its raw copy and the lifecycle rule expires it after the window: offer it only until then.
+    if (row.virusVerdict !== 'PASS') {
+      return undefined;
     }
     const ageMs = this.now().getTime() - Date.parse(row.receivedAt);
     return ageMs < INBOUND_RAW_RETENTION_DAYS * DAY_MS

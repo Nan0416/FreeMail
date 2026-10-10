@@ -80,10 +80,11 @@ export class DataConstruct extends Construct {
 
     this.mailBucket = this.privateBucket('MailBucket');
     this.quarantineBucket = this.privateBucket('QuarantineBucket');
-    // SES's raw inbound MIME becomes staging once ingest has fully extracted the message (body +
-    // attachments): the parser then tags it, and only then does it expire — it backs just the
-    // short-lived "Download original". Untagged raw MIME (a message that failed to parse, one
-    // whose ingest dead-lettered, anything from before tagging) is the only copy and is kept.
+    // SES's raw inbound MIME becomes staging once ingest has stored what the message needs (its
+    // body + attachments, or — for a failed message — a copy in the quarantine bucket): the
+    // parser then tags it, and only then does it expire — it backs just the short-lived
+    // "Download original". Untagged raw MIME (a message whose ingest dead-lettered, anything
+    // from before tagging) is the only copy and is kept.
     // Scoped to `inbound/` ONLY — stored bodies, attachments, and the sent archive are
     // permanent, and sent-mail attachment downloads point at `attachments/outbound/*`.
     this.mailBucket.addLifecycleRule({

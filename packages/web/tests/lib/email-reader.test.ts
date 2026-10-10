@@ -117,6 +117,12 @@ describe('failureReason', () => {
     expect(failureReason({ virusVerdict: 'GRAY' })?.label).toBe('Suspicious');
     expect(failureReason({ virusVerdict: 'ABSENT' })?.label).toBe('Not scanned');
     expect(failureReason({ virusVerdict: 'PROCESSING_FAILED' })?.label).toBe('Not scanned');
+    // A duplicated verdict header is forgery, not a missing scan.
+    expect(failureReason({ virusVerdict: 'CONFLICTING' })).toMatchObject({
+      label: 'Suspicious',
+      detail: expect.stringMatching(/tampered/),
+    });
+    expect(failureReason({ virusVerdict: 'UNKNOWN' })?.detail).toMatch(/not recognized/);
   });
 
   it('names the parse problem of clean mail, not suspicious', () => {

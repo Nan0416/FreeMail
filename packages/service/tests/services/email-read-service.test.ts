@@ -818,16 +818,37 @@ describe('EmailReadService.getRawUrl', () => {
   });
 
   it.each(['FAIL', 'GRAY', 'PROCESSING_FAILED', 'ABSENT', 'UNKNOWN'] as const)(
-    'refuses a received message with virus verdict %s → not_found, never presigned',
+    'never offers a fully processed (stored-body) message with virus verdict %s',
     async (virusVerdict) => {
       const repo = new FakeDao();
       const presigner = new FakePresigner();
-      const handle = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict, quarantined: true }));
+      const handle = repo.put(
+        INBOUND_PARTITION,
+        inboundRow({ virusVerdict, quarantined: true, body: { kind: 'inline' } }),
+      );
 
       await expect(
         service(repo, presigner, new FakeRawMime()).getRawUrl({ handle }),
       ).rejects.toMatchObject({ code: 'not_found' });
       expect(presigner.last).toBeUndefined();
+    },
+  );
+
+  it.each(['FAIL', 'GRAY', 'ABSENT'] as const)(
+    'offers a pre-stored-body message with virus verdict %s — its kept raw copy, flagged suspicious',
+    async (virusVerdict) => {
+      const repo = new FakeDao();
+      const presigner = new FakePresigner();
+      const handle = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict, quarantined: true }));
+      const read = service(repo, presigner, new FakeRawMime());
+
+      const detail = await read.getEmail({ handle });
+      expect(detail).toMatchObject({ rawAvailable: true, rawSuspicious: true });
+      await read.getRawUrl({ handle });
+      expect(presigner.last).toMatchObject({
+        key: 'inbound/i1',
+        contentType: 'application/octet-stream',
+      });
     },
   );
 
@@ -870,8 +891,13 @@ describe('EmailReadService.getRawUrl', () => {
     const clean = repo.put(INBOUND_PARTITION, { ...inboundRow(), sk: 'other#i2' });
 
     expect((await read.getEmail({ handle: legacySent })).rawAvailable).toBe(false);
-    expect((await read.getEmail({ handle: virusFailed })).rawAvailable).toBe(false);
+    // A pre-stored-body virus-failed row: its kept raw copy is offered, flagged suspicious.
+    expect(await read.getEmail({ handle: virusFailed })).toMatchObject({
+      rawAvailable: true,
+      rawSuspicious: true,
+    });
     expect((await read.getEmail({ handle: clean })).rawAvailable).toBe(true);
+    expect((await read.getEmail({ handle: clean })).rawSuspicious).toBeUndefined();
   });
 });
 

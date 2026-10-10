@@ -197,6 +197,39 @@ describe('listEmailsPage — merge + cursor', () => {
   });
 });
 
+describe('listEmailsPage — the Errors folder', () => {
+  it('pages through failed rows (inbound messages fetched as `failed`) to a real end', async () => {
+    const all = ['f5', 'f4', 'f3', 'f2', 'f1'].map((id, i) => ({
+      ...rowFor('inbound', `2026-07-17T0${9 - i}:00:00.000Z#${id}`),
+      pk: 'FAILED',
+    }));
+    const query: MergeQuery = (direction, opts) => {
+      expect(direction).toBe('failed');
+      const start = opts.afterSk ? all.findIndex((r) => r.sk === opts.afterSk) + 1 : 0;
+      return Promise.resolve(all.slice(start, start + opts.limit));
+    };
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let pageNo = 0; pageNo < 10; pageNo += 1) {
+      const page = await listEmailsPage({
+        query,
+        direction: 'failed',
+        limit: 2,
+        ...(cursor ? { cursor } : {}),
+      });
+      seen.push(...page.rows.map((r) => r.id));
+      cursor = page.nextCursor;
+      if (!cursor) {
+        break;
+      }
+    }
+
+    expect(seen).toEqual(['f5', 'f4', 'f3', 'f2', 'f1']); // each exactly once, then it ends
+    expect(cursor).toBeUndefined();
+  });
+});
+
 describe('list cursor codec', () => {
   it('round-trips', () => {
     const token = encodeListCursor({ v: 1, sent: 'a#1', inbound: 'b#2' });

@@ -45,10 +45,35 @@ export function failureReason(email: {
     if (email.virusVerdict === 'FAIL') {
       return { label: 'Virus', detail: 'it failed a virus scan', suspicious: true };
     }
-    if (email.virusVerdict === 'GRAY') {
-      return { label: 'Suspicious', detail: 'the virus scan could not clear it', suspicious: true };
+    switch (email.virusVerdict) {
+      case 'GRAY':
+        return {
+          label: 'Suspicious',
+          detail: 'the virus scan could not clear it',
+          suspicious: true,
+        };
+      case 'CONFLICTING':
+        // More than one verdict header: someone tried to forge a clean result.
+        return {
+          label: 'Suspicious',
+          detail: 'its virus-scan result looks tampered with',
+          suspicious: true,
+        };
+      case 'PROCESSING_FAILED':
+        return {
+          label: 'Not scanned',
+          detail: 'SES could not scan it for viruses',
+          suspicious: true,
+        };
+      case 'UNKNOWN':
+        return {
+          label: 'Not scanned',
+          detail: 'its virus-scan result was not recognized',
+          suspicious: true,
+        };
+      default:
+        return { label: 'Not scanned', detail: 'it was not virus-scanned', suspicious: true };
     }
-    return { label: 'Not scanned', detail: 'it was not virus-scanned', suspicious: true };
   }
   switch (email.parseStatus) {
     case 'oversize':

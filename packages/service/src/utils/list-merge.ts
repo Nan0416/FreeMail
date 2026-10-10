@@ -105,14 +105,17 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
     fetched[dir] = await params.query(dir, { limit: params.limit, afterSk: decoded[dir] });
   }
 
-  const pool = directions.flatMap((dir) => fetched[dir]);
-  pool.sort(bySkDescending);
-  const rows = pool.slice(0, params.limit);
+  // Remember which listed partition each row was fetched from: a row's own `direction` can't
+  // say (an Errors-folder row is a `direction: 'inbound'` message fetched as `failed`).
+  const pool = directions.flatMap((dir) => fetched[dir].map((row) => ({ dir, row })));
+  pool.sort((a, b) => bySkDescending(a.row, b.row));
+  const page = pool.slice(0, params.limit);
+  const rows = page.map((entry) => entry.row);
 
   const positions: Partial<Record<Direction, string>> = {};
   let anyMore = false;
   for (const dir of directions) {
-    const emitted = rows.filter((row) => row.direction === dir);
+    const emitted = page.filter((entry) => entry.dir === dir).map((entry) => entry.row);
     // The page is sk-descending, so the LAST emitted row from a direction is its lowest sk.
     const lastEmittedSk = emitted.length > 0 ? emitted[emitted.length - 1].sk : decoded[dir];
     // ALWAYS carry this direction's continuation position — even if it drained this page.

@@ -37,6 +37,9 @@ export class S3QuarantineStore implements QuarantineStore {
         MetadataDirective: 'REPLACE',
         ContentType: 'application/octet-stream',
         ContentDisposition: 'attachment',
+        // Never inherit the source's tags (a redelivered message's raw copy may already carry
+        // the ingested tag) — no lifecycle rule should ever reach a quarantined original.
+        TaggingDirective: 'REPLACE',
       }),
     );
   }

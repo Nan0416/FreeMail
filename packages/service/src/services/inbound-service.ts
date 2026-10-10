@@ -196,7 +196,10 @@ export class InboundProcessor {
         attachments: [],
       };
     }
-    const parsed = await parseInbound(Readable.from([`${block}\r\n\r\n`]), NO_ATTACHMENTS);
+    const parsed = await parseInbound(
+      Readable.from([Buffer.concat([block, Buffer.from('\r\n\r\n')])]),
+      NO_ATTACHMENTS,
+    );
     // Only the header metadata is meaningful — nothing past the headers was read.
     return { ...parsed, exposed: false, attachmentCount: 0, attachments: [] };
   }

@@ -49,9 +49,9 @@ export const EMAIL_LIST_INDEX_ATTRIBUTES = [
 export type EmailListIndexAttribute = (typeof EMAIL_LIST_INDEX_ATTRIBUTES)[number];
 
 /**
- * How long SES's raw inbound MIME (`inbound/<id>`) is kept once ingest has fully extracted the
- * message (body + attachments) — then it only backs the "Download original" `.eml`, which is
- * therefore offered only for mail younger than this. The mail bucket's lifecycle rule expires
+ * How long SES's raw inbound MIME (`inbound/<id>`) is kept once ingest has stored what the
+ * message needs (its body + attachments, or a quarantine copy) — then it only backs the
+ * "Download original" `.eml`, which is therefore offered only for mail younger than this. The mail bucket's lifecycle rule expires
  * such objects after the same number of days. S3 never deletes an object before then (it rounds
  * up to the next midnight UTC and lags further), so a download offered inside the window finds
  * its object in practice.
@@ -59,9 +59,10 @@ export type EmailListIndexAttribute = (typeof EMAIL_LIST_INDEX_ATTRIBUTES)[numbe
 export const INBOUND_RAW_RETENTION_DAYS = 14;
 
 /**
- * The S3 object tag the inbound parser sets on `inbound/<id>` after committing the row of a
- * message whose content it FULLY extracted. The lifecycle rule expires only tagged objects, so
- * raw MIME that is still the only copy of something — a message that failed to parse, one that
- * never got a row (its ingest dead-lettered), anything stored before tagging existed — is kept.
+ * The S3 object tag the inbound parser sets on `inbound/<id>` after committing the message's
+ * row — by then its body and attachments are stored, or (content it couldn't extract) its raw
+ * MIME is copied into the quarantine bucket. The lifecycle rule expires only tagged objects, so
+ * raw MIME that is still the only copy of something — a message that never got a row (its
+ * ingest dead-lettered), anything stored before tagging existed — is kept.
  */
 export const INBOUND_INGESTED_TAG = { key: 'freemail-ingested', value: 'true' } as const;

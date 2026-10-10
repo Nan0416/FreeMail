@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { headerValues, parseHeaderLines } from '../../src/utils/inbound-headers.js';
+import {
+  headerValues,
+  parseHeaderLines,
+  rootHeaderBlock,
+} from '../../src/utils/inbound-headers.js';
 
 describe('parseHeaderLines', () => {
   it('parses ordered lowercased keys + trimmed values', () => {
@@ -36,5 +40,27 @@ describe('parseHeaderLines', () => {
       { key: 'from', value: 'a@b.com' },
       { key: 'subject', value: 'Hi' },
     ]);
+  });
+});
+
+describe('rootHeaderBlock', () => {
+  it('cuts at the first blank line, CRLF or bare LF', () => {
+    expect(rootHeaderBlock(Buffer.from('A: 1\r\nB: 2\r\n\r\nbody'))?.toString()).toBe(
+      'A: 1\r\nB: 2',
+    );
+    expect(rootHeaderBlock(Buffer.from('A: 1\nB: 2\n\nbody'))?.toString()).toBe('A: 1\nB: 2');
+  });
+
+  it('is undefined when the headers run past the bytes read', () => {
+    expect(rootHeaderBlock(Buffer.from('A: 1\r\nB: still going'))).toBeUndefined();
+  });
+
+  it('keeps 8-bit header bytes untouched for the parser to decode', () => {
+    const raw = Buffer.concat([
+      Buffer.from('Subject: caf'),
+      Buffer.from([0xe9]),
+      Buffer.from('\r\n\r\n'),
+    ]);
+    expect(rootHeaderBlock(raw)?.includes(Buffer.from([0xe9]))).toBe(true);
   });
 });

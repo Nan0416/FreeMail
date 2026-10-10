@@ -71,9 +71,14 @@ class FakeStore implements InboundObjectStore {
 
 class FakeQuarantine implements QuarantineStore {
   readonly copies: { sourceKey: string; destKey: string }[] = [];
+  /** Make the copy fail (an S3 infra error). */
+  fail = false;
   /** Runs inside copyFromMail — lets a test record the order of writes. */
   onCopy?: () => void;
   copyFromMail(sourceKey: string, destKey: string): Promise<void> {
+    if (this.fail) {
+      return Promise.reject(new Error('s3 copy failed'));
+    }
     this.onCopy?.();
     this.copies.push({ sourceKey, destKey });
     return Promise.resolve();
@@ -287,6 +292,41 @@ describe('InboundProcessor', () => {
     expect(quarantine.copies).toEqual([
       { sourceKey: 'inbound/VIRUS', destKey: 'inbound/VIRUS.eml' },
     ]);
+  });
+
+  it('a failed quarantine copy writes no row and no tag — the event retries with raw intact', async () => {
+    const store = new FakeStore();
+    const repo = new FakeDao();
+    const quarantine = new FakeQuarantine();
+    quarantine.fail = true;
+    seed(store, 'VIRUS2', withAttachment('FAIL'));
+
+    await expect(
+      new InboundProcessor(store, repo, new FakeBodyStore(), quarantine).process({
+        rawKey: 'inbound/VIRUS2',
+      }),
+    ).rejects.toThrow(/s3 copy failed/);
+
+    expect(repo.inbound).toEqual([]);
+    expect(store.taggedKeys).toEqual([]);
+  });
+
+  it('a redelivered failed message re-copies (same key), no-ops the row, and re-tags', async () => {
+    const store = new FakeStore();
+    const repo = new FakeDao();
+    repo.existingIds.add('VIRUS3');
+    const quarantine = new FakeQuarantine();
+    seed(store, 'VIRUS3', withAttachment('FAIL'));
+
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), quarantine).process(
+      { rawKey: 'inbound/VIRUS3' },
+    );
+
+    expect(result.outcome).toBe('duplicate');
+    expect(quarantine.copies).toEqual([
+      { sourceKey: 'inbound/VIRUS3', destKey: 'inbound/VIRUS3.eml' },
+    ]);
+    expect(store.taggedKeys).toEqual(['inbound/VIRUS3']);
   });
 
   it('a clean message is neither quarantined nor filed as failed', async () => {
