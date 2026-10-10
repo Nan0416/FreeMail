@@ -32,7 +32,7 @@ import { z } from 'zod';
 import { EmailError } from '../utils/errors.js';
 import { parseListEmailsQuery } from '../utils/list-query.js';
 import type { EmailReadService } from '../services/email-read-service.js';
-import type { AttachmentService } from '../services/attachment-service.js';
+import type { AttachmentUploader } from '../services/attachment-service.js';
 import type { EmailService } from '../services/email-service.js';
 import { detailTrust, frameUntrusted, listTrust } from '../utils/untrusted-frame.js';
 
@@ -43,7 +43,7 @@ export const MCP_SERVER_VERSION = '0.1.0';
 export interface McpServerDeps {
   readonly emailService: EmailService;
   /** Backs `create_attachment_upload` — registered whenever `send_email` is. */
-  readonly attachmentService: AttachmentService;
+  readonly attachmentService: AttachmentUploader;
   /** Present + `inboundEnabled` → the read tools are registered over this service. */
   readonly readService?: EmailReadService | undefined;
   /** Gate: the read tools are advertised only when inbound is enabled. Fail-closed. */
@@ -207,9 +207,9 @@ function toolErrorResult(error: unknown, genericMessage: string, logLabel: strin
   return { isError: true, content: [{ type: 'text', text: genericMessage }] };
 }
 
-/** `create_attachment_upload`: a presigned PUT for one attachment, over {@link AttachmentService}. */
+/** `create_attachment_upload`: a presigned PUT for one attachment ({@link AttachmentUploader}). */
 export async function handleCreateUpload(
-  attachmentService: AttachmentService,
+  attachmentService: AttachmentUploader,
   args: { filename: string; contentType?: string | undefined; sizeBytes: number },
 ): Promise<CallToolResult> {
   try {

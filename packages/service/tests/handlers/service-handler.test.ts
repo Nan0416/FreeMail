@@ -292,6 +292,29 @@ describe('rest handler — send email is dual-scheme', () => {
   );
 });
 
+describe('rest handler — key management reaches the API-key service', () => {
+  it('creates a key: POST /keys → 201, createApiKey called with the name', async () => {
+    keysMocks.create
+      .mockReset()
+      .mockResolvedValue({ id: 'k1', name: 'ci', createdAt: 'now', key: 'fm_raw' });
+    const res = await invoke('POST /keys', {
+      lambda: lambdaContext('access'),
+      body: { name: 'ci' },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.body ?? '{}')).toMatchObject({ id: 'k1', key: 'fm_raw' });
+    expect(keysMocks.create).toHaveBeenCalledWith({ name: 'ci' });
+  });
+
+  it('lists keys: GET /keys → 200, listApiKeys called', async () => {
+    keysMocks.list.mockReset().mockResolvedValue({ keys: [] });
+    const res = await invoke('GET /keys', { lambda: lambdaContext('access'), contentType: null });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body ?? '{}')).toEqual({ keys: [] });
+    expect(keysMocks.list).toHaveBeenCalledWith({});
+  });
+});
+
 describe('rest handler — attachment uploads are dual-scheme', () => {
   it.each(['access', 'apiKey'])('lets a %s credential create an upload', async (scheme) => {
     attachmentMocks.createAttachmentUpload.mockReset().mockResolvedValue({

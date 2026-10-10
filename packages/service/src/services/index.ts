@@ -21,7 +21,9 @@ export {
 } from './email-read-service.js';
 export {
   AttachmentService,
+  type AttachmentDownloadResolver,
   type AttachmentServiceDeps,
+  type AttachmentUploader,
   type CreateAttachmentUploadServiceRequest,
   type ResolveAttachmentDownloadPresignedUrlServiceRequest,
   type ResolveAttachmentDownloadPresignedUrlServiceResponse,

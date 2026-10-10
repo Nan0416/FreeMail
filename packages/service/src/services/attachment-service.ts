@@ -73,6 +73,15 @@ export interface ResolveAttachmentDownloadPresignedUrlServiceResponse {
   readonly url: string;
 }
 
+/** What an authorized upload surface (the REST route, the MCP tool) may call. */
+export type AttachmentUploader = Pick<AttachmentService, 'createAttachmentUpload'>;
+
+/** What the public `/d/{token}` route may call — and nothing else. */
+export type AttachmentDownloadResolver = Pick<
+  AttachmentService,
+  'resolveAttachmentDownloadPresignedUrl'
+>;
+
 export interface AttachmentServiceDeps {
   /** Presigns upload PUTs (`uploads/<id>`). */
   readonly uploads: UploadStore;
@@ -84,7 +93,7 @@ export interface AttachmentServiceDeps {
   readonly now?: () => Date;
   /** Upload-id generator, injectable for tests. */
   readonly generateId?: () => string;
-  /** Presigned-GET lifetime for a link; short, minted per click. Defaults to the shared constant. */
+  /** Presigned-GET lifetime for a link: short, minted per click (default: the shared constant). */
   readonly presignTtlSeconds?: number;
 }
 

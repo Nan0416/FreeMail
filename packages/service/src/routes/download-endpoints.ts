@@ -12,7 +12,7 @@
  */
 import { Router } from 'express';
 import type { Express, NextFunction, Request, Response } from 'express';
-import type { AttachmentService } from '../services/attachment-service.js';
+import type { AttachmentDownloadResolver } from '../services/attachment-service.js';
 import { getLogger } from '../utils/logger.js';
 import { noStore } from '../utils/web-session.js';
 import type { Endpoints } from './endpoints.js';
@@ -31,7 +31,7 @@ const NOT_FOUND_HTML =
 export class DownloadEndpoints implements Endpoints {
   private readonly router: Router;
 
-  constructor(attachmentService: AttachmentService) {
+  constructor(attachmentService: AttachmentDownloadResolver) {
     this.router = Router();
 
     this.router.get('/d/:token', async (req: Request, res: Response, next: NextFunction) => {

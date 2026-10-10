@@ -1,8 +1,8 @@
 /**
  * Inbound-mail parser Lambda. Triggered by S3 `ObjectCreated` on the `inbound/`
  * prefix (see the infra construct) — one raw MIME object per record. All the work is
- * in {@link InboundProcessor.processInboundEmail}; this file is the entry point + a bounded diagnostic
- * log. A handled failure (bad key / oversize / malformed / over-limit) is logged and
+ * in {@link InboundProcessor.processInboundEmail}; this file is the entry point + a bounded
+ * diagnostic log. A handled failure (bad key / oversize / malformed / over-limit) is logged and
  * returns normally; only an infra error propagates, so the async invocation retries
  * and eventually DLQs.
  */

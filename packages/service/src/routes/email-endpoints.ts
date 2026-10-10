@@ -22,7 +22,7 @@ import type { Express, NextFunction, Request, Response } from 'express';
 import { emailErrors } from '../utils/errors.js';
 import { parseListEmailsQuery } from '../utils/list-query.js';
 import type { EmailReadService, ListEmailsServiceRequest } from '../services/email-read-service.js';
-import type { AttachmentService } from '../services/attachment-service.js';
+import type { AttachmentUploader } from '../services/attachment-service.js';
 import type { EmailService } from '../services/email-service.js';
 import { requireAccessScheme } from '../middleware/auth-middleware.js';
 import { requireJsonContentType } from '../middleware/json-content-type.js';
@@ -43,7 +43,7 @@ export class EmailEndpoints implements Endpoints {
   constructor(
     emailService: EmailService,
     readService: EmailReadService,
-    attachmentService: AttachmentService,
+    attachmentService: AttachmentUploader,
   ) {
     this.router = Router();
 
@@ -227,7 +227,7 @@ function optionalAttachments(body: Record<string, unknown>): EmailAttachmentRef[
   });
 }
 
-/** `{ filename, contentType?, sizeBytes }` — shape only; the upload service validates values. */
+/** `{ filename, contentType?, sizeBytes }`: shape only (createAttachmentUpload checks values). */
 function parseCreateUploadBody(body: Record<string, unknown>): CreateAttachmentUploadRequest {
   if (typeof body.filename !== 'string') {
     throw emailErrors.invalidRequest('"filename" must be a string.');

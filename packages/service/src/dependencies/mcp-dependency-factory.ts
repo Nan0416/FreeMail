@@ -16,7 +16,7 @@ import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { S3UploadStore } from '../facades/s3-upload-store.js';
-import { AttachmentService } from '../services/attachment-service.js';
+import { AttachmentService, type AttachmentUploader } from '../services/attachment-service.js';
 import { createUploadPresignClient, embedLimits } from './uploads.js';
 import { S3AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import { EmailReadService } from '../services/email-read-service.js';
@@ -27,7 +27,8 @@ import type { McpConfig } from '../handlers/mcp-config.js';
 export interface McpDependencies {
   readonly emailService: EmailService;
   /** Backs the `create_attachment_upload` tool — always available, like `send_email`. */
-  readonly attachmentService: AttachmentService;
+  /** Upload only — the MCP tools never resolve a download link. */
+  readonly attachmentService: AttachmentUploader;
   /** Present only when inbound is enabled — see the note above. */
   readonly readService: EmailReadService | undefined;
   readonly inboundEnabled: boolean;

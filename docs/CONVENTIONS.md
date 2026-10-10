@@ -21,8 +21,8 @@ edge cases; the tag says what catches a violation.
    `catch`. Name the object and read its fields (`input.keyId`, `result.created`). Array
    destructuring is allowed; `packages/web/src/components/ui/**` is exempt. _ESLint
    `no-restricted-syntax`_ · §9
-3. **Parameter names follow the layer** — DAO methods take `input`, service methods
-   `request`, React components `props`. _Review_ · §9
+3. **Parameter names follow the layer** — DAO methods take `input`, service and processor
+   methods `request`, React components `props`. _Review_ · §9
 4. **One DAO interface per table** — reads and writes together, no `XReadDao` split.
    _Review_ · §4
 5. **DAO methods: one Input interface in, one Output interface out** — named
@@ -37,8 +37,10 @@ edge cases; the tag says what catches a violation.
 7. **A method is named after its types** — DAO, service, and processor alike: the method is
    the type's stem, lower-camel-cased — `createApiKey(input: CreateApiKeyInput)`,
    `createApiKey(request: CreateApiKeyServiceRequest)`,
-   `processInboundEmail(request: ProcessInboundEmailRequest)`. Never a bare verb (`create`,
-   `resolve`): the name says what it does without its class. _Review_ · §4, §5
+   `processInboundEmail(request: ProcessInboundEmailRequest)`. The type names the action and
+   what it acts on, so the method does too, and reads the same at the call site as in its
+   class. Facades (and the ports services declare for them) and module-level helper functions
+   are out of scope: they mirror the system or call they wrap. _Review_ · §4, §5
 8. **Interface and type-alias fields are `readonly`.** _ESLint `no-restricted-syntax`_ · §9
 9. **`import type` for type-only imports; relative imports end in `.js`.** _Compiler_ (`NodeNext`
    packages); _review_ in `packages/web`, whose `bundler` resolution accepts either · §9
@@ -67,7 +69,8 @@ src/
 **Why no domain folders.** A feature touches every layer, so domain folders guarantee that
 adding one means editing five directories anyway — while making "what does the send path
 actually talk to?" unanswerable without opening all of them. Role folders make the
-dependency direction visible: `routes → services → {facades, data}`, never backwards.
+dependency direction visible: `routes → services → {facades, data}`, and
+`handlers → processors → services`, never backwards.
 
 **`services/` vs `processors/`.** Both hold business logic and reach AWS only through DAOs
 and facades. A service backs an API surface (a route or an MCP tool); a processor is driven
@@ -322,12 +325,20 @@ Responses reuse the shared wire types where one exists (`ListApiKeysResponse`,
   worse than not having one. (DAOs are stricter and return an empty Output — see §4.)
 - **Zero-input still takes a Request:** `type ListApiKeysServiceRequest = Record<string, never>`.
   (Not an empty interface — see §9.)
-- **A shared wire request still gets a service name:** `type SendEmailServiceRequest =
-SendEmailRequest`, so the method (`sendEmail`) and its type stay aligned.
+- **A shared wire request still gets a service name** (so the method and its type stay
+  aligned):
+
+  ```ts
+  type SendEmailServiceRequest = SendEmailRequest;
+  async sendEmail(request: SendEmailServiceRequest): Promise<SendEmailResponse>;
+  ```
 
 **Processors** (`processors/`) follow the same shape, minus the word "Service" — they serve
-no API: `processInboundEmail(request: ProcessInboundEmailRequest):
-Promise<ProcessInboundEmailResponse>`.
+no API:
+
+```ts
+async processInboundEmail(request: ProcessInboundEmailRequest): Promise<ProcessInboundEmailResponse>;
+```
 
 ---
 
@@ -344,7 +355,7 @@ export class KeysEndpoints implements Endpoints {
     this.router = Router();
     this.router.post('/keys', requireJsonContentType, requireAccessScheme, async (req, res, next) => {
       try {
-        res.status(201).json(await apiKeyService.create({ name: /* ... */ }));
+        res.status(201).json(await apiKeyService.createApiKey({ name: /* ... */ }));
       } catch (err) {
         next(err);
       }
