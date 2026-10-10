@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs';
+import { builtinModules } from 'node:module';
 import { join } from 'node:path';
-import { App } from 'aws-cdk-lib';
-import { describe, expect, it } from 'vitest';
+import { App, Stack } from 'aws-cdk-lib';
+import type { CfnFunction } from 'aws-cdk-lib/aws-lambda';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
+import { beforeAll, describe, expect, it } from 'vitest';
 import type { FreeMailConfig } from '@freemail/shared/config';
 import { FreeMailStack } from '../src/freemail-stack.js';
 
@@ -16,15 +19,27 @@ const config: FreeMailConfig = {
   inbound: { enabled: true, confirmInboundMx: true },
 };
 
-const OPTIONAL_SDK_SIGNERS: ReadonlySet<string> = new Set([
-  '@aws-sdk/signature-v4-crt',
-  '@aws-sdk/signature-v4a',
-]);
+/** Node builtins a bundle may import without the `node:` prefix (esbuild keeps them external). */
+const NODE_BUILTINS: ReadonlySet<string> = new Set(builtinModules);
 
-/** Every FreeMail handler bundle: its function's logical id → its built `index.js`. */
-function synthBundles(): Map<string, string> {
-  // The other tests skip bundling (see vitest.config.ts); this one builds for real (post-CLI
-  // context overrides the environment's), and asks for the asset paths the CLI would get.
+/** The part of esbuild's metafile this test reads. */
+interface Metafile {
+  readonly outputs: Readonly<
+    Record<string, { readonly imports: readonly { path: string; external?: boolean }[] }>
+  >;
+}
+
+/** One built handler: what esbuild left for the runtime to load (Node builtins aside). */
+interface Bundle {
+  readonly externals: readonly string[];
+}
+
+/**
+ * Synthesize with real bundling and read every `NodejsFunction`'s metafile, keyed by the
+ * function's logical id. The other tests skip bundling (see vitest.config.ts); post-CLI context
+ * overrides that, and asks for the asset paths the CLI would get.
+ */
+function synthBundles(): Map<string, Bundle> {
   const app = new App({
     postCliContext: {
       'aws:cdk:bundling-stacks': ['**'],
@@ -33,55 +48,48 @@ function synthBundles(): Map<string, string> {
   });
   const stack = new FreeMailStack(app, 'TestStack', { config });
   const assembly = app.synth();
-  const template = assembly.getStackByName(stack.stackName).template as {
-    Resources: Record<string, { Type: string; Metadata?: Record<string, string> }>;
-  };
-  const bundles = new Map<string, string>();
-  for (const [logicalId, resource] of Object.entries(template.Resources)) {
-    const assetPath = resource.Metadata?.['aws:asset:path'];
-    if (resource.Type === 'AWS::Lambda::Function' && assetPath !== undefined) {
-      try {
-        bundles.set(
-          logicalId,
-          readFileSync(join(assembly.directory, assetPath, 'index.js'), 'utf8'),
-        );
-      } catch {
-        // Not a NodejsFunction bundle (CDK's own helper Lambdas ship prebuilt directories).
-      }
+  const resources = (
+    assembly.getStackByName(stack.stackName).template as {
+      Resources: Record<string, { Metadata?: Record<string, string> }>;
     }
+  ).Resources;
+  const bundles = new Map<string, Bundle>();
+  // Every NodejsFunction in the stack — not a list of names, so a new one can't slip past.
+  for (const fn of stack.node.findAll().filter((c) => c instanceof NodejsFunction)) {
+    const logicalId = Stack.of(fn).getLogicalId(fn.node.defaultChild as CfnFunction);
+    const assetPath = resources[logicalId]?.Metadata?.['aws:asset:path'] ?? '';
+    const metafile = JSON.parse(
+      readFileSync(join(assembly.directory, assetPath, 'index.meta.json'), 'utf8'),
+    ) as Metafile;
+    const externals = Object.values(metafile.outputs)
+      .flatMap((output) => output.imports)
+      .filter((imported) => imported.external === true && !imported.path.startsWith('node:'))
+      .map((imported) => imported.path);
+    bundles.set(logicalId, { externals: [...new Set(externals)] });
   }
   return bundles;
 }
 
 describe('Lambda bundles', () => {
-  const bundles = synthBundles();
-  const freeMail = [...bundles].filter(([logicalId]) =>
-    /^(ApiRestHandler|ApiMcpHandler|ApiAuthorizerHandler|SesInboundParserFn)/.test(logicalId),
-  );
+  let bundles = new Map<string, Bundle>();
 
-  it('builds every FreeMail handler', () => {
-    expect(freeMail.map(([logicalId]) => logicalId.replace(/[0-9A-F]{8}$/, '')).sort()).toEqual([
-      'ApiAuthorizerHandler',
-      'ApiMcpHandler',
-      'ApiRestHandler',
-      'SesInboundParserFn',
-    ]);
+  beforeAll(() => {
+    bundles = synthBundles();
   });
 
-  it('bundles the AWS SDK instead of loading the Lambda runtime’s copy', () => {
-    for (const [logicalId, code] of freeMail) {
-      const external = [...code.matchAll(/require\(["'](@aws-sdk\/[^"']+)["']\)/g)].map(
-        (match) => match[1],
-      );
-      // Only the SDK's OPTIONAL SigV4a / CRT signers stay runtime lookups: it requires them
-      // lazily, in a try/catch, just for multi-region access points — which FreeMail never uses.
+  it('builds every FreeMail handler', () => {
+    expect(
+      [...bundles.keys()].map((logicalId) => logicalId.replace(/[0-9A-F]{8}$/, '')).sort(),
+    ).toEqual(['ApiAuthorizerHandler', 'ApiMcpHandler', 'ApiRestHandler', 'SesInboundParserFn']);
+  });
+
+  it('bundles the AWS SDK (and everything else) instead of loading the Lambda runtime’s copy', () => {
+    for (const [logicalId, bundle] of bundles) {
+      // Node's own modules aside, esbuild left nothing for the runtime to resolve.
       expect(
-        [...new Set(external)].filter((name) => !OPTIONAL_SDK_SIGNERS.has(name ?? '')),
+        bundle.externals.filter((path) => !NODE_BUILTINS.has(path)),
         logicalId,
       ).toEqual([]);
     }
-    const rest = freeMail.find(([logicalId]) => logicalId.startsWith('ApiRestHandler'));
-    // The S3 client's code is in the bundle itself.
-    expect(rest?.[1]).toContain('S3Client');
   });
 });
