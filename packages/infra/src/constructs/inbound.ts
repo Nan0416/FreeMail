@@ -16,6 +16,7 @@ import { Queue } from 'aws-cdk-lib/aws-sqs';
 import { Provider } from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
 import { buildActivateHandlerSource } from '../inbound/activate-rule-set.js';
+import { SELF_CONTAINED_BUNDLING } from './bundling.js';
 
 const HANDLERS_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -145,6 +146,7 @@ export class InboundConstruct extends Construct {
         MAIL_BUCKET: mailBucket.bucketName,
         QUARANTINE_BUCKET: quarantineBucket.bucketName,
       },
+      bundling: SELF_CONTAINED_BUNDLING,
       logGroup: new LogGroup(this, 'ParserLogs', {
         retention: RetentionDays.THREE_MONTHS,
         removalPolicy: RemovalPolicy.DESTROY,

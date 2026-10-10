@@ -2,10 +2,16 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    // Each test synthesizes the stack, which bundles the Lambda handlers with
-    // esbuild at synth time. The MCP handler pulls in the MCP SDK, so the first
-    // synth() is slow (subsequent ones reuse the bundling cache); the default 5s
-    // per-test timeout is too tight for that first build.
+    env: {
+      // Almost every test synthesizes the whole stack, and bundling runs esbuild once per
+      // Lambda per synth — dozens of CPU-bound builds that, on a small CI runner, starved
+      // vitest's own workers into an RPC timeout (`Timeout calling "onTaskUpdate"`). CDK's
+      // standard switch skips bundling for every stack (as `cdk synth --exclusively` does);
+      // the template under test is unchanged. `tests/bundling.test.ts` opts back in once, so
+      // the real bundles are still built and checked.
+      CDK_CONTEXT_JSON: JSON.stringify({ 'aws:cdk:bundling-stacks': [] }),
+    },
+    // The one real-bundling test builds every handler (the MCP SDK and AWS SDK included).
     testTimeout: 60_000,
     hookTimeout: 60_000,
   },

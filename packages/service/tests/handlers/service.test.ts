@@ -1,12 +1,13 @@
+import type { APIGatewayProxyEventV2, Context } from 'aws-lambda';
 import type { Express } from 'express';
 import { Router } from 'express';
-import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import { authErrors } from '../../src/utils/errors.js';
 import { emailErrors } from '../../src/utils/errors.js';
 import { errorHandler, notFoundHandler } from '../../src/middleware/index.js';
 import type { Endpoints } from '../../src/routes/endpoints.js';
 import { FreeMailService } from '../../src/handlers/service.js';
+import { toApiGatewayHandler } from '../../src/handlers/serverless-express.js';
 
 /** An Endpoints that mounts one route, so the app can be exercised without any AWS wiring. */
 function endpointsFor(
@@ -28,9 +29,55 @@ function buildApp(endpoints: Endpoints[]): Express {
   }).init();
 }
 
+interface CallResponse {
+  readonly status: number;
+  readonly headers: Readonly<Record<string, string | undefined>>;
+  readonly text: string;
+  readonly body: unknown;
+}
+
+const LAMBDA_CONTEXT = { callbackWaitsForEmptyEventLoop: false } as unknown as Context;
+
+/**
+ * Drive the app in-process through the same API Gateway adapter the Lambda uses — no socket,
+ * so nothing here depends on the machine's networking.
+ */
+async function call(
+  app: Express,
+  method: 'GET' | 'POST',
+  path: string,
+  options: { readonly contentType?: string; readonly body?: string } = {},
+): Promise<CallResponse> {
+  const event = {
+    version: '2.0',
+    routeKey: `${method} ${path}`,
+    rawPath: path,
+    rawQueryString: '',
+    headers: options.contentType ? { 'content-type': options.contentType } : {},
+    ...(options.body === undefined ? {} : { body: options.body }),
+    isBase64Encoded: false,
+    requestContext: {
+      http: { method, path, protocol: 'HTTP/1.1', sourceIp: '203.0.113.1', userAgent: 'test' },
+    },
+  } as unknown as APIGatewayProxyEventV2;
+  const result = await toApiGatewayHandler(app)(event, LAMBDA_CONTEXT, () => {});
+  const text = result.body ?? '';
+  const headers: Record<string, string | undefined> = {};
+  for (const [name, value] of Object.entries(result.headers ?? {})) {
+    headers[name.toLowerCase()] = String(value);
+  }
+  const isJson = headers['content-type']?.includes('application/json') ?? false;
+  return {
+    status: result.statusCode ?? 0,
+    headers,
+    text,
+    body: isJson && text !== '' ? JSON.parse(text) : undefined,
+  };
+}
+
 describe('FreeMailService app assembly', () => {
   it('answers an unmatched route with the standard JSON error body, not Express HTML', async () => {
-    const res = await request(buildApp([])).get('/nope');
+    const res = await call(buildApp([]), 'GET', '/nope');
     expect(res.status).toBe(404);
     expect(res.headers['content-type']).toContain('application/json');
     expect(res.body).toEqual({ error: 'invalid_request', message: 'Not found.' });
@@ -38,7 +85,7 @@ describe('FreeMailService app assembly', () => {
 
   it('does not advertise the framework', async () => {
     const app = buildApp([endpointsFor('get', '/ok', (_req, res) => void res.status(200).end())]);
-    const res = await request(app).get('/ok');
+    const res = await call(app, 'GET', '/ok');
     expect(res.headers['x-powered-by']).toBeUndefined();
   });
 
@@ -46,7 +93,10 @@ describe('FreeMailService app assembly', () => {
     const app = buildApp([
       endpointsFor('post', '/echo', (req, res) => void res.status(200).json(req.body)),
     ]);
-    const res = await request(app).post('/echo').send({ hello: 'world' });
+    const res = await call(app, 'POST', '/echo', {
+      contentType: 'application/json',
+      body: JSON.stringify({ hello: 'world' }),
+    });
     expect(res.body).toEqual({ hello: 'world' });
   });
 
@@ -56,10 +106,10 @@ describe('FreeMailService app assembly', () => {
     const app = buildApp([
       endpointsFor('post', '/echo', (req, res) => void res.status(200).json(req.body ?? null)),
     ]);
-    const res = await request(app)
-      .post('/echo')
-      .set('content-type', 'application/x-www-form-urlencoded')
-      .send('hello=world');
+    const res = await call(app, 'POST', '/echo', {
+      contentType: 'application/x-www-form-urlencoded',
+      body: 'hello=world',
+    });
     expect(res.body).not.toEqual({ hello: 'world' });
   });
 });
@@ -69,7 +119,7 @@ describe('errorHandler', () => {
     const app = buildApp([
       endpointsFor('get', '/boom', (_req, _res, next) => next(authErrors.forbidden('nope'))),
     ]);
-    const res = await request(app).get('/boom');
+    const res = await call(app, 'GET', '/boom');
     expect(res.status).toBe(403);
     expect(res.body).toEqual({ error: 'forbidden', message: 'nope' });
   });
@@ -78,7 +128,7 @@ describe('errorHandler', () => {
     const app = buildApp([
       endpointsFor('get', '/boom', (_req, _res, next) => next(emailErrors.notFound('gone'))),
     ]);
-    const res = await request(app).get('/boom');
+    const res = await call(app, 'GET', '/boom');
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'not_found', message: 'gone' });
   });
@@ -87,7 +137,7 @@ describe('errorHandler', () => {
     const app = buildApp([
       endpointsFor('get', '/boom', (_req, _res, next) => next(authErrors.accountLocked(90))),
     ]);
-    const res = await request(app).get('/boom');
+    const res = await call(app, 'GET', '/boom');
     expect(res.status).toBe(429);
     expect(res.headers['retry-after']).toBe('90');
   });
@@ -96,10 +146,10 @@ describe('errorHandler', () => {
     const app = buildApp([
       endpointsFor('post', '/echo', (_req, res) => void res.status(200).end()),
     ]);
-    const res = await request(app)
-      .post('/echo')
-      .set('content-type', 'application/json')
-      .send('{not json');
+    const res = await call(app, 'POST', '/echo', {
+      contentType: 'application/json',
+      body: '{not json',
+    });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({
       error: 'invalid_request',
@@ -115,7 +165,7 @@ describe('errorHandler', () => {
           next(new Error('internal detail that must not escape'));
         }),
       ]);
-      const res = await request(app).get('/boom');
+      const res = await call(app, 'GET', '/boom');
       expect(res.status).toBe(500);
       expect(res.body).toEqual({ error: 'invalid_request', message: 'Internal error.' });
       expect(res.text).not.toContain('internal detail');
