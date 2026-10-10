@@ -46,6 +46,20 @@ describe('dmarcPassDomain', () => {
     ).toBeUndefined();
   });
 
+  it.each([
+    [
+      '“passive” is not a pass',
+      'Authentication-Results: amazonses.com; dmarc=passive header.from=example.com;',
+    ],
+    [
+      'a pass smuggled in where SES wrote no DMARC clause (not the final clause)',
+      'Authentication-Results: amazonses.com; spf=fail (x) client-ip=192.0.2.9; ' +
+        'envelope-from="x;dmarc=pass header.from=example.com"@evil.example; helo=h; dkim=none;',
+    ],
+  ])('answers undefined for %s', (_label, block) => {
+    expect(domain(block)).toBeUndefined();
+  });
+
   it('fails closed when a pass is smuggled into a sender-controlled value (two DMARC clauses)', () => {
     expect(
       domain(
