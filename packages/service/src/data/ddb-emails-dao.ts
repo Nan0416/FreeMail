@@ -19,6 +19,7 @@ import {
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { EMAIL_LIST_INDEX_NAME } from '@freemail/shared/storage';
+import { getLogger } from '../utils/logger.js';
 import { CONDITIONAL_CHECK_FAILED, EmailEntity } from './entities.js';
 import type {
   CreateInboundEmailInput,
@@ -45,6 +46,8 @@ function toRow(item: Record<string, unknown>): GetEmailOutput {
   }
   return { ...(item as unknown as CreateSentEmailInput), direction: 'sent', sk };
 }
+
+const logger = getLogger('DdbEmailsDao');
 
 type SentSummaryFields = Omit<
   Extract<EmailSummary, { readonly direction: 'sent' }>,
@@ -211,7 +214,12 @@ export class DdbEmailsDao implements EmailsDao {
         throw err;
       }
       // Until the index is readable, serve the page from the table: same keys, same order,
-      // same paging — just larger reads. No list outage while a new index backfills.
+      // same paging — just larger reads. No list outage while a new index backfills. Logged,
+      // so a fallback that outlasts a deploy (a renamed or missing index) is visible.
+      logger.warn(
+        `List index "${EMAIL_LIST_INDEX_NAME}" not readable; listing from the table.`,
+        err,
+      );
       items = await this.queryPartition(input);
     }
     return { emails: items.map((item) => toSummary(item, input.direction)) };
