@@ -11,8 +11,8 @@
  * {@link AttachmentUploadService}) — never as bytes in the request. Each is copied once to its
  * permanent key, `attachments/sent/<id>/<index>`. Small ones are also embedded in the MIME
  * (first fit, in request order, while the message's embedded total stays within budget); the
- * rest get a download token and a `GET /d/{token}` link appended to the body (#14). The same routing applies to REST and MCP
- * callers because both send through this one service.
+ * rest get a download token and a `GET /d/{token}` link appended to the body (#14). The same
+ * routing applies to REST and MCP callers because both send through this one service.
  */
 import {
   DEFAULT_EMBED_ATTACHMENT_BYTES,
@@ -207,9 +207,9 @@ export class EmailService {
 
     // Write-before-send (#29), FAIL-CLOSED: with the attachments already copied (above),
     // archive the EXACT composed MIME and the body (inline, or `bodies/sent/<id>.json`), then
-    // record the attempt as `status:'sending'` — all BEFORE SES. A failure in any throws (no send), so we never send a message we couldn't
-    // archive + record; the caller can retry with a fresh id. Orphan objects from a later
-    // failure are harmless (RETAINed).
+    // record the attempt as `status:'sending'` — all BEFORE SES. A failure in any throws (no
+    // send), so we never send a message we couldn't archive + record; the caller can retry with
+    // a fresh id. Orphan objects from a later failure are harmless (RETAINed).
     await this.objectStore.put(rawS3Key, raw);
     const record: CreateSentEmailInput = {
       id,
