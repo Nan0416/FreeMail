@@ -643,11 +643,57 @@ describe('EmailService.send — embed or link (#14)', () => {
         ttl: Math.floor(Date.parse(expiresAt) / 1000),
         revoked: false,
         downloadCount: 0,
+        sender: 'me@example.com',
       },
     ]);
     expect(setup.mimeInputs[0]?.text).toContain('https://api.example.test/d/tok-0');
     // The sender's own copy (Sent folder) points at the same permanent key, without a token.
     expect(setup.emails.records[0]?.attachments?.[0]?.s3Key).toBe('attachments/sent/id-1/0');
+  });
+
+  it('records which recipients are your own addresses on the token (to/cc/bcc, lowercased)', async () => {
+    const setup = makeService();
+    const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
+
+    await setup.service.send(
+      request({
+        from: 'Me@Example.com',
+        to: ['friend@other.com', 'Team@example.com'],
+        // A subdomain address never comes back in (inbound covers exactly the domain).
+        cc: ['ops@mail.example.com', 'ops@example.com'],
+        bcc: ['team@example.com', 'boss@elsewhere.org'],
+        attachments: [{ uploadId: big }],
+      }),
+    );
+
+    expect(setup.tokens.created[0]).toMatchObject({
+      sender: 'me@example.com',
+      ownDomainRecipients: ['team@example.com', 'ops@example.com'],
+    });
+  });
+
+  it('counts a bcc-only own address as an own-domain recipient', async () => {
+    const setup = makeService();
+    const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
+
+    await setup.service.send(
+      request({
+        to: ['friend@other.com'],
+        bcc: ['me2@example.com'],
+        attachments: [{ uploadId: big }],
+      }),
+    );
+
+    expect(setup.tokens.created[0]?.ownDomainRecipients).toEqual(['me2@example.com']);
+  });
+
+  it('records no own-domain recipients when every recipient is elsewhere', async () => {
+    const setup = makeService();
+    const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
+
+    await setup.service.send(request({ attachments: [{ uploadId: big }] }));
+
+    expect(setup.tokens.created[0]).not.toHaveProperty('ownDomainRecipients');
   });
 
   it('links into an HTML-only body with an escaped anchor', async () => {

@@ -45,6 +45,7 @@ import {
 } from './inbound-limits.js';
 import { normalizeAddressList, normalizeFrom, sanitizeSubject } from './sanitize.js';
 import { BodyLimiter, RawByteLimiter } from './stream-limits.js';
+import { dmarcPassDomain } from './sender-auth.js';
 import { extractVerdicts, type Verdicts } from './verdicts.js';
 
 /**
@@ -71,6 +72,11 @@ export interface ParsedInbound {
   /** The `Date:` header as ISO, if present and parseable. Display-only, attacker-controlled. */
   readonly headerDate?: string;
   readonly verdicts: Verdicts;
+  /**
+   * The From domain SES's own DMARC check passed for (see `sender-auth.ts`); absent when it
+   * didn't pass, or SES reported none.
+   */
+  readonly dmarcPassDomain?: string;
   /** Whether attachments were extracted / body retained (parse ok AND virus `PASS`). */
   readonly exposed: boolean;
   /** Plain-text body, retained only when exposed — the stored body + the snippet source. */
@@ -175,6 +181,7 @@ export function parseInbound(
     let pending = 0;
 
     let verdicts: Verdicts | undefined;
+    let authenticatedDomain: string | undefined;
     let exposed = false;
 
     let from = '';
@@ -195,6 +202,7 @@ export function parseInbound(
       }
       const lines: HeaderLine[] = parseHeaderLines(bodyLimiter.rootHeaderBlock);
       verdicts = extractVerdicts(lines);
+      authenticatedDomain = dmarcPassDomain(lines);
       // Own archived sent MIME has no verdict header → assumeExposed retains the body;
       // inbound mail is gated on an affirmative virus PASS.
       exposed = (options.assumeExposed ?? false) || verdicts.virusVerdict === 'PASS';
@@ -221,6 +229,7 @@ export function parseInbound(
         subject,
         headerDate,
         verdicts: verdicts!,
+        ...(authenticatedDomain !== undefined ? { dmarcPassDomain: authenticatedDomain } : {}),
         exposed: exposed && parseStatus === 'ok',
         textBody: exposed && parseStatus === 'ok' ? textBody : undefined,
         htmlBody: exposed && parseStatus === 'ok' ? htmlBody : undefined,

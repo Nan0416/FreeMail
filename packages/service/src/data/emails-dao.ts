@@ -136,13 +136,19 @@ export type InboundParseStatus = 'ok' | 'oversize' | 'limit_exceeded' | 'parse_f
  * of the (opaque) S3 key.
  */
 export interface InboundAttachmentDescriptor {
-  /** Stable per-message id (the MIME part index). */
+  /**
+   * Stable per-message id: the MIME part index, or `link-<n>` for a file one of your own links
+   * named.
+   */
   readonly id: string;
   /** Original, sanitized filename — metadata only, never used in the S3 key. */
   readonly filename: string;
   readonly contentType: string;
   readonly sizeBytes: number;
-  /** Server-side S3 pointer (`attachments/inbound/<id>/<partIndex>`). Never exposed by the read API. */
+  /**
+   * Server-side S3 pointer — `attachments/inbound/<id>/<partIndex>`, or a linked file's sent copy
+   * `attachments/sent/<id>/<n>`. Never exposed by the read API.
+   */
   readonly s3Key: string;
 }
 

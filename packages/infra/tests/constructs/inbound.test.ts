@@ -19,7 +19,7 @@ function synth(emailDomain = 'mail.example.com', zoneName = 'example.com'): Temp
   });
   const hostedZone = new HostedZone(stack, 'Zone', { zoneName });
   const mailBucket = new Bucket(stack, 'MailBucket');
-  new InboundConstruct(stack, 'Inbound', {
+  const inbound = new InboundConstruct(stack, 'Inbound', {
     hostedZone,
     emailDomain,
     region: 'us-east-1',
@@ -27,7 +27,14 @@ function synth(emailDomain = 'mail.example.com', zoneName = 'example.com'): Temp
     emailsTable: emailsTable(stack),
     quarantineBucket: new Bucket(stack, 'QuarantineBucket'),
   });
+  inbound.linkOwnDownloads(tokensTable(stack), 'https://api.example.com');
   return Template.fromStack(stack);
+}
+
+function tokensTable(stack: Stack): Table {
+  return new Table(stack, 'DownloadTokensTable', {
+    partitionKey: { name: 'token', type: AttributeType.STRING },
+  });
 }
 
 describe('InboundConstruct', () => {
@@ -121,6 +128,21 @@ describe('InboundConstruct', () => {
       quarantineBucket: new Bucket(stack, 'QuarantineBucket'),
     });
     expect(inbound.ruleSet.receiptRuleSetName).toBeTruthy();
+  });
+
+  it('fails the synth when the token lookup is never wired (the parser would throw on every message)', () => {
+    const stack = new Stack(new App(), 'TestStack', {
+      env: { region: 'us-east-1', account: '111111111111' },
+    });
+    new InboundConstruct(stack, 'Inbound', {
+      hostedZone: new HostedZone(stack, 'Zone', { zoneName: 'example.com' }),
+      emailDomain: 'mail.example.com',
+      region: 'us-east-1',
+      mailBucket: new Bucket(stack, 'MailBucket'),
+      emailsTable: emailsTable(stack),
+      quarantineBucket: new Bucket(stack, 'QuarantineBucket'),
+    });
+    expect(() => Template.fromStack(stack)).toThrow(/linkOwnDownloads/);
   });
 
   describe('parser pipeline', () => {

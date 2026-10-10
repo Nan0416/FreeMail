@@ -154,7 +154,7 @@ export type GetEmailServiceResponse = EmailDetail;
 
 export interface GetAttachmentUrlServiceRequest {
   readonly handle: string;
-  /** The attachment's stable per-message id (its MIME part index). */
+  /** The attachment's stable per-message id (a MIME part index, or `link-<n>`). */
   readonly attachmentId: string;
 }
 

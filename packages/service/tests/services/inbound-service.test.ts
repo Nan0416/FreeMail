@@ -10,12 +10,20 @@ import type {
   QueryEmailsByDirectionOutput,
   UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
+import type {
+  ClaimDownloadTokenOutput,
+  CreateDownloadTokenOutput,
+  DownloadTokensDao,
+  GetDownloadTokenInput,
+  GetDownloadTokenOutput,
+} from '../../src/data/download-tokens-dao.js';
 import type { InboundObjectStore, ObjectHead } from '../../src/facades/s3-inbound-object-store.js';
 import type { MailBodyContent, MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
 import type { QuarantineStore } from '../../src/facades/s3-quarantine-store.js';
 import { MAX_INLINE_BODY_BYTES } from '../../src/services/email-body-storage.js';
 import { MAX_ATTACHMENTS, MAX_HEADER_BLOCK_BYTES } from '../../src/utils/inbound-limits.js';
 import { ATTACHMENTS_PREFIX, InboundProcessor } from '../../src/services/inbound-service.js';
+import { OwnLinkAttachments } from '../../src/services/own-link-attachments.js';
 
 const RECEIVED = new Date('2026-05-01T09:30:00.000Z');
 
@@ -576,5 +584,151 @@ describe('InboundProcessor', () => {
       }),
     ).rejects.toThrow('s3 put failed');
     expect(repo.inbound).toEqual([]); // no row committed on an infra failure
+  });
+});
+
+describe('InboundProcessor — your own download links become attachments', () => {
+  const BASE = 'https://abc123.execute-api.us-east-1.amazonaws.com';
+  const TOKEN = `T${'0'.repeat(42)}`;
+
+  function stored(over: Partial<GetDownloadTokenOutput> = {}): GetDownloadTokenOutput {
+    return {
+      token: TOKEN,
+      s3Key: 'attachments/sent/e1/1',
+      filename: 'big.zip',
+      contentType: 'application/zip',
+      sizeBytes: 50_000_000,
+      emailId: 'e1',
+      createdAt: '2026-05-01T09:29:00.000Z',
+      expiresAt: '2026-05-31T09:29:00.000Z',
+      ttl: 1_780_219_740,
+      revoked: false,
+      downloadCount: 0,
+      sender: 'me@example.com',
+      ownDomainRecipients: ['team@example.com'],
+      ...over,
+    };
+  }
+
+  class FakeTokens implements DownloadTokensDao {
+    readonly lookups: string[] = [];
+    constructor(private readonly record: GetDownloadTokenOutput) {}
+    createDownloadToken(): Promise<CreateDownloadTokenOutput> {
+      return Promise.resolve({});
+    }
+    claimDownloadToken(): Promise<ClaimDownloadTokenOutput | null> {
+      throw new Error('inbound must never claim a token');
+    }
+    getDownloadToken(input: GetDownloadTokenInput): Promise<GetDownloadTokenOutput | null> {
+      this.lookups.push(input.token);
+      return Promise.resolve(input.token === this.record.token ? this.record : null);
+    }
+  }
+
+  /** SES's own DMARC result for the message (it prepends this above the original headers). */
+  const DMARC_PASS = 'Authentication-Results: amazonses.com; dmarc=pass header.from=example.com;';
+
+  /** Your own send, as it comes back in: an embedded file plus a link to a large one. */
+  function ownSend(spam = 'PASS', virus = 'PASS', auth = DMARC_PASS): string {
+    return [
+      `X-SES-Spam-Verdict: ${spam}`,
+      `X-SES-Virus-Verdict: ${virus}`,
+      auth,
+      'From: Me <me@example.com>',
+      'To: team@example.com',
+      'Subject: files',
+      'Content-Type: multipart/mixed; boundary="B"',
+      '',
+      '--B',
+      'Content-Type: text/plain; charset=utf-8',
+      '',
+      `Attachments:\r\n- big.zip: ${BASE}/d/${TOKEN}`,
+      '--B',
+      'Content-Type: application/pdf',
+      'Content-Disposition: attachment; filename="small.pdf"',
+      'Content-Transfer-Encoding: base64',
+      '',
+      'SGVsbG8gUERG',
+      '--B--',
+      '',
+    ].join('\r\n');
+  }
+
+  async function ingest(raw: string, tokens: FakeTokens): Promise<CreateInboundEmailInput> {
+    const store = new FakeStore();
+    const repo = new FakeDao();
+    seed(store, 'OWN', raw);
+    await new InboundProcessor(
+      store,
+      repo,
+      new FakeBodyStore(),
+      new FakeQuarantine(),
+      new OwnLinkAttachments(tokens, BASE),
+    ).process({ rawKey: 'inbound/OWN' });
+    return repo.inbound[0]!;
+  }
+
+  it('adds the linked file after the embedded one, pointing at the sent copy', async () => {
+    const row = await ingest(ownSend(), new FakeTokens(stored()));
+
+    expect(row.attachments.map((a) => [a.id, a.filename, a.s3Key])).toEqual([
+      ['0', 'small.pdf', `${ATTACHMENTS_PREFIX}OWN/0`],
+      ['link-0', 'big.zip', 'attachments/sent/e1/1'],
+    ]);
+    expect(row.attachmentCount).toBe(2);
+    expect(row.hasAttachments).toBe(true);
+  });
+
+  it('carries a link-only message’s file as its one attachment (every file over 3 MB is linked)', async () => {
+    const row = await ingest(
+      [
+        'X-SES-Spam-Verdict: PASS',
+        'X-SES-Virus-Verdict: PASS',
+        DMARC_PASS,
+        'From: me@example.com',
+        'To: team@example.com',
+        'Subject: big file',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        `Attachments:\r\n- big.zip: ${BASE}/d/${TOKEN}`,
+        '',
+      ].join('\r\n'),
+      new FakeTokens(stored()),
+    );
+    expect(row.attachments.map((a) => [a.id, a.s3Key])).toEqual([
+      ['link-0', 'attachments/sent/e1/1'],
+    ]);
+    expect(row.attachmentCount).toBe(1);
+    expect(row.hasAttachments).toBe(true);
+  });
+
+  it('never looks links up when the From is not DMARC-authenticated (it could be spoofed)', async () => {
+    const tokens = new FakeTokens(stored());
+    const row = await ingest(
+      ownSend(
+        'PASS',
+        'PASS',
+        'Authentication-Results: amazonses.com; dmarc=fail header.from=example.com;',
+      ),
+      tokens,
+    );
+    expect(tokens.lookups).toEqual([]);
+    expect(row.attachments.map((a) => a.id)).toEqual(['0']);
+  });
+
+  it('leaves the link alone when its token does not vouch for this message', async () => {
+    const row = await ingest(ownSend(), new FakeTokens(stored({ sender: 'other@example.com' })));
+    expect(row.attachments.map((a) => a.id)).toEqual(['0']);
+    expect(row.attachmentCount).toBe(1);
+  });
+
+  it.each([
+    ['flagged as spam', ownSend('FAIL', 'PASS')],
+    ['not virus-clean (Errors folder)', ownSend('PASS', 'FAIL')],
+  ])('never looks links up for a message %s', async (_label, raw) => {
+    const tokens = new FakeTokens(stored());
+    const row = await ingest(raw, tokens);
+    expect(tokens.lookups).toEqual([]);
+    expect(row.attachments.some((a) => a.id.startsWith('link-'))).toBe(false);
   });
 });

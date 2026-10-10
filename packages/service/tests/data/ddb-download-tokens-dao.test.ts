@@ -1,4 +1,9 @@
-import { PutCommand, UpdateCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import {
+  GetCommand,
+  PutCommand,
+  UpdateCommand,
+  DynamoDBDocumentClient,
+} from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { DdbDownloadTokensDao } from '../../src/data/ddb-download-tokens-dao.js';
 import type { ClaimDownloadTokenOutput } from '../../src/data/download-tokens-dao.js';
@@ -31,7 +36,13 @@ class FakeDoc {
   readonly store = new Map<string, Record<string, unknown>>();
   readonly updateInputs: UpdateCommand['input'][] = [];
 
-  send(command: PutCommand | UpdateCommand): Promise<{ Attributes?: Record<string, unknown> }> {
+  send(
+    command: GetCommand | PutCommand | UpdateCommand,
+  ): Promise<{ Attributes?: Record<string, unknown>; Item?: Record<string, unknown> }> {
+    if (command instanceof GetCommand) {
+      const item = this.store.get(String(command.input.Key?.token));
+      return Promise.resolve(item ? { Item: { ...item } } : {});
+    }
     if (command instanceof PutCommand) {
       const item = command.input.Item as Record<string, unknown>;
       const key = String(item.token);
@@ -109,6 +120,52 @@ describe('DdbDownloadTokensDao.create', () => {
     await dao.createDownloadToken(record({ token: 'b', maxDownloads: 3 }));
     expect(doc.store.get('a')).not.toHaveProperty('maxDownloads');
     expect(doc.store.get('b')).toMatchObject({ maxDownloads: 3 });
+  });
+});
+
+describe('DdbDownloadTokensDao — sender + own-domain recipients', () => {
+  it('stores and reads back who sent the message and its own-domain recipients', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbDownloadTokensDao(asDocClient(doc), 'tokens');
+    await dao.createDownloadToken(
+      record({ sender: 'me@example.com', ownDomainRecipients: ['team@example.com'] }),
+    );
+
+    expect(await dao.getDownloadToken({ token: 'tok-1' })).toEqual(
+      record({ sender: 'me@example.com', ownDomainRecipients: ['team@example.com'] }),
+    );
+  });
+
+  it('omits an empty recipient list, and a token without either field reads back without them', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbDownloadTokensDao(asDocClient(doc), 'tokens');
+    await dao.createDownloadToken(record({ token: 'a', ownDomainRecipients: [] }));
+    await dao.createDownloadToken(record({ token: 'b' }));
+
+    expect(doc.store.get('a')).not.toHaveProperty('ownDomainRecipients');
+    const legacy = await dao.getDownloadToken({ token: 'b' });
+    expect(legacy).not.toHaveProperty('sender');
+    expect(legacy).not.toHaveProperty('ownDomainRecipients');
+  });
+});
+
+describe('DdbDownloadTokensDao.get', () => {
+  it('reads a token without claiming it — no download is counted, whatever its gates', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbDownloadTokensDao(asDocClient(doc), 'tokens');
+    await dao.createDownloadToken(record({ revoked: true }));
+
+    expect(await dao.getDownloadToken({ token: 'tok-1' })).toMatchObject({
+      revoked: true,
+      downloadCount: 0,
+    });
+    expect(doc.updateInputs).toHaveLength(0);
+    expect(doc.store.get('tok-1')?.downloadCount).toBe(0);
+  });
+
+  it('answers null for an unknown token', async () => {
+    const dao = new DdbDownloadTokensDao(asDocClient(new FakeDoc()), 'tokens');
+    expect(await dao.getDownloadToken({ token: 'nope' })).toBeNull();
   });
 });
 

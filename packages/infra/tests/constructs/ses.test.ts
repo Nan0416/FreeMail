@@ -36,12 +36,13 @@ function synthWithInbound(emailDomain = 'mail.example.com', zoneName = 'example.
     partitionKey: { name: 'pk', type: AttributeType.STRING },
     sortKey: { name: 'sk', type: AttributeType.STRING },
   });
-  new SesConstruct(stack, 'Ses', {
+  const ses = new SesConstruct(stack, 'Ses', {
     hostedZone,
     emailDomain,
     region: 'us-east-1',
     inbound: { mailBucket, emailsTable, quarantineBucket: new Bucket(stack, 'QuarantineBucket') },
   });
+  linkOwnDownloads(stack, ses);
   return Template.fromStack(stack);
 }
 
@@ -55,14 +56,23 @@ function synthCreateWithInbound(emailDomain = 'mail.example.com', zoneName = 'ex
     partitionKey: { name: 'pk', type: AttributeType.STRING },
     sortKey: { name: 'sk', type: AttributeType.STRING },
   });
-  new SesConstruct(stack, 'Ses', {
+  const ses = new SesConstruct(stack, 'Ses', {
     hostedZone,
     emailDomain,
     region: 'us-east-1',
     sesIdentityMode: 'create',
     inbound: { mailBucket, emailsTable, quarantineBucket: new Bucket(stack, 'QuarantineBucket') },
   });
+  linkOwnDownloads(stack, ses);
   return Template.fromStack(stack);
+}
+
+/** The stack wires the parser's token lookup once the API exists; tests stand in for it. */
+function linkOwnDownloads(stack: Stack, ses: SesConstruct): void {
+  const tokens = new Table(stack, 'DownloadTokensTable', {
+    partitionKey: { name: 'token', type: AttributeType.STRING },
+  });
+  ses.inbound?.linkOwnDownloads(tokens, 'https://api.example.com');
 }
 
 describe('dmarcRecordValue', () => {

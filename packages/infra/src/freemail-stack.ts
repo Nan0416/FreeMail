@@ -67,6 +67,9 @@ export class FreeMailStack extends Stack {
       appOrigin,
       ...(props.config.attachments ? { attachments: props.config.attachments } : {}),
     });
+    // Received copies of your own sends recognize their download links (built from the API's
+    // endpoint) and carry the linked files as attachments.
+    ses.inbound?.linkOwnDownloads(data.downloadTokensTable, api.httpApi.apiEndpoint);
 
     // The React SPA on CloudFront + S3, learning the API origin at runtime. SPA-only
     // as of #47 — the `/api/*` proxy behavior is gone and the browser calls the API

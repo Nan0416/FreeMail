@@ -19,11 +19,21 @@
  * stored, or (for a message whose content can't be extracted) the raw MIME is copied into
  * quarantine. A message that never gets a row (its ingest dead-lettered) keeps its raw copy
  * indefinitely: it is the only copy of that message.
+ *
+ * A readable message that links this deployment's own download links (`/d/{token}`) — a file
+ * one of your addresses sent another — also carries each linked file as an attachment, pointing
+ * at the sent copy (see {@link OwnLinkAttachments}).
  */
 import { Readable } from 'node:stream';
-import type { EmailsDao, CreateInboundEmailInput, InboundVerdict } from '../data/emails-dao.js';
+import type {
+  EmailsDao,
+  CreateInboundEmailInput,
+  InboundAttachmentDescriptor,
+  InboundVerdict,
+} from '../data/emails-dao.js';
 import type { InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import type { MailBodyStore } from '../facades/s3-mail-body-store.js';
+import type { OwnLinkAttachments } from './own-link-attachments.js';
 import type { QuarantineStore } from '../facades/s3-quarantine-store.js';
 import { validateInboundEventKey } from '../utils/event-key.js';
 import { rootHeaderBlock } from '../utils/inbound-headers.js';
@@ -82,6 +92,8 @@ export class InboundProcessor {
     private readonly emails: EmailsDao,
     private readonly bodies: MailBodyStore,
     private readonly quarantine: QuarantineStore,
+    /** Absent → links stay links (no attachment is added for them). */
+    private readonly ownLinks?: OwnLinkAttachments,
   ) {}
 
   /** Process the object identified by a raw (still-encoded) S3 event key. */
@@ -150,7 +162,8 @@ export class InboundProcessor {
     parsed: ParsedInbound,
   ): Promise<ProcessInboundServiceResponse> {
     const exposure = decideExposure(parsed.verdicts, parsed.parseStatus);
-    const record = this.record(base, parsed, exposure);
+    const linked = await this.linkedAttachments(base, parsed, exposure);
+    const record = this.record(base, parsed, exposure, linked);
     let response: ProcessInboundServiceResponse;
     if (exposure.exposeContent) {
       // Store the body exactly like the snippet and attachments — only for exposable content —
@@ -204,6 +217,27 @@ export class InboundProcessor {
     return { ...parsed, exposed: false, attachmentCount: 0, attachments: [] };
   }
 
+  /**
+   * Files this message links from this deployment's own sends, as attachments — only for mail
+   * that is readable and not flagged as spam: anything else keeps its links as plain links.
+   */
+  private async linkedAttachments(
+    base: RecordBase,
+    parsed: ParsedInbound,
+    exposure: Exposure,
+  ): Promise<InboundAttachmentDescriptor[]> {
+    if (this.ownLinks === undefined || !exposure.exposeContent || exposure.quarantined) {
+      return [];
+    }
+    const resolved = await this.ownLinks.resolve({
+      bodies: [parsed.textBody, parsed.htmlBody],
+      from: parsed.from,
+      authenticatedDomain: parsed.dmarcPassDomain,
+      receivedAt: base.receivedAt,
+    });
+    return [...resolved.attachments];
+  }
+
   /** Conditional-put the row (the commit marker) and map the outcome. */
   private async commit(
     record: CreateInboundEmailInput,
@@ -230,6 +264,7 @@ export class InboundProcessor {
     base: RecordBase,
     parsed: ParsedInbound,
     exposure: Exposure,
+    linked: readonly InboundAttachmentDescriptor[],
   ): CreateInboundEmailInput {
     const snippet = exposure.exposeContent ? this.snippet(parsed) : undefined;
     return {
@@ -243,9 +278,9 @@ export class InboundProcessor {
       snippet: snippet || undefined,
       receivedAt: base.receivedAt,
       headerDate: parsed.headerDate,
-      hasAttachments: parsed.attachmentCount > 0,
-      attachmentCount: parsed.attachmentCount,
-      attachments: exposure.exposeContent ? parsed.attachments : [],
+      hasAttachments: parsed.attachmentCount + linked.length > 0,
+      attachmentCount: parsed.attachmentCount + linked.length,
+      attachments: exposure.exposeContent ? [...parsed.attachments, ...linked] : [],
       spamVerdict: parsed.verdicts.spamVerdict,
       virusVerdict: parsed.verdicts.virusVerdict,
       parseStatus: parsed.parseStatus,
