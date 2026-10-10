@@ -25,6 +25,7 @@ function synth(emailDomain = 'mail.example.com', zoneName = 'example.com'): Temp
     region: 'us-east-1',
     mailBucket,
     emailsTable: emailsTable(stack),
+    quarantineBucket: new Bucket(stack, 'QuarantineBucket'),
   });
   return Template.fromStack(stack);
 }
@@ -117,6 +118,7 @@ describe('InboundConstruct', () => {
       region: 'us-east-1',
       mailBucket,
       emailsTable: emailsTable(stack),
+      quarantineBucket: new Bucket(stack, 'QuarantineBucket'),
     });
     expect(inbound.ruleSet.receiptRuleSetName).toBeTruthy();
   });

@@ -22,6 +22,7 @@ import {
   type AttachmentDownloadResponse,
   type EmailAttachmentInfo,
   type EmailDetail,
+  type EmailListFilter,
   type EmailListItem,
   type ListEmailsResponse,
   MAX_EMAIL_RESPONSE_BYTES,
@@ -30,8 +31,7 @@ import {
 } from '@freemail/shared';
 import {
   type EmailsDao,
-  INBOUND_PARTITION,
-  SENT_PARTITION,
+  FAILED_PARTITION,
   type EmailSummary,
   type GetEmailOutput,
   type InboundAttachmentDescriptor,
@@ -82,6 +82,11 @@ export type ParseInbound = (
 export interface EmailReadServiceDeps {
   readonly emailsDao: EmailsDao;
   readonly presigner: AttachmentPresigner;
+  /**
+   * Presigns the originals of Errors-folder messages, which live in the quarantine bucket.
+   * Absent (the MCP server, which has no original-download tool), those are not offered.
+   */
+  readonly quarantinePresigner?: AttachmentPresigner;
   /** Reads bodies stored outside the row (`bodies/...`). */
   readonly bodies: MailBodyStore;
   readonly rawMime: RawMimeSource;
@@ -90,7 +95,7 @@ export interface EmailReadServiceDeps {
 }
 
 export interface ListEmailsServiceRequest {
-  readonly direction?: 'sent' | 'inbound';
+  readonly direction?: EmailListFilter;
   readonly limit: number;
   readonly cursor?: string;
 }
@@ -133,9 +138,9 @@ const NOOP_SINK: AttachmentSink = {
     }),
 };
 
-function refForRow(row: Pick<EmailSummary, 'direction' | 'sk'>): { pk: string; sk: string } {
+function refForRow(row: Pick<EmailSummary, 'pk' | 'sk'>): { pk: string; sk: string } {
   return {
-    pk: row.direction === 'inbound' ? INBOUND_PARTITION : SENT_PARTITION,
+    pk: row.pk,
     sk: row.sk,
   };
 }
@@ -160,6 +165,7 @@ export interface GetRawUrlServiceRequest {
 export class EmailReadService {
   private readonly emailsDao: EmailsDao;
   private readonly presigner: AttachmentPresigner;
+  private readonly quarantinePresigner: AttachmentPresigner | undefined;
   private readonly bodies: MailBodyStore;
   private readonly rawMime: RawMimeSource;
   private readonly now: () => Date;
@@ -168,6 +174,7 @@ export class EmailReadService {
   constructor(deps: EmailReadServiceDeps) {
     this.emailsDao = deps.emailsDao;
     this.presigner = deps.presigner;
+    this.quarantinePresigner = deps.quarantinePresigner;
     this.bodies = deps.bodies;
     this.rawMime = deps.rawMime;
     this.now = deps.now ?? (() => new Date());
@@ -232,17 +239,18 @@ export class EmailReadService {
   /**
    * Mint a presigned URL that downloads a message's original raw MIME as `<subject>.eml`. Only
    * a message whose detail reports `rawAvailable` resolves; anything else is a 404 (a received
-   * message that didn't pass the virus scan, a sent row without an archive). The S3 key is
-   * used server-side only.
+   * message that didn't pass the virus scan or has aged out, a sent row without an archive).
+   * An Errors-folder original comes from the quarantine bucket, flagged `rawSuspicious` on the
+   * detail when it lacks a virus `PASS`. The S3 key is used server-side only.
    */
   async getRawUrl(request: GetRawUrlServiceRequest): Promise<RawEmailDownloadResponse> {
     const row = await this.loadRow(request.handle);
-    const key = rawDownloadKey(row, this.now());
-    if (key === undefined) {
+    const original = this.rawDownload(row);
+    if (original === undefined) {
       throw emailErrors.notFound('The original message is not available.');
     }
-    const url = await this.presigner.presign({
-      key,
+    const url = await original.presigner.presign({
+      key: original.key,
       // Forced download, like attachments: the raw MIME is never served as a renderable type.
       contentType: 'application/octet-stream',
       contentDisposition: contentDispositionForDownload(emlFilename(row.subject)),
@@ -367,6 +375,8 @@ export class EmailReadService {
       quarantined: row.quarantined,
       spamVerdict: row.spamVerdict,
       virusVerdict: row.virusVerdict,
+      parseStatus: row.parseStatus,
+      ...(row.pk === FAILED_PARTITION ? { failed: true } : {}),
     };
   }
 
@@ -387,13 +397,15 @@ export class EmailReadService {
         date: row.sentAt,
         ...(row.status !== undefined ? { status: row.status } : {}),
         ...body,
-        rawAvailable: rawDownloadKey(row, this.now()) !== undefined,
+        rawAvailable: this.rawDownload(row) !== undefined,
         attachments: rowAttachments(row).map(publicDescriptor),
         hasAttachments: row.attachmentCount > 0,
         attachmentCount: row.attachmentCount,
         sizeBytes: row.sizeBytes,
       };
     }
+    const failed = row.pk === FAILED_PARTITION;
+    const rawAvailable = this.rawDownload(row) !== undefined;
     return {
       id: handle,
       direction: 'inbound',
@@ -405,7 +417,9 @@ export class EmailReadService {
       date: row.receivedAt,
       ...(row.headerDate !== undefined ? { headerDate: row.headerDate } : {}),
       ...body,
-      rawAvailable: rawDownloadKey(row, this.now()) !== undefined,
+      rawAvailable,
+      // Downloadable, but without an affirmative virus PASS: the client must warn first.
+      ...(rawAvailable && row.virusVerdict !== 'PASS' ? { rawSuspicious: true } : {}),
       attachments: row.attachments.map(publicDescriptor),
       hasAttachments: row.hasAttachments,
       attachmentCount: row.attachmentCount,
@@ -413,38 +427,55 @@ export class EmailReadService {
       spamVerdict: row.spamVerdict,
       virusVerdict: row.virusVerdict,
       parseStatus: row.parseStatus,
+      ...(failed ? { failed: true } : {}),
       sizeBytes: row.sizeBytes,
     };
+  }
+
+  /**
+   * Where a message's downloadable original lives, or undefined when it may not be downloaded.
+   *
+   * - Sent: our own archive, if the row has one (permanent).
+   * - Errors folder: its quarantined copy — offered whatever the verdict (it is the only way to
+   *   recover the content), with the detail flagging a non-PASS one as suspicious.
+   * - Received, fully processed (a stored body): only on an affirmative virus `PASS` — spam-
+   *   flagged mail stays downloadable, the original is the point — and only while SES's raw
+   *   copy is retained (the lifecycle rule expires tagged copies).
+   * - Received before stored bodies: its untagged raw copy, kept forever, whatever the verdict —
+   *   flagged suspicious without a virus PASS.
+   */
+  private rawDownload(
+    row: GetEmailOutput,
+  ): { readonly key: string; readonly presigner: AttachmentPresigner } | undefined {
+    if (row.direction === 'sent') {
+      return row.rawS3Key ? { key: row.rawS3Key, presigner: this.presigner } : undefined;
+    }
+    if (row.pk === FAILED_PARTITION) {
+      return row.quarantineS3Key && this.quarantinePresigner
+        ? { key: row.quarantineS3Key, presigner: this.quarantinePresigner }
+        : undefined;
+    }
+    // A row without a stored body predates stored bodies: its raw copy is untagged and kept
+    // forever — the only way to recover the message — so offer it whatever the verdict, like an
+    // Errors-folder original (the detail flags one without a virus PASS as suspicious).
+    if (row.body === undefined) {
+      return { key: row.rawS3Key, presigner: this.presigner };
+    }
+    // A row with a stored body was fully extracted (virus PASS by construction), so ingest tagged
+    // its raw copy and the lifecycle rule expires it after the window: offer it only until then.
+    if (row.virusVerdict !== 'PASS') {
+      return undefined;
+    }
+    const ageMs = this.now().getTime() - Date.parse(row.receivedAt);
+    return ageMs < INBOUND_RAW_RETENTION_DAYS * DAY_MS
+      ? { key: row.rawS3Key, presigner: this.presigner }
+      : undefined;
   }
 }
 
 /** A row's stored attachment descriptors; a sent row from before they were recorded has none. */
 function rowAttachments(row: GetEmailOutput): readonly InboundAttachmentDescriptor[] {
   return row.direction === 'inbound' ? row.attachments : (row.attachments ?? []);
-}
-
-/**
- * The S3 key of a message's downloadable original, or undefined when it may not be downloaded.
- * Sent: our own archive, if the row has one. Received: only on an affirmative virus `PASS` —
- * the same gate as attachments, so a download never hands out bytes the scan flagged or skipped
- * (spam-flagged and parse-failed-but-clean mail stay downloadable: the original is the point).
- */
-function rawDownloadKey(row: GetEmailOutput, now: Date): string | undefined {
-  if (row.direction === 'sent') {
-    return row.rawS3Key || undefined;
-  }
-  if (row.virusVerdict !== 'PASS') {
-    return undefined;
-  }
-  // A row with a stored body was fully extracted, so ingest tagged its raw copy and the mail
-  // bucket's lifecycle rule expires it after the retention window: offer it only until then.
-  // Every other raw copy is untagged and kept (clean mail that failed to parse, rows from
-  // before stored bodies) — it may be the only copy, so it stays downloadable.
-  if (row.body === undefined) {
-    return row.rawS3Key;
-  }
-  const ageMs = now.getTime() - Date.parse(row.receivedAt);
-  return ageMs < INBOUND_RAW_RETENTION_DAYS * DAY_MS ? row.rawS3Key : undefined;
 }
 
 /**

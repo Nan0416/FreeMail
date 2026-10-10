@@ -38,6 +38,8 @@ export interface InboundConstructProps {
   readonly mailBucket: Bucket;
   /** Email metadata index — the parser writes each received message here (`pk='INBOUND'`). */
   readonly emailsTable: Table;
+  /** A message whose content can't be extracted has its raw MIME copied here (never expires). */
+  readonly quarantineBucket: Bucket;
 }
 
 /** SES writes each received message under this prefix as `<prefix><messageId>`. */
@@ -94,7 +96,7 @@ export class InboundConstruct extends Construct {
     });
 
     this.activateRuleSet(this.ruleSet.receiptRuleSetName);
-    this.wireParser(props.mailBucket, props.emailsTable);
+    this.wireParser(props.mailBucket, props.emailsTable, props.quarantineBucket);
   }
 
   /**
@@ -109,7 +111,7 @@ export class InboundConstruct extends Construct {
    * treats malformed/oversized/over-limit messages as handled quarantine writes and
    * returns success, so a poison message can't spin forever.
    */
-  private wireParser(mailBucket: Bucket, emailsTable: Table): void {
+  private wireParser(mailBucket: Bucket, emailsTable: Table, quarantineBucket: Bucket): void {
     const dlq = new Queue(this, 'ParserDlq', {
       retentionPeriod: Duration.days(14),
     });
@@ -127,6 +129,7 @@ export class InboundConstruct extends Construct {
       environment: {
         EMAILS_TABLE: emailsTable.tableName,
         MAIL_BUCKET: mailBucket.bucketName,
+        QUARANTINE_BUCKET: quarantineBucket.bucketName,
       },
       logGroup: new LogGroup(this, 'ParserLogs', {
         retention: RetentionDays.THREE_MONTHS,
@@ -136,6 +139,8 @@ export class InboundConstruct extends Construct {
 
     // Read raw MIME + head + write extracted attachments + best-effort delete on cleanup.
     mailBucket.grantReadWrite(parser);
+    // Copy a failed message's raw MIME into quarantine (CopyObject: read source, put dest).
+    quarantineBucket.grantPut(parser);
     // Conditional put of the metadata row.
     emailsTable.grantWriteData(parser);
 

@@ -35,6 +35,8 @@ export interface InboundObjectStore {
    * (see `INBOUND_INGESTED_TAG`).
    */
   markIngested(key: string): Promise<void>;
+  /** Read at most the first `maxBytes` of an object (a ranged GET) — never the whole of it. */
+  getHead(key: string, maxBytes: number): Promise<Buffer>;
   /** Store an extracted attachment (always as a non-inline download). */
   putAttachment(key: string, body: Buffer): Promise<void>;
   /** Best-effort delete — used to clean up attachments written during a failed attempt. */
@@ -77,6 +79,16 @@ export class S3InboundObjectStore implements InboundObjectStore {
         Tagging: { TagSet: [{ Key: INBOUND_INGESTED_TAG.key, Value: INBOUND_INGESTED_TAG.value }] },
       }),
     );
+  }
+
+  async getHead(key: string, maxBytes: number): Promise<Buffer> {
+    const out = await this.client.send(
+      new GetObjectCommand({ Bucket: this.bucket, Key: key, Range: `bytes=0-${maxBytes - 1}` }),
+    );
+    if (!out.Body) {
+      return Buffer.alloc(0);
+    }
+    return Buffer.from(await out.Body.transformToByteArray());
   }
 
   async getStream(key: string): Promise<Readable> {

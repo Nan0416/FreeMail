@@ -100,7 +100,11 @@ const listEmailsInputSchema = {
   direction: z
     .string()
     .optional()
-    .describe('Optional filter: "sent" or "inbound". Omit for the merged newest-first timeline.'),
+    .describe(
+      'Optional filter: "sent", "inbound", or "failed" (received mail whose content could not ' +
+        'be extracted — a failed virus scan or parse; listed as inbound rows with failed: true). ' +
+        'Omit for the merged newest-first sent + inbound timeline.',
+    ),
   limit: z.number().optional().describe('Page size, 1–100 (default 25).'),
   cursor: z
     .string()
@@ -295,7 +299,9 @@ function listRow(email: EmailListItem): string {
   const who =
     email.direction === 'inbound' ? `from ${email.from}` : `to ${email.to.join(', ') || '(none)'}`;
   let flags = '';
-  if (email.direction === 'inbound' && email.quarantined) {
+  if (email.direction === 'inbound' && email.failed) {
+    flags = ' [failed: content not extracted]';
+  } else if (email.direction === 'inbound' && email.quarantined) {
     flags = ' [quarantined]';
   } else if (email.direction === 'sent' && email.status && email.status !== 'sent') {
     // Surface a not-yet-delivered send (`sending`/`send_failed`) so a failed send is visible.

@@ -40,7 +40,7 @@ function synthWithInbound(emailDomain = 'mail.example.com', zoneName = 'example.
     hostedZone,
     emailDomain,
     region: 'us-east-1',
-    inbound: { mailBucket, emailsTable },
+    inbound: { mailBucket, emailsTable, quarantineBucket: new Bucket(stack, 'QuarantineBucket') },
   });
   return Template.fromStack(stack);
 }
@@ -60,7 +60,7 @@ function synthCreateWithInbound(emailDomain = 'mail.example.com', zoneName = 'ex
     emailDomain,
     region: 'us-east-1',
     sesIdentityMode: 'create',
-    inbound: { mailBucket, emailsTable },
+    inbound: { mailBucket, emailsTable, quarantineBucket: new Bucket(stack, 'QuarantineBucket') },
   });
   return Template.fromStack(stack);
 }

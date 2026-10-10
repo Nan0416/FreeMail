@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { EmailDirection, EmailListItem } from '@freemail/shared';
+import type { EmailListFilter, EmailListItem } from '@freemail/shared';
 import { ApiError } from '../api/client.js';
 import { useAuth } from '../auth/auth-context.js';
 
@@ -22,11 +22,12 @@ export interface Mailbox {
 }
 
 /**
- * One folder's message list. `direction` undefined is the merged timeline (All mail).
+ * One folder's message list. `direction` undefined is the merged timeline (All mail); `failed`
+ * is the Errors folder.
  * A refresh keeps the current rows visible and swaps them in place, so the list never
  * flashes back to a skeleton once it has loaded.
  */
-export function useMailbox(direction: EmailDirection | undefined, enabled = true): Mailbox {
+export function useMailbox(direction: EmailListFilter | undefined, enabled = true): Mailbox {
   const auth = useAuth();
   const [state, setState] = useState<MailboxState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);

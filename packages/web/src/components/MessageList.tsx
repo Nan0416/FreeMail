@@ -23,6 +23,7 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { MailboxState } from '../hooks/use-mailbox.js';
+import { failureReason } from '../lib/email-reader.js';
 import { formatListDate } from '../lib/format.js';
 import type { ListView, QuickFilter, SortOrder } from '../lib/mail-filter.js';
 import { shortAddress } from '../lib/people.js';
@@ -297,13 +298,28 @@ function MessageRow(props: {
               <span className="text-muted-foreground"> — {props.email.snippet}</span>
             )}
           </span>
-          {props.email.quarantined && <RowTag tone="warning">Spam</RowTag>}
+          <QuarantineTag email={props.email} />
           {props.email.status === 'send_failed' && <RowTag tone="destructive">Failed</RowTag>}
           {props.email.status === 'sending' && <RowTag tone="muted">Sending</RowTag>}
         </span>
       </button>
     </li>
   );
+}
+
+/**
+ * Why a quarantined row is hidden: the failure (virus / parse) when its content was withheld,
+ * otherwise spam. A virus verdict other than PASS is shown as destructive.
+ */
+function QuarantineTag(props: { email: EmailListItem }): React.JSX.Element | null {
+  if (props.email.direction !== 'inbound' || !props.email.quarantined) {
+    return null;
+  }
+  const reason = failureReason(props.email);
+  if (reason) {
+    return <RowTag tone={reason.suspicious ? 'destructive' : 'warning'}>{reason.label}</RowTag>;
+  }
+  return <RowTag tone="warning">Spam</RowTag>;
 }
 
 function RowTag(props: {

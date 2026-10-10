@@ -19,6 +19,7 @@ import {
   type QueryCommandOutput,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
+import type { EmailListFilter } from '@freemail/shared';
 import { EMAIL_LIST_INDEX_NAME } from '@freemail/shared/storage';
 import { getLogger } from '../utils/logger.js';
 import { CONDITIONAL_CHECK_FAILED, EmailEntity } from './entities.js';
@@ -41,11 +42,12 @@ import type {
 
 /** Reconstruct the typed union row from a stored item (we wrote the shape, so trust `direction`). */
 function toRow(item: Record<string, unknown>): GetEmailOutput {
+  const pk = String(item.pk);
   const sk = String(item.sk);
   if (item.direction === 'inbound') {
-    return { ...(item as unknown as CreateInboundEmailInput), direction: 'inbound', sk };
+    return { ...(item as unknown as CreateInboundEmailInput), direction: 'inbound', pk, sk };
   }
-  return { ...(item as unknown as CreateSentEmailInput), direction: 'sent', sk };
+  return { ...(item as unknown as CreateSentEmailInput), direction: 'sent', pk, sk };
 }
 
 const logger = getLogger('DdbEmailsDao');
@@ -55,11 +57,11 @@ const INDEX_RECHECK_MS = 30_000;
 
 type SentSummaryFields = Omit<
   Extract<EmailSummary, { readonly direction: 'sent' }>,
-  'direction' | 'sk'
+  'direction' | 'pk' | 'sk'
 >;
 type InboundSummaryFields = Omit<
   Extract<EmailSummary, { readonly direction: 'inbound' }>,
-  'direction' | 'sk'
+  'direction' | 'pk' | 'sk'
 >;
 
 /**
@@ -67,12 +69,14 @@ type InboundSummaryFields = Omit<
  * The direction comes from the partition that was queried, never from a projected attribute,
  * so the list's merge and cursor can't be misled by a projection change.
  */
-function toSummary(item: Record<string, unknown>, direction: 'sent' | 'inbound'): EmailSummary {
+function toSummary(item: Record<string, unknown>, filter: EmailListFilter): EmailSummary {
+  const pk = String(item.pk);
   const sk = String(item.sk);
-  if (direction === 'inbound') {
-    return { ...(item as unknown as InboundSummaryFields), direction: 'inbound', sk };
+  // The Errors folder holds received mail: a `failed` row is still an inbound message.
+  if (filter !== 'sent') {
+    return { ...(item as unknown as InboundSummaryFields), direction: 'inbound', pk, sk };
   }
-  return { ...(item as unknown as SentSummaryFields), direction: 'sent', sk };
+  return { ...(item as unknown as SentSummaryFields), direction: 'sent', pk, sk };
 }
 
 /** DynamoDB's answer to a query on an index the table does not have (removed, or never created). */
@@ -168,8 +172,7 @@ export class DdbEmailsDao implements EmailsDao {
         new PutCommand({
           TableName: this.tableName,
           Item: {
-            pk: EmailEntity.INBOUND_PARTITION,
-            sk: `${input.receivedAt}#${input.id}`,
+            ...EmailEntity.inbound(input.receivedAt, input.id, input.failed === true),
             direction: 'inbound',
             id: input.id,
             sesMessageId: input.sesMessageId,
@@ -190,6 +193,8 @@ export class DdbEmailsDao implements EmailsDao {
             quarantined: input.quarantined,
             rawS3Key: input.rawS3Key,
             sizeBytes: input.sizeBytes,
+            failed: input.failed,
+            quarantineS3Key: input.quarantineS3Key,
             body: input.body,
           },
           // The idempotency guard: a redelivered event finds the row present and no-ops.

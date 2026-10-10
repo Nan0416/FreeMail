@@ -18,10 +18,13 @@ describe('per-Lambda configs are narrow', () => {
     expect(() => getMcpConfig(MCP_ENV)).not.toThrow();
   });
 
-  it('the inbound handler needs only the emails table and the mail bucket', () => {
-    expect(getInboundConfig({ EMAILS_TABLE: 'emails', MAIL_BUCKET: 'bucket' })).toEqual({
+  it('the inbound handler needs only the emails table, the mail bucket, and quarantine', () => {
+    expect(
+      getInboundConfig({ EMAILS_TABLE: 'emails', MAIL_BUCKET: 'bucket', QUARANTINE_BUCKET: 'q' }),
+    ).toEqual({
       emailsTable: 'emails',
       mailBucket: 'bucket',
+      quarantineBucket: 'q',
     });
   });
 

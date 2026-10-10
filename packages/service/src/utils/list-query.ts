@@ -6,7 +6,11 @@
  * the same {@link emailErrors.invalidRequest} `EmailError` (REST maps it to 400, the MCP
  * tool to an `isError` tool-result).
  */
-import { DEFAULT_EMAIL_PAGE_SIZE, MAX_EMAIL_PAGE_SIZE } from '@freemail/shared';
+import {
+  DEFAULT_EMAIL_PAGE_SIZE,
+  MAX_EMAIL_PAGE_SIZE,
+  type EmailListFilter,
+} from '@freemail/shared';
 import { emailErrors } from './errors.js';
 import type { ListEmailsServiceRequest } from '../services/email-read-service.js';
 
@@ -29,12 +33,12 @@ export function parseListEmailsQuery(input: RawListEmailsInput): ListEmailsServi
   };
 }
 
-function parseDirection(raw: string | undefined): 'sent' | 'inbound' | undefined {
+function parseDirection(raw: string | undefined): EmailListFilter | undefined {
   if (raw === undefined || raw === '') {
     return undefined;
   }
-  if (raw !== 'sent' && raw !== 'inbound') {
-    throw emailErrors.invalidRequest('"direction" must be "sent" or "inbound".');
+  if (raw !== 'sent' && raw !== 'inbound' && raw !== 'failed') {
+    throw emailErrors.invalidRequest('"direction" must be "sent", "inbound", or "failed".');
   }
   return raw;
 }

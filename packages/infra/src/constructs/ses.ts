@@ -41,6 +41,8 @@ export interface SesConstructProps {
     readonly mailBucket: Bucket;
     /** The parser writes each received message's metadata row here (`pk='INBOUND'`). */
     readonly emailsTable: Table;
+    /** The parser copies a failed message's raw MIME here (the Errors folder). */
+    readonly quarantineBucket: Bucket;
   };
 }
 
@@ -166,6 +168,7 @@ export class SesConstruct extends Construct {
         emailDomain: props.emailDomain,
         region: props.region,
         mailBucket: props.inbound.mailBucket,
+        quarantineBucket: props.inbound.quarantineBucket,
         emailsTable: props.inbound.emailsTable,
       });
     }

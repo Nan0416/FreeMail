@@ -102,15 +102,15 @@ The Lambda handlers are bundled from source at synth (esbuild), so no separate h
 
 `cdk deploy` prints outputs you'll use immediately:
 
-| Output                                                    | Use                                                                                                                                                |
-| --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`WebAppUrl`**                                           | Open this to sign in and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                                   |
-| **`ApiEndpoint`**                                         | The HTTP API base URL. Also the target of the CloudFront `/api` proxy and the MCP endpoint (`{ApiEndpoint}/mcp`).                                  |
-| **`ApiCustomDomainUrl`**                                  | The API domain. Used by **both** the web app (cross-origin) and agents (`x-api-key`).                                                              |
-| **`HostedZoneNameServers`**                               | Present only when FreeMail **created** the zone. **Set these at your registrar** to activate the zone (see [§5](#5-dns-and-email-authentication)). |
-| **`SesProductionAccessNote`**                             | A link to the SES account dashboard to request production access (see [§4](#4-ses-production-access-sandbox-exit)).                                |
-| **`SesMailFromDomain`**, **`SesBounceComplaintTopicArn`** | The custom MAIL FROM subdomain and the SNS topic that receives bounce/complaint notifications.                                                     |
-| **`MailBucketName`**, **`WebBucketName`**                 | The S3 buckets (retained on teardown — see [§10](#10-troubleshooting)).                                                                            |
+| Output                                                                | Use                                                                                                                                                |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`WebAppUrl`**                                                       | Open this to sign in and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                                   |
+| **`ApiEndpoint`**                                                     | The HTTP API base URL. Also the target of the CloudFront `/api` proxy and the MCP endpoint (`{ApiEndpoint}/mcp`).                                  |
+| **`ApiCustomDomainUrl`**                                              | The API domain. Used by **both** the web app (cross-origin) and agents (`x-api-key`).                                                              |
+| **`HostedZoneNameServers`**                                           | Present only when FreeMail **created** the zone. **Set these at your registrar** to activate the zone (see [§5](#5-dns-and-email-authentication)). |
+| **`SesProductionAccessNote`**                                         | A link to the SES account dashboard to request production access (see [§4](#4-ses-production-access-sandbox-exit)).                                |
+| **`SesMailFromDomain`**, **`SesBounceComplaintTopicArn`**             | The custom MAIL FROM subdomain and the SNS topic that receives bounce/complaint notifications.                                                     |
+| **`MailBucketName`**, **`QuarantineBucketName`**, **`WebBucketName`** | The S3 buckets (mail and quarantine are retained on teardown — see [§10](#10-troubleshooting)).                                                    |
 
 ### After deploying
 
@@ -232,7 +232,9 @@ SES receipt rule sets are an **account-global, region-wide singleton** — only 
 
 SES receipt rule → writes raw MIME to the mail S3 bucket → a parser Lambda extracts metadata, the decoded body, and attachments (honoring SES spam/virus verdicts) → indexes them in DynamoDB. The web app's **Inbox** tab then lists received mail; the reader renders HTML in a sandboxed iframe with a strict CSP. Inbound is region-restricted, and `us-east-1` (the pinned region) supports it.
 
-**Raw messages are kept for 14 days once fully processed.** When the parser extracts a message completely (body and attachments), SES's raw copy under `inbound/` is only needed for **Download original (.eml)**: the parser tags it, and a lifecycle rule deletes tagged copies after 14 days. For such mail the `.eml` download is offered only while it is younger than that, and a body part over 1 MB keeps only its truncated stored copy afterwards. A raw copy that is still the only copy of a message is never tagged and never expires: mail that failed to parse, a message whose processing dead-lettered (redrive it from the parser DLQ, which keeps events for 14 days), and anything received before tagging existed. Sent mail's original is kept permanently.
+**Failed mail goes to the Errors folder.** A message whose content can't be extracted — SES's virus scan did not return `PASS`, or the message is malformed, over the processing limits (more than 25 attachments, an attachment over 15 MB or 30 MB of attachments in total, or a 10 MB body), or larger than 40 MB — is listed in the web app's **Errors** folder with the reason, not in the Inbox. Nothing from it is rendered, but its original is copied to a separate **quarantine bucket** (no expiry) and stays downloadable as `.eml`; when SES did not confirm it virus-free, the download is marked suspicious and needs an explicit **Download anyway**.
+
+**Raw messages are kept for 14 days once processed.** After the parser has stored what a message needs (its body and attachments, or its quarantined copy), SES's raw copy under `inbound/` is only needed for **Download original (.eml)**: the parser tags it, and a lifecycle rule deletes tagged copies after 14 days. For fully processed mail the `.eml` download is offered only while it is younger than that, and a body part over 1 MB keeps only its truncated stored copy afterwards. A raw copy that is still the only copy of a message is never tagged and never expires: a message whose processing dead-lettered (redrive it from the parser DLQ, which keeps events for 14 days), and anything received before tagging existed. Sent mail's original is kept permanently.
 
 ## 8. Attachments
 
@@ -286,4 +288,4 @@ Check that the `emailDomain`'s MX record points at SES and the zone is delegated
 SES publishes bounce and complaint events to the SNS topic in the `SesBounceComplaintTopicArn` output; a subscribed Lambda logs them to CloudWatch, and SES suppression is enabled to protect your sending reputation. Watch that log group and the SES reputation dashboard, and stop mailing addresses that hard-bounce.
 
 **`cdk destroy` left buckets and tables behind.**
-By design. The four DynamoDB tables and both S3 buckets use a `RETAIN` removal policy so a teardown never silently deletes your email or credentials. After a destroy they remain as orphaned resources — delete them by hand if you truly want them gone.
+By design. The four DynamoDB tables and the mail and quarantine S3 buckets use a `RETAIN` removal policy so a teardown never silently deletes your email or credentials. After a destroy they remain as orphaned resources — delete them by hand if you truly want them gone.

@@ -1,7 +1,8 @@
 /**
  * Orchestrates one inbound message: validate the event key → HEAD (size gate +
  * trusted receipt time) → stream-parse (attachments to S3) → store the decoded body (inline
- * or S3) → conditional-put the DDB row as the final commit marker. Everything is behind
+ * or S3), or — when content can't be extracted — copy the raw MIME into quarantine →
+ * conditional-put the DDB row as the final commit marker (under FAILED for the latter). Everything is behind
  * injected ports (S3 object store, body store, emails repo) so the whole flow is testable
  * with fakes and no AWS.
  *
@@ -14,15 +15,19 @@
  * API serves) — and best-effort deletes them. Only an infra failure (S3/DDB) throws,
  * so the async invocation retries and eventually DLQs.
  *
- * SES's raw copy is tagged for expiry only AFTER the row of a fully extracted message is
- * committed. A message that failed, or never got a row, keeps its raw copy indefinitely —
- * it is the only copy of that message.
+ * SES's raw copy is tagged for expiry only AFTER the row is committed — by then the body is
+ * stored, or (for a message whose content can't be extracted) the raw MIME is copied into
+ * quarantine. A message that never gets a row (its ingest dead-lettered) keeps its raw copy
+ * indefinitely: it is the only copy of that message.
  */
+import { Readable } from 'node:stream';
 import type { EmailsDao, CreateInboundEmailInput, InboundVerdict } from '../data/emails-dao.js';
 import type { InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import type { MailBodyStore } from '../facades/s3-mail-body-store.js';
+import type { QuarantineStore } from '../facades/s3-quarantine-store.js';
 import { validateInboundEventKey } from '../utils/event-key.js';
-import { MAX_RAW_MESSAGE_BYTES } from '../utils/inbound-limits.js';
+import { rootHeaderBlock } from '../utils/inbound-headers.js';
+import { MAX_HEADER_BLOCK_BYTES, MAX_RAW_MESSAGE_BYTES } from '../utils/inbound-limits.js';
 import { parseInbound, type AttachmentSink, type ParsedInbound } from '../utils/inbound-parse.js';
 import {
   sanitizeContentType,
@@ -49,6 +54,23 @@ export interface ProcessInboundServiceResponse {
   readonly reason?: string;
 }
 
+/** Where an Errors-folder message's raw MIME is kept in the quarantine bucket. */
+export function quarantineKey(messageId: string): string {
+  return `inbound/${messageId}.eml`;
+}
+
+/** The header-only parse has no body, so it never sees an attachment; answer defensively. */
+const NO_ATTACHMENTS: AttachmentSink = {
+  store: (partIndex, filename, contentType, bytes) =>
+    Promise.resolve({
+      id: String(partIndex),
+      filename: filename ?? '',
+      contentType,
+      sizeBytes: bytes.length,
+      s3Key: '',
+    }),
+};
+
 const ABSENT_VERDICTS = {
   spamVerdict: 'ABSENT' as InboundVerdict,
   virusVerdict: 'ABSENT' as InboundVerdict,
@@ -59,6 +81,7 @@ export class InboundProcessor {
     private readonly store: InboundObjectStore,
     private readonly emails: EmailsDao,
     private readonly bodies: MailBodyStore,
+    private readonly quarantine: QuarantineStore,
   ) {}
 
   /** Process the object identified by a raw (still-encoded) S3 event key. */
@@ -80,9 +103,11 @@ export class InboundProcessor {
       sizeBytes: head.sizeBytes,
     };
 
-    // Size gate BEFORE download — never fetch an over-cap object.
+    // Size gate BEFORE download — never fetch an over-cap object. Read only its header block,
+    // so the Errors folder still shows its sender, subject, and SES's real verdicts.
     if (head.sizeBytes > MAX_RAW_MESSAGE_BYTES) {
-      return this.commit(this.oversizeRecord(base), key.messageId);
+      const headerOnly = await this.parseHeaderBlock(key.rawS3Key);
+      return this.finish(base, { ...headerOnly, parseStatus: 'oversize' });
     }
 
     const writtenKeys: string[] = [];
@@ -109,26 +134,74 @@ export class InboundProcessor {
       // written this attempt is unreachable — best-effort delete it anyway.
       await this.cleanup(writtenKeys);
     }
+    return this.finish(base, parsed);
+  }
+
+  /**
+   * Store what the message needs, then write its row. Exposable content gets its body stored
+   * (inline or S3), exactly like the snippet and attachments. Anything else — a virus verdict
+   * other than PASS, or a parse failure / limit breach — keeps nothing readable: its raw MIME
+   * is copied into quarantine and the row goes to the Errors folder. Both writes land on
+   * deterministic keys BEFORE the row, so a redelivery only overwrites them; SES's raw copy is
+   * tagged for expiry only after the row is committed.
+   */
+  private async finish(
+    base: RecordBase,
+    parsed: ParsedInbound,
+  ): Promise<ProcessInboundServiceResponse> {
     const exposure = decideExposure(parsed.verdicts, parsed.parseStatus);
     const record = this.record(base, parsed, exposure);
-    if (!exposure.exposeContent) {
-      // Nothing readable is kept (virus / parse failure), so SES's raw copy stays untagged and
-      // never expires: it is the only copy of the message.
-      return this.commit(record, key.messageId);
+    let response: ProcessInboundServiceResponse;
+    if (exposure.exposeContent) {
+      // Store the body exactly like the snippet and attachments — only for exposable content —
+      // sized against the rest of the row so an inline body can't push it past DynamoDB's limit.
+      const body = await storeEmailBody(this.bodies, {
+        key: bodyKey('inbound', base.messageId),
+        text: parsed.textBody,
+        html: parsed.htmlBody,
+        otherRowBytes: estimateRowBytes(record),
+      });
+      response = await this.commit({ ...record, body }, base.messageId);
+    } else {
+      // Nothing readable is kept (virus / parse failure): keep the raw MIME in quarantine —
+      // the only way to recover the message later — and file the row in the Errors folder.
+      const quarantineS3Key = quarantineKey(base.messageId);
+      await this.quarantine.copyFromMail(base.rawS3Key, quarantineS3Key);
+      response = await this.commit({ ...record, failed: true, quarantineS3Key }, base.messageId);
     }
-    // Store the body exactly like the snippet and attachments — only for exposable content —
-    // sized against the rest of the row so an inline body can't push it past DynamoDB's limit.
-    const body = await storeEmailBody(this.bodies, {
-      key: bodyKey('inbound', key.messageId),
-      text: parsed.textBody,
-      html: parsed.htmlBody,
-      otherRowBytes: estimateRowBytes(record),
-    });
-    const response = await this.commit({ ...record, body }, key.messageId);
-    // Fully extracted and committed (or already committed, on a redelivery): the raw copy is now
-    // only the short-lived `.eml` source, so let the lifecycle rule expire it.
-    await this.store.markIngested(key.rawS3Key);
+    // Committed (or already committed, on a redelivery), and everything worth keeping is stored
+    // elsewhere: SES's raw copy is now only the short-lived `.eml` source, so let it expire.
+    await this.store.markIngested(base.rawS3Key);
     return response;
+  }
+
+  /**
+   * An over-cap message's metadata from its header block alone (a ranged read, never the whole
+   * object): run through the same parser as any message, with no body, so the sender, subject,
+   * and verdicts get the same decoding and fail-closed rules. A header block that runs past
+   * the bytes read yields only ABSENT verdicts.
+   */
+  private async parseHeaderBlock(rawS3Key: string): Promise<ParsedInbound> {
+    const block = rootHeaderBlock(await this.store.getHead(rawS3Key, MAX_HEADER_BLOCK_BYTES));
+    if (block === undefined) {
+      return {
+        parseStatus: 'oversize',
+        from: '',
+        to: [],
+        cc: [],
+        subject: '',
+        verdicts: ABSENT_VERDICTS,
+        exposed: false,
+        attachmentCount: 0,
+        attachments: [],
+      };
+    }
+    const parsed = await parseInbound(
+      Readable.from([Buffer.concat([block, Buffer.from('\r\n\r\n')])]),
+      NO_ATTACHMENTS,
+    );
+    // Only the header metadata is meaningful — nothing past the headers was read.
+    return { ...parsed, exposed: false, attachmentCount: 0, attachments: [] };
   }
 
   /** Conditional-put the row (the commit marker) and map the outcome. */
@@ -151,28 +224,6 @@ export class InboundProcessor {
         }),
       ),
     );
-  }
-
-  private oversizeRecord(base: RecordBase): CreateInboundEmailInput {
-    const exposure = decideExposure(ABSENT_VERDICTS, 'oversize');
-    return {
-      id: base.messageId,
-      sesMessageId: base.messageId,
-      from: '',
-      to: [],
-      cc: [],
-      subject: '',
-      receivedAt: base.receivedAt,
-      hasAttachments: false,
-      attachmentCount: 0,
-      attachments: [],
-      spamVerdict: ABSENT_VERDICTS.spamVerdict,
-      virusVerdict: ABSENT_VERDICTS.virusVerdict,
-      parseStatus: 'oversize',
-      quarantined: exposure.quarantined,
-      rawS3Key: base.rawS3Key,
-      sizeBytes: base.sizeBytes,
-    };
   }
 
   private record(

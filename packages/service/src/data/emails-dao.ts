@@ -4,19 +4,30 @@
  * without knowing about DynamoDB.
  *
  * Both directions share one table: sent messages under `pk='SENT'`, received under
- * `pk='INBOUND'`, each `sk='<iso>#<id>'` so the read slice lists either partition
- * newest-first and merges them into one timeline.
+ * `pk='INBOUND'` — or `pk='FAILED'` when their content could not be extracted (the Errors
+ * folder) — each `sk='<iso>#<id>'` so the read slice lists any partition newest-first and
+ * merges sent + received into one timeline.
  */
-import type { SentStatus } from '@freemail/shared';
+import type { EmailListFilter, SentStatus } from '@freemail/shared';
 import type { EmailListIndexAttribute } from '@freemail/shared/storage';
 
 /** Partition holding sent messages. */
 export const SENT_PARTITION = 'SENT';
 /** Partition holding received messages. */
 export const INBOUND_PARTITION = 'INBOUND';
+/**
+ * Partition holding received messages whose content could not be extracted — a virus verdict
+ * other than `PASS`, or a parse failure / limit breach. Their raw MIME is kept in the
+ * quarantine bucket. Listed as the Errors folder, never in the main timeline.
+ */
+export const FAILED_PARTITION = 'FAILED';
 
-/** The two (and only) valid partitions — used to validate a decoded message handle. */
-export const EMAIL_PARTITIONS: ReadonlySet<string> = new Set([SENT_PARTITION, INBOUND_PARTITION]);
+/** The only valid partitions — used to validate a decoded message handle. */
+export const EMAIL_PARTITIONS: ReadonlySet<string> = new Set([
+  SENT_PARTITION,
+  INBOUND_PARTITION,
+  FAILED_PARTITION,
+]);
 
 /**
  * A message's decoded body, stored once when the message is ingested or sent so opening it
@@ -174,6 +185,14 @@ export interface CreateInboundEmailInput {
   /** Raw MIME size in bytes (from S3 `HeadObject`). */
   readonly sizeBytes: number;
   /**
+   * True when content could not be extracted (virus verdict not `PASS`, or parse status not
+   * `ok`): the row is stored under {@link FAILED_PARTITION} and its raw MIME is copied to the
+   * quarantine bucket at {@link quarantineS3Key}.
+   */
+  readonly failed?: boolean;
+  /** Key of the raw MIME's copy in the quarantine bucket — set exactly when `failed`. */
+  readonly quarantineS3Key?: string;
+  /**
    * The decoded body — present ONLY when content is exposable (parsed + virus `PASS`), like
    * the snippet. Absent on a row written before bodies were stored.
    */
@@ -194,8 +213,16 @@ export interface CreateInboundEmailOutput {
  * cursor: both derive from `{ pk, sk }`, never from a client-supplied key.
  */
 export type GetEmailOutput =
-  | ({ readonly direction: 'sent'; readonly sk: string } & CreateSentEmailInput)
-  | ({ readonly direction: 'inbound'; readonly sk: string } & CreateInboundEmailInput);
+  | ({
+      readonly direction: 'sent';
+      readonly pk: string;
+      readonly sk: string;
+    } & CreateSentEmailInput)
+  | ({
+      readonly direction: 'inbound';
+      readonly pk: string;
+      readonly sk: string;
+    } & CreateInboundEmailInput);
 
 export interface GetEmailInput {
   readonly pk: string;
@@ -203,7 +230,8 @@ export interface GetEmailInput {
 }
 
 export interface QueryEmailsByDirectionInput {
-  readonly direction: 'sent' | 'inbound';
+  /** Which partition: a direction, or `failed` (received mail in the Errors folder). */
+  readonly direction: EmailListFilter;
   readonly limit: number;
   /** Return only rows strictly older than this sort key; omit to start from the newest. */
   readonly afterSk?: string | undefined;
@@ -220,11 +248,11 @@ export interface QueryEmailsByDirectionOutput {
  * reading one (in the list mapper, say) is a compile error rather than a silent `undefined`.
  */
 export type EmailSummary =
-  | ({ readonly direction: 'sent'; readonly sk: string } & Pick<
+  | ({ readonly direction: 'sent'; readonly pk: string; readonly sk: string } & Pick<
       CreateSentEmailInput,
       EmailListIndexAttribute & keyof CreateSentEmailInput
     >)
-  | ({ readonly direction: 'inbound'; readonly sk: string } & Pick<
+  | ({ readonly direction: 'inbound'; readonly pk: string; readonly sk: string } & Pick<
       CreateInboundEmailInput,
       EmailListIndexAttribute & keyof CreateInboundEmailInput
     >);

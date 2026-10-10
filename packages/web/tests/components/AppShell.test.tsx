@@ -70,6 +70,7 @@ describe('AppShell — folders', () => {
     renderWithApp(<AppShell />, fetchMock);
     expect(screen.queryByRole('button', { name: 'Inbox' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'All mail' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Errors' })).not.toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Sent' })).toBeInTheDocument();
     await waitFor(() => expect(callsTo(fetchMock, '/emails')).toHaveLength(1));
     expect(new URL(String(callsTo(fetchMock, '/emails')[0][0])).searchParams.get('direction')).toBe(
@@ -89,6 +90,38 @@ describe('AppShell — folders', () => {
         ),
       ).toBe(true),
     );
+  });
+});
+
+describe('AppShell — Errors folder', () => {
+  it('lists failed mail under Errors, tagged with why it failed', async () => {
+    const fetchMock = mockApi([
+      [
+        item('v', { failed: true, quarantined: true, virusVerdict: 'FAIL' }),
+        item('p', {
+          failed: true,
+          quarantined: true,
+          virusVerdict: 'PASS',
+          parseStatus: 'oversize',
+        }),
+      ],
+    ]);
+    renderWithApp(<AppShell inboundEnabled />, fetchMock);
+    fireEvent.click(screen.getByRole('button', { name: 'Errors' }));
+
+    expect(await screen.findByRole('heading', { name: 'Errors' })).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        callsTo(fetchMock, '/emails').some(
+          ([url]) => new URL(String(url)).searchParams.get('direction') === 'failed',
+        ),
+      ).toBe(true),
+    );
+    const list = within(await screen.findByRole('list', { name: 'Errors' }));
+    expect(await list.findByText('Virus')).toBeInTheDocument();
+    expect(list.getByText('Too large')).toBeInTheDocument();
+    // Failure tags replace the generic Spam tag.
+    expect(list.queryByText('Spam')).not.toBeInTheDocument();
   });
 });
 

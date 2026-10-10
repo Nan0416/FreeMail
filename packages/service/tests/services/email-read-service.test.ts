@@ -5,6 +5,7 @@ import {
   type CreateInboundEmailOutput,
   type CreateSentEmailOutput,
   type EmailsDao,
+  FAILED_PARTITION,
   INBOUND_PARTITION,
   SENT_PARTITION,
   type GetEmailOutput,
@@ -31,6 +32,7 @@ import {
 function sentRow(overrides: Partial<GetEmailOutput & { direction: 'sent' }> = {}): GetEmailOutput {
   return {
     direction: 'sent',
+    pk: 'SENT',
     sk: '2026-07-17T09:00:00.000Z#s1',
     id: 's1',
     from: 'me@mydomain.com',
@@ -68,6 +70,7 @@ function inboundRow(
 ): GetEmailOutput {
   return {
     direction: 'inbound',
+    pk: 'INBOUND',
     sk: '2026-07-17T10:00:00.000Z#i1',
     id: 'i1',
     sesMessageId: 'i1',
@@ -106,7 +109,8 @@ class FakeDao implements EmailsDao {
     () => Promise.resolve([]);
 
   put(pk: string, row: GetEmailOutput): string {
-    this.byKey.set(`${pk}|${row.sk}`, row);
+    // A stored row always carries the partition it lives in.
+    this.byKey.set(`${pk}|${row.sk}`, { ...row, pk });
     return encodeEmailRef({ pk, sk: row.sk });
   }
   createSentEmail(): Promise<CreateSentEmailOutput> {
@@ -203,10 +207,12 @@ function service(
   rawMime: FakeRawMime,
   parse?: ParseInbound,
   bodies: FakeBodyStore = new FakeBodyStore(),
+  quarantinePresigner?: FakePresigner,
 ): EmailReadService {
   return new EmailReadService({
     emailsDao: repo,
     presigner,
+    ...(quarantinePresigner ? { quarantinePresigner } : {}),
     bodies,
     rawMime,
     now: NOW,
@@ -812,16 +818,37 @@ describe('EmailReadService.getRawUrl', () => {
   });
 
   it.each(['FAIL', 'GRAY', 'PROCESSING_FAILED', 'ABSENT', 'UNKNOWN'] as const)(
-    'refuses a received message with virus verdict %s → not_found, never presigned',
+    'never offers a fully processed (stored-body) message with virus verdict %s',
     async (virusVerdict) => {
       const repo = new FakeDao();
       const presigner = new FakePresigner();
-      const handle = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict, quarantined: true }));
+      const handle = repo.put(
+        INBOUND_PARTITION,
+        inboundRow({ virusVerdict, quarantined: true, body: { kind: 'inline' } }),
+      );
 
       await expect(
         service(repo, presigner, new FakeRawMime()).getRawUrl({ handle }),
       ).rejects.toMatchObject({ code: 'not_found' });
       expect(presigner.last).toBeUndefined();
+    },
+  );
+
+  it.each(['FAIL', 'GRAY', 'ABSENT'] as const)(
+    'offers a pre-stored-body message with virus verdict %s — its kept raw copy, flagged suspicious',
+    async (virusVerdict) => {
+      const repo = new FakeDao();
+      const presigner = new FakePresigner();
+      const handle = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict, quarantined: true }));
+      const read = service(repo, presigner, new FakeRawMime());
+
+      const detail = await read.getEmail({ handle });
+      expect(detail).toMatchObject({ rawAvailable: true, rawSuspicious: true });
+      await read.getRawUrl({ handle });
+      expect(presigner.last).toMatchObject({
+        key: 'inbound/i1',
+        contentType: 'application/octet-stream',
+      });
     },
   );
 
@@ -864,8 +891,123 @@ describe('EmailReadService.getRawUrl', () => {
     const clean = repo.put(INBOUND_PARTITION, { ...inboundRow(), sk: 'other#i2' });
 
     expect((await read.getEmail({ handle: legacySent })).rawAvailable).toBe(false);
-    expect((await read.getEmail({ handle: virusFailed })).rawAvailable).toBe(false);
+    // A pre-stored-body virus-failed row: its kept raw copy is offered, flagged suspicious.
+    expect(await read.getEmail({ handle: virusFailed })).toMatchObject({
+      rawAvailable: true,
+      rawSuspicious: true,
+    });
     expect((await read.getEmail({ handle: clean })).rawAvailable).toBe(true);
+    expect((await read.getEmail({ handle: clean })).rawSuspicious).toBeUndefined();
+  });
+});
+
+describe('EmailReadService — Errors folder', () => {
+  function failedRow(overrides: Partial<GetEmailOutput & { direction: 'inbound' }> = {}) {
+    return inboundRow({
+      pk: FAILED_PARTITION,
+      virusVerdict: 'FAIL',
+      quarantined: true,
+      attachments: [],
+      snippet: undefined,
+      failed: true,
+      quarantineS3Key: 'inbound/i1.eml',
+      ...overrides,
+    } as Partial<GetEmailOutput & { direction: 'inbound' }>);
+  }
+
+  it('lists the FAILED partition on request, as inbound rows flagged failed', async () => {
+    const repo = new FakeDao();
+    const asked: string[] = [];
+    repo.queryImpl = (direction) => {
+      asked.push(direction);
+      return Promise.resolve(
+        direction === 'failed' ? [failedRow({ parseStatus: 'parse_failed' })] : [],
+      );
+    };
+
+    const page = await service(repo, new FakePresigner(), new FakeRawMime()).listEmails({
+      direction: 'failed',
+      limit: 25,
+    });
+
+    expect(asked).toEqual(['failed']);
+    expect(page.emails[0]).toMatchObject({
+      direction: 'inbound',
+      failed: true,
+      parseStatus: 'parse_failed',
+      virusVerdict: 'FAIL',
+    });
+    // The handle addresses the FAILED partition, so get_email finds it there.
+    const ref = JSON.parse(Buffer.from(page.emails[0]!.id, 'base64url').toString('utf8'));
+    expect(ref.pk).toBe(FAILED_PARTITION);
+  });
+
+  it('never mixes failed mail into the merged timeline', async () => {
+    const repo = new FakeDao();
+    const asked: string[] = [];
+    repo.queryImpl = (direction) => {
+      asked.push(direction);
+      return Promise.resolve([]);
+    };
+
+    await service(repo, new FakePresigner(), new FakeRawMime()).listEmails({ limit: 25 });
+
+    expect(asked.sort()).toEqual(['inbound', 'sent']);
+  });
+
+  it('offers a failed message’s quarantined original, flagged suspicious without a virus PASS', async () => {
+    const repo = new FakeDao();
+    const quarantine = new FakePresigner();
+    quarantine.url = 'https://quarantine.example/presigned';
+    const handle = repo.put(FAILED_PARTITION, failedRow());
+    const read = service(
+      repo,
+      new FakePresigner(),
+      new FakeRawMime(),
+      undefined,
+      undefined,
+      quarantine,
+    );
+
+    const detail = await read.getEmail({ handle });
+    expect(detail).toMatchObject({ failed: true, rawAvailable: true, rawSuspicious: true });
+    expect(detail.text).toBeUndefined();
+
+    const raw = await read.getRawUrl({ handle });
+    expect(raw.url).toBe('https://quarantine.example/presigned');
+    expect(quarantine.last).toMatchObject({
+      key: 'inbound/i1.eml',
+      contentType: 'application/octet-stream',
+    });
+  });
+
+  it('does not flag a clean-but-unparsed original as suspicious', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(
+      FAILED_PARTITION,
+      failedRow({ virusVerdict: 'PASS', parseStatus: 'limit_exceeded' }),
+    );
+
+    const detail = await service(
+      repo,
+      new FakePresigner(),
+      new FakeRawMime(),
+      undefined,
+      undefined,
+      new FakePresigner(),
+    ).getEmail({ handle });
+
+    expect(detail.rawAvailable).toBe(true);
+    expect(detail.rawSuspicious).toBeUndefined();
+  });
+
+  it('offers no original where no quarantine presigner is wired (the MCP server)', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(FAILED_PARTITION, failedRow());
+    const read = service(repo, new FakePresigner(), new FakeRawMime());
+
+    expect((await read.getEmail({ handle })).rawAvailable).toBe(false);
+    await expect(read.getRawUrl({ handle })).rejects.toBeInstanceOf(EmailError);
   });
 });
 

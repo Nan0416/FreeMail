@@ -23,6 +23,10 @@ describe('parseListEmailsQuery', () => {
     expect(parseListEmailsQuery({ direction: 'sent' }).direction).toBe('sent');
   });
 
+  it('accepts "failed" — the Errors folder', () => {
+    expect(parseListEmailsQuery({ direction: 'failed' }).direction).toBe('failed');
+  });
+
   it('rejects an unknown direction with an EmailError', () => {
     expect(() => parseListEmailsQuery({ direction: 'drafts' })).toThrow(EmailError);
     expect(() => parseListEmailsQuery({ direction: 'drafts' })).toThrow(/"direction" must be/);

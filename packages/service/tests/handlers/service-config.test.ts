@@ -11,6 +11,7 @@ const COMPLETE: NodeJS.ProcessEnv = {
   EMAILS_TABLE: 'emails',
   DOWNLOAD_TOKENS_TABLE: 'tokens',
   MAIL_BUCKET: 'bucket',
+  QUARANTINE_BUCKET: 'quarantine',
   EMAIL_DOMAIN: 'example.com',
   DOWNLOAD_BASE_URL: 'https://api.example.com',
 };
@@ -27,6 +28,7 @@ describe('readServiceConfig', () => {
       emailsTable: 'emails',
       downloadTokensTable: 'tokens',
       mailBucket: 'bucket',
+      quarantineBucket: 'quarantine',
       emailDomain: 'example.com',
       downloadBaseUrl: 'https://api.example.com',
       sesConfigurationSet: 'cfg',

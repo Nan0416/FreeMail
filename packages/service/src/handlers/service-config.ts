@@ -25,6 +25,8 @@ export interface ServiceConfig {
   readonly downloadTokensTable: string;
   /** Inbound raw MIME, extracted attachments, and outbound large attachments. */
   readonly mailBucket: string;
+  /** Raw MIME of Errors-folder messages — the read routes presign their `.eml` downloads. */
+  readonly quarantineBucket: string;
   /** The SES send domain — every `from` must be under it. */
   readonly emailDomain: string;
   /** Public base for `/d/{token}` links (the API's own endpoint; never the bucket). */
@@ -39,6 +41,7 @@ const ENV_SCHEMA = z.object({
   EMAILS_TABLE: envString(),
   DOWNLOAD_TOKENS_TABLE: envString(),
   MAIL_BUCKET: envString(),
+  QUARANTINE_BUCKET: envString(),
   EMAIL_DOMAIN: envString(),
   DOWNLOAD_BASE_URL: envString(),
   SES_CONFIGURATION_SET: envString().optional(),
@@ -69,6 +72,7 @@ export function readServiceConfig(env: NodeJS.ProcessEnv = process.env): Service
     emailsTable: parsed.EMAILS_TABLE,
     downloadTokensTable: parsed.DOWNLOAD_TOKENS_TABLE,
     mailBucket: parsed.MAIL_BUCKET,
+    quarantineBucket: parsed.QUARANTINE_BUCKET,
     emailDomain: parsed.EMAIL_DOMAIN,
     downloadBaseUrl: parsed.DOWNLOAD_BASE_URL,
     sesConfigurationSet: parsed.SES_CONFIGURATION_SET,
