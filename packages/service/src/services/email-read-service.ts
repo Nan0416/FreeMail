@@ -436,8 +436,13 @@ function rawDownloadKey(row: GetEmailOutput, now: Date): string | undefined {
   if (row.virusVerdict !== 'PASS') {
     return undefined;
   }
-  // SES's raw inbound MIME is staging: it expires after the retention window (the mail
-  // bucket's lifecycle rule), so the original is offered only while it still exists.
+  // A row with a stored body was fully extracted, so ingest tagged its raw copy and the mail
+  // bucket's lifecycle rule expires it after the retention window: offer it only until then.
+  // Every other raw copy is untagged and kept (clean mail that failed to parse, rows from
+  // before stored bodies) — it may be the only copy, so it stays downloadable.
+  if (row.body === undefined) {
+    return row.rawS3Key;
+  }
   const ageMs = now.getTime() - Date.parse(row.receivedAt);
   return ageMs < INBOUND_RAW_RETENTION_DAYS * DAY_MS ? row.rawS3Key : undefined;
 }

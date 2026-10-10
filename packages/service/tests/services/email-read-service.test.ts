@@ -706,12 +706,17 @@ describe('EmailReadService — original (.eml) retention window', () => {
   function receivedDaysAgo(days: number): string {
     return new Date(NOW().getTime() - days * DAY).toISOString();
   }
+  /** A fully extracted row: it has a stored body, so ingest tagged its raw copy to expire. */
+  const STORED = { body: { kind: 'inline' as const, text: 'stored' } };
 
-  it('offers the original of clean inbound mail inside the 14-day window', async () => {
+  it('offers the original of fully processed mail inside the 14-day window', async () => {
     const repo = new FakeDao();
     const handle = repo.put(
       INBOUND_PARTITION,
-      inboundRow({ receivedAt: new Date(NOW().getTime() - 14 * DAY + 60_000).toISOString() }),
+      inboundRow({
+        ...STORED,
+        receivedAt: new Date(NOW().getTime() - 14 * DAY + 60_000).toISOString(),
+      }),
     );
     const read = service(repo, new FakePresigner(), new FakeRawMime());
 
@@ -719,13 +724,43 @@ describe('EmailReadService — original (.eml) retention window', () => {
     await expect(read.getRawUrl({ handle })).resolves.toHaveProperty('url');
   });
 
-  it('stops offering it once the raw MIME has aged out (lifecycle-expired)', async () => {
+  it('stops offering it once the tagged raw copy has aged out (lifecycle-expired)', async () => {
     const repo = new FakeDao();
-    const handle = repo.put(INBOUND_PARTITION, inboundRow({ receivedAt: receivedDaysAgo(14) }));
+    const handle = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({ ...STORED, receivedAt: receivedDaysAgo(14) }),
+    );
     const read = service(repo, new FakePresigner(), new FakeRawMime());
 
     expect((await read.getEmail({ handle })).rawAvailable).toBe(false);
     await expect(read.getRawUrl({ handle })).rejects.toBeInstanceOf(EmailError);
+  });
+
+  it('keeps offering an untagged raw copy however old — clean mail that failed to parse', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({
+        parseStatus: 'limit_exceeded',
+        attachments: [],
+        receivedAt: receivedDaysAgo(30),
+      }),
+    );
+
+    expect(
+      (await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle }))
+        .rawAvailable,
+    ).toBe(true);
+  });
+
+  it('keeps offering it for a legacy row (no stored body) however old', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ receivedAt: receivedDaysAgo(30) }));
+
+    expect(
+      (await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle }))
+        .rawAvailable,
+    ).toBe(true);
   });
 
   it('keeps offering the sent archive however old (it never expires)', async () => {

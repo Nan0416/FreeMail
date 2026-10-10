@@ -57,9 +57,12 @@ function dynamoItemBytes(value: unknown): number {
   return 0;
 }
 
-/** The largest envelope an inbound row can carry: every capped field at its cap, 4-byte chars. */
+/**
+ * The largest envelope an inbound row can carry: every capped field at its cap. The caps count
+ * UTF-16 units, so the costliest character is a 3-byte BMP one (€) — one unit, three bytes.
+ */
 function worstCaseInboundRow(): CreateInboundEmailInput {
-  const wide = (chars: number): string => '\u{1F4E7}'.repeat(chars / 2); // 2 UTF-16 units each
+  const wide = (chars: number): string => '€'.repeat(chars);
   const address = (i: number): string => `${wide(310)}${i}@x.co`;
   return {
     id: 'm'.repeat(64),

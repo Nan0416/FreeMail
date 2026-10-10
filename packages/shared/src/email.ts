@@ -208,8 +208,8 @@ export interface EmailDetail {
   readonly bodyTruncated?: boolean;
   /**
    * True when the original message (`.eml`) can be downloaded via `GET /emails/{id}/raw`:
-   * sent mail with an archive, and received mail that passed the virus scan and is younger
-   * than the raw-MIME retention window (14 days).
+   * sent mail with an archive, and received mail that passed the virus scan — for fully
+   * processed mail, only while it is younger than the raw-MIME retention window (14 days).
    */
   readonly rawAvailable?: boolean;
   readonly attachments: readonly EmailAttachmentInfo[];
