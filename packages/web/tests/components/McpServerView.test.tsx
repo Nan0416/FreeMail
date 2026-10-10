@@ -18,6 +18,7 @@ describe('McpServerView', () => {
     });
     renderPage(fetchMock);
 
+    expect(screen.getByText(/it can send email and read your mail, as you/)).toBeInTheDocument();
     expect(screen.getByTestId('mcp-server-url')).toHaveTextContent('http://api.test/mcp');
     expect(JSON.parse(screen.getByTestId('mcp-json').textContent ?? '')).toEqual({
       mcpServers: {
