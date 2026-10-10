@@ -20,6 +20,13 @@ import { z } from 'zod';
 /** A required, non-empty environment variable. */
 export const envString = () => z.string().min(1);
 
+/** A positive whole number (a byte count), as its decimal string. */
+export const envPositiveInt = () =>
+  z
+    .string()
+    .regex(/^[1-9]\d*$/, 'must be a positive whole number')
+    .transform(Number);
+
 /**
  * Read and validate one Lambda's environment against its schema.
  *

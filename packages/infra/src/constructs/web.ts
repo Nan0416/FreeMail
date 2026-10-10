@@ -86,10 +86,11 @@ export function webRuntimeConfigJson(
  * Parametrized by the API origin as of #47: the SPA now calls the API CROSS-ORIGIN, so
  * `connect-src` must name it explicitly. `'self'` alone would have the app CSP block
  * every API call even though the API's CORS policy allows it — CSP and CORS are
- * independent gates and both must permit the request. Exactly one extra origin is
- * added; the reader's per-email CSP is untouched (`connect-src 'none'` there).
+ * independent gates and both must permit the request. The second origin is the mail
+ * bucket's S3 host, where the browser PUTs attachment uploads (presigned URLs). Those are
+ * the only two extra origins; the reader's per-email CSP is untouched (`connect-src 'none'`).
  */
-export function appContentSecurityPolicy(apiOrigin: string): string {
+export function appContentSecurityPolicy(apiOrigin: string, uploadOrigin: string): string {
   return [
     "default-src 'self'",
     "script-src 'self'",
@@ -100,7 +101,8 @@ export function appContentSecurityPolicy(apiOrigin: string): string {
     // Images remain off by default — the per-email CSP is `img-src 'none'` until opt-in.
     "img-src 'self' data: https:",
     "font-src 'self'",
-    `connect-src 'self' ${apiOrigin}`,
+    // The API, plus the mail bucket's S3 host: attachments are PUT there directly.
+    `connect-src 'self' ${apiOrigin} ${uploadOrigin}`,
     // The reader's srcdoc iframe is same-URL as the app document → 'self'.
     "frame-src 'self'",
     "object-src 'none'",
@@ -119,6 +121,8 @@ export interface WebConstructProps {
   readonly apiBaseUrl: string;
   /** The SPA asset directory (built dist or placeholder). See {@link resolveWebAssetPath}. */
   readonly assetPath: string;
+  /** The mail bucket's S3 origin — the SPA PUTs attachment uploads there (CSP `connect-src`). */
+  readonly uploadOrigin: string;
   /**
    * Whether inbound email is enabled (from `FreeMailConfig.inbound.enabled`). Written
    * into `config.json` so the SPA can gate the inbox UI; sent history always shows.
@@ -192,7 +196,7 @@ export class WebConstruct extends Construct {
       comment: 'FreeMail SPA: strict CSP + security headers.',
       securityHeadersBehavior: {
         contentSecurityPolicy: {
-          contentSecurityPolicy: appContentSecurityPolicy(props.apiBaseUrl),
+          contentSecurityPolicy: appContentSecurityPolicy(props.apiBaseUrl, props.uploadOrigin),
           override: true,
         },
         contentTypeOptions: { override: true },

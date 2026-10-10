@@ -197,3 +197,30 @@ describe('parseFreeMailConfig', () => {
     expect(() => parseFreeMailConfig('nope')).toThrow(/expected a JSON object/);
   });
 });
+
+describe('parseFreeMailConfig — attachments', () => {
+  it('omits attachments when not configured (the defaults apply)', () => {
+    expect(parseFreeMailConfig(base).attachments).toBeUndefined();
+  });
+
+  it('accepts embed limits within their caps', () => {
+    expect(
+      parseFreeMailConfig({
+        ...base,
+        attachments: { embedMaxBytes: 5 * 1024 * 1024, embedTotalBytes: 12 * 1024 * 1024 },
+      }).attachments,
+    ).toEqual({ embedMaxBytes: 5 * 1024 * 1024, embedTotalBytes: 12 * 1024 * 1024 });
+  });
+
+  it('rejects an embed limit past its cap, or not a whole number', () => {
+    expect(() =>
+      parseFreeMailConfig({ ...base, attachments: { embedMaxBytes: 16 * 1024 * 1024 } }),
+    ).toThrow(/at most 15 MB/);
+    expect(() =>
+      parseFreeMailConfig({ ...base, attachments: { embedTotalBytes: 21 * 1024 * 1024 } }),
+    ).toThrow(/at most 20 MB/);
+    expect(() => parseFreeMailConfig({ ...base, attachments: { embedMaxBytes: 1.5 } })).toThrow(
+      /whole number/,
+    );
+  });
+});

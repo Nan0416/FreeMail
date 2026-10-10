@@ -22,6 +22,7 @@ import {
 } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { Construct } from 'constructs';
+import type { AttachmentsConfig } from '@freemail/shared/config';
 import type { CustomDomainProps } from './web.js';
 
 const HANDLERS_DIR = join(
@@ -71,6 +72,20 @@ export interface ApiConstructProps {
    * request origin.
    */
   readonly appOrigin: string;
+  /** Deploy-configured attachment embed limits; absent → the service's defaults. */
+  readonly attachments?: AttachmentsConfig;
+}
+
+/** The embed limits as the send Lambdas' environment (absent → the service's defaults). */
+function embedEnv(attachments: AttachmentsConfig | undefined): Record<string, string> {
+  return {
+    ...(attachments?.embedMaxBytes !== undefined
+      ? { EMBED_MAX_BYTES: String(attachments.embedMaxBytes) }
+      : {}),
+    ...(attachments?.embedTotalBytes !== undefined
+      ? { EMBED_TOTAL_BYTES: String(attachments.embedTotalBytes) }
+      : {}),
+  };
 }
 
 /**
@@ -149,6 +164,7 @@ export class ApiConstruct extends Construct {
         QUARANTINE_BUCKET: props.quarantineBucket.bucketName,
         EMAIL_DOMAIN: props.emailDomain,
         SES_CONFIGURATION_SET: props.sesConfigurationSetName,
+        ...embedEnv(props.attachments),
         // Public base for `/d/{token}` links — the API's own endpoint (no bucket exposure).
         DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
       },
@@ -175,6 +191,10 @@ export class ApiConstruct extends Construct {
     // Stored bodies: the send route writes a large sent body; the read route loads any
     // stored body (inbound bodies are written by the parser).
     props.mailBucket.grantPut(this.restHandler, 'bodies/sent/*');
+    // Attachment uploads: presign the browser's PUT (the URL is signed with this role), then
+    // read the finished upload and copy it to attachments/sent/* (granted above) at send.
+    props.mailBucket.grantPut(this.restHandler, 'uploads/*');
+    props.mailBucket.grantRead(this.restHandler, 'uploads/*');
     props.mailBucket.grantRead(this.restHandler, 'bodies/*');
     // Errors-folder originals: the raw route presigns their quarantined copies.
     props.quarantineBucket.grantRead(this.restHandler);
@@ -196,6 +216,7 @@ export class ApiConstruct extends Construct {
         MAIL_BUCKET: props.mailBucket.bucketName,
         EMAIL_DOMAIN: props.emailDomain,
         SES_CONFIGURATION_SET: props.sesConfigurationSetName,
+        ...embedEnv(props.attachments),
         DOWNLOAD_BASE_URL: this.httpApi.apiEndpoint,
         // Gates the read tools (#13); the handler treats only exactly 'true' as enabled.
         INBOUND_ENABLED: String(props.inboundEnabled),
@@ -212,6 +233,9 @@ export class ApiConstruct extends Construct {
     props.mailBucket.grantWrite(this.mcpHandler, 'attachments/sent/*');
     // A large sent body: send_email writes it (read granted below, with the read tools).
     props.mailBucket.grantPut(this.mcpHandler, 'bodies/sent/*');
+    // Attachment uploads, as for REST: presign the agent's PUT, then read + copy at send.
+    props.mailBucket.grantPut(this.mcpHandler, 'uploads/*');
+    props.mailBucket.grantRead(this.mcpHandler, 'uploads/*');
     this.grantSesSend(this.mcpHandler, props.emailDomain, props.sesConfigurationSetName);
     // #13 read tools: read-only access scoped to exactly what EmailReadService touches —
     // the emails table (list/get), stored bodies, the inbound raw MIME + extracted-attachment
@@ -268,6 +292,8 @@ export class ApiConstruct extends Construct {
     // Send email — dual-scheme (Bearer human OR x-api-key agent), so it's behind
     // the authorizer but the handler does NOT restrict it to the access scheme.
     this.addRestRoute('/emails', HttpMethod.POST, { authorized: true });
+    // Step one of an attachment: a presigned PUT straight to S3. Dual-scheme, like send.
+    this.addRestRoute('/attachments/uploads', HttpMethod.POST, { authorized: true });
 
     // Read the mailbox (access-token only — the handler enforces the scheme): list the
     // merged timeline, read one message, and mint a presigned download URL for an attachment

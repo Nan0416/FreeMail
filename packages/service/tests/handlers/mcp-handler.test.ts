@@ -260,7 +260,7 @@ describe('mcp handler', () => {
 
     expect(result.statusCode).toBe(200);
     const names = resultOf(result).tools?.map((tool) => tool.name);
-    expect(names).toEqual(['send_email']);
+    expect(names).toEqual(['send_email', 'create_attachment_upload']);
   });
 
   it('returns the transport response headers, not a bare body (writeHead interop)', async () => {

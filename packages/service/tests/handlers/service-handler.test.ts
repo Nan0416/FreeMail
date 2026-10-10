@@ -79,6 +79,15 @@ vi.mock('../../src/services/api-key-service.js', () => ({
 }));
 vi.mock('../../src/data/ddb-api-keys-dao.js', () => ({ DdbApiKeysDao: class {} }));
 
+// Stub the upload service so POST /attachments/uploads exercises routing/validation without S3.
+const uploadMock = vi.hoisted(() => ({ create: vi.fn() }));
+vi.mock('../../src/services/attachment-upload-service.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/services/attachment-upload-service.js')>()),
+  AttachmentUploadService: class {
+    create = uploadMock.create;
+  },
+}));
+
 // Stub the download service so the public GET /d/{token} route exercises the
 // redirect/uniform-404 plumbing without DDB or S3.
 const downloadMock = vi.hoisted(() => ({ resolve: vi.fn() }));
@@ -103,6 +112,7 @@ const ROUTES: ReadonlyArray<readonly [string, Record<string, string>]> = [
   ['GET /keys', {}],
   ['DELETE /keys/{id}', { id: 'key-1' }],
   ['POST /emails', {}],
+  ['POST /attachments/uploads', {}],
   ['GET /emails', {}],
   ['GET /emails/{id}', { id: 'handle-123' }],
   ['GET /emails/{id}/attachments/{attachmentId}', { id: 'handle-1', attachmentId: '0' }],
@@ -286,6 +296,38 @@ describe('rest handler — send email is dual-scheme', () => {
   );
 });
 
+describe('rest handler — attachment uploads are dual-scheme', () => {
+  it.each(['access', 'apiKey'])('lets a %s credential create an upload', async (scheme) => {
+    uploadMock.create.mockReset().mockResolvedValue({
+      uploadId: 'u1',
+      uploadUrl: 'https://s3/u1',
+      uploadMethod: 'PUT',
+      expiresAt: 't',
+    });
+    const res = await invoke('POST /attachments/uploads', {
+      lambda: lambdaContext(scheme),
+      body: { filename: 'a.pdf', contentType: 'application/pdf', sizeBytes: 12 },
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.body ?? '{}')).toMatchObject({ uploadId: 'u1', uploadMethod: 'PUT' });
+    expect(uploadMock.create).toHaveBeenCalledWith({
+      filename: 'a.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 12,
+    });
+  });
+
+  it('rejects a non-numeric size with 400 before reaching the service', async () => {
+    uploadMock.create.mockReset();
+    const res = await invoke('POST /attachments/uploads', {
+      lambda: lambdaContext('access'),
+      body: { filename: 'a.pdf', sizeBytes: '12' },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(uploadMock.create).not.toHaveBeenCalled();
+  });
+});
+
 describe('rest handler — reads are access-token-only', () => {
   beforeEach(() => {
     readMocks.listEmails.mockReset().mockResolvedValue({ emails: [] });
@@ -399,7 +441,7 @@ describe('rest handler — #47 Layer 3: state-changing routes require applicatio
   // wearing `requireJsonContentType` can never disagree.
   const gated = [...JSON_REQUIRED_ROUTES];
 
-  it('gates exactly the documented five routes', () => {
+  it('gates exactly the documented six routes', () => {
     expect(gated.sort()).toEqual(
       [
         'POST /auth/login',
@@ -407,6 +449,7 @@ describe('rest handler — #47 Layer 3: state-changing routes require applicatio
         'POST /auth/refresh',
         'POST /emails',
         'POST /keys',
+        'POST /attachments/uploads',
       ].sort(),
     );
   });

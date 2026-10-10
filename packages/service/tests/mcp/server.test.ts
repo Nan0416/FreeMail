@@ -3,6 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emailErrors } from '../../src/utils/errors.js';
+import type { AttachmentUploadService } from '../../src/services/attachment-upload-service.js';
 import type { EmailReadService } from '../../src/services/email-read-service.js';
 import type { EmailService } from '../../src/services/email-service.js';
 import { buildMcpServer, type McpServerDeps } from '../../src/mcp/server.js';
@@ -174,6 +175,88 @@ describe('buildMcpServer send_email', () => {
   });
 });
 
+describe('create_attachment_upload tool', () => {
+  function connectUpload(create: ReturnType<typeof vi.fn>): Promise<Client> {
+    return connectWith({
+      emailService: { send: vi.fn() } as unknown as EmailService,
+      uploadService: { create } as unknown as AttachmentUploadService,
+      inboundEnabled: false,
+    });
+  }
+
+  it('takes metadata only — never file bytes', async () => {
+    const client = await connectUpload(vi.fn());
+    const tool = (await client.listTools()).tools.find(
+      (t) => t.name === 'create_attachment_upload',
+    );
+    expect(Object.keys(tool?.inputSchema.properties ?? {}).sort()).toEqual([
+      'contentType',
+      'filename',
+      'sizeBytes',
+    ]);
+    expect(tool?.inputSchema.required?.sort()).toEqual(['filename', 'sizeBytes']);
+  });
+
+  it('returns the upload handle as structuredContent, with how to use it', async () => {
+    const upload = {
+      uploadId: 'AAAAAAAAAAAAAAAAAAAAAA',
+      uploadUrl: 'https://bucket.s3.example/uploads/AAAAAAAAAAAAAAAAAAAAAA?signed',
+      uploadMethod: 'PUT',
+      expiresAt: '2026-10-10T00:15:00.000Z',
+    };
+    const create = vi.fn().mockResolvedValue(upload);
+    const client = await connectUpload(create);
+
+    const result = await client.callTool({
+      name: 'create_attachment_upload',
+      arguments: { filename: 'report.pdf', contentType: 'application/pdf', sizeBytes: 1234 },
+    });
+
+    expect(create).toHaveBeenCalledWith({
+      filename: 'report.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 1234,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual(upload);
+    expect(textOf(result)).toContain('send_email.attachments');
+  });
+
+  it('surfaces a validation error as an isError tool result', async () => {
+    const create = vi
+      .fn()
+      .mockRejectedValue(emailErrors.invalidRequest('"sizeBytes" must be at most 104857600.'));
+    const client = await connectUpload(create);
+
+    const result = await client.callTool({
+      name: 'create_attachment_upload',
+      arguments: { filename: 'huge.bin', sizeBytes: 104857601 },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe('invalid_request: "sizeBytes" must be at most 104857600.');
+  });
+
+  it('lets send_email reference uploads by id', async () => {
+    const send = vi.fn().mockResolvedValue({ id: 'e1', messageId: 'm1', sentAt: 't' });
+    const client = await connect(send);
+
+    await client.callTool({
+      name: 'send_email',
+      arguments: {
+        from: 'me@example.com',
+        to: ['you@elsewhere.com'],
+        text: 'hi',
+        attachments: [{ uploadId: 'AAAAAAAAAAAAAAAAAAAAAA' }],
+      },
+    });
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ attachments: [{ uploadId: 'AAAAAAAAAAAAAAAAAAAAAA' }] }),
+    );
+  });
+});
+
 describe('read tools registration gate (inbound)', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -182,7 +265,7 @@ describe('read tools registration gate (inbound)', () => {
   it('does NOT advertise the read tools when inbound is disabled', async () => {
     const client = await connect(vi.fn());
     const names = (await client.listTools()).tools.map((t) => t.name);
-    expect(names).toEqual(['send_email']);
+    expect(names).toEqual(['send_email', 'create_attachment_upload']);
     expect(names).not.toContain('list_emails');
     expect(names).not.toContain('get_email');
     expect(names).not.toContain('get_email_attachment_url');
@@ -194,7 +277,7 @@ describe('read tools registration gate (inbound)', () => {
       inboundEnabled: true,
     });
     const names = (await client.listTools()).tools.map((t) => t.name);
-    expect(names).toEqual(['send_email']);
+    expect(names).toEqual(['send_email', 'create_attachment_upload']);
   });
 
   it('advertises list_emails / get_email / get_email_attachment_url when inbound is enabled', async () => {

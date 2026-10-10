@@ -6,7 +6,7 @@ import {
 } from '@freemail/shared/storage';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { AttributeType, BillingMode, ProjectionType, Table } from 'aws-cdk-lib/aws-dynamodb';
-import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
+import { BlockPublicAccess, Bucket, BucketEncryption, HttpMethods } from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 
 const STRING = AttributeType.STRING;
@@ -20,6 +20,11 @@ const STRING = AttributeType.STRING;
  * All tables are on-demand (PAY_PER_REQUEST): a single-tenant deployment has
  * spiky, low traffic, so there's no capacity to provision.
  */
+export interface DataConstructProps {
+  /** The web app's origin (`https://<appDomain>`): the only origin that may PUT uploads. */
+  readonly appOrigin: string;
+}
+
 export class DataConstruct extends Construct {
   /** Single-tenant password hash + rotating refresh tokens (TTL on `ttl`). */
   readonly authTable: Table;
@@ -37,7 +42,7 @@ export class DataConstruct extends Construct {
    */
   readonly quarantineBucket: Bucket;
 
-  constructor(scope: Construct, id: string) {
+  constructor(scope: Construct, id: string, props: DataConstructProps) {
     super(scope, id);
 
     this.authTable = new Table(this, 'AuthTable', {
@@ -80,13 +85,29 @@ export class DataConstruct extends Construct {
 
     this.mailBucket = this.privateBucket('MailBucket');
     this.quarantineBucket = this.privateBucket('QuarantineBucket');
+    // Attachment uploads go straight from the browser to S3 with a presigned PUT, so the
+    // bucket must answer that origin's CORS preflight — for PUT only, and only from the app.
+    this.mailBucket.addCorsRule({
+      allowedMethods: [HttpMethods.PUT],
+      allowedOrigins: [props.appOrigin],
+      allowedHeaders: ['content-type'],
+      exposedHeaders: ['etag'],
+      maxAge: 3000,
+    });
+    // An upload is copied to its permanent key when it is sent; one never sent is swept.
+    this.mailBucket.addLifecycleRule({
+      id: 'ExpireUnsentUploads',
+      prefix: 'uploads/',
+      expiration: Duration.days(1),
+      abortIncompleteMultipartUploadAfter: Duration.days(1),
+    });
     // SES's raw inbound MIME becomes staging once ingest has stored what the message needs (its
     // body + attachments, or — for a failed message — a copy in the quarantine bucket): the
     // parser then tags it, and only then does it expire — it backs just the short-lived
     // "Download original". Untagged raw MIME (a message whose ingest dead-lettered, anything
     // from before tagging) is the only copy and is kept.
     // Scoped to `inbound/` ONLY — stored bodies, attachments, and the sent archive are
-    // permanent, and sent-mail attachment downloads point at `attachments/outbound/*`.
+    // permanent, and sent-mail attachment downloads point at `attachments/sent/*`.
     this.mailBucket.addLifecycleRule({
       id: 'ExpireIngestedInboundRawMime',
       prefix: 'inbound/',

@@ -39,6 +39,23 @@ describe('readServiceConfig', () => {
     expect(readServiceConfig(COMPLETE).sesConfigurationSet).toBeUndefined();
   });
 
+  it('reads the optional attachment embed limits as byte counts', () => {
+    const config = readServiceConfig({
+      ...COMPLETE,
+      EMBED_MAX_BYTES: '1048576',
+      EMBED_TOTAL_BYTES: '5242880',
+    });
+    expect(config.embedMaxBytes).toBe(1048576);
+    expect(config.embedTotalBytes).toBe(5242880);
+    expect(readServiceConfig(COMPLETE).embedMaxBytes).toBeUndefined();
+  });
+
+  it.each(['0', '-1', '1.5', '3MB'])('rejects an embed limit of %s', (value) => {
+    expect(() => readServiceConfig({ ...COMPLETE, EMBED_MAX_BYTES: value })).toThrow(
+      /EMBED_MAX_BYTES/,
+    );
+  });
+
   it('names EVERY missing variable in one error, not just the first', () => {
     const partial = { ...COMPLETE };
     delete partial.AUTH_TABLE;

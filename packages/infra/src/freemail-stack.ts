@@ -26,7 +26,11 @@ export class FreeMailStack extends Stack {
     this.warnCustomDomainDelegation(props.config);
 
     const dns = new DnsConstruct(this, 'Dns', { hostedZone: props.config.hostedZone });
-    const data = new DataConstruct(this, 'Data');
+    const appOrigin = `https://${props.config.appDomain}`;
+    const apiBaseUrl = `https://${props.config.apiDomain}`;
+    const data = new DataConstruct(this, 'Data', { appOrigin });
+    // Where the browser PUTs attachment uploads (the presigned URLs' virtual-hosted S3 host).
+    const uploadOrigin = `https://${data.mailBucket.bucketName}.s3.${props.config.region}.amazonaws.com`;
     const ses = new SesConstruct(this, 'Ses', {
       hostedZone: dns.hostedZone,
       emailDomain: props.config.emailDomain,
@@ -49,9 +53,6 @@ export class FreeMailStack extends Stack {
     // Both custom domains are required (#47), so these origins always exist. The app
     // origin is what the API's CORS policy allowlists; the api origin is what the SPA
     // calls and what the app CSP's connect-src names.
-    const appOrigin = `https://${props.config.appDomain}`;
-    const apiBaseUrl = `https://${props.config.apiDomain}`;
-
     const api = new ApiConstruct(this, 'Api', {
       authTable: data.authTable,
       apiKeysTable: data.apiKeysTable,
@@ -64,6 +65,7 @@ export class FreeMailStack extends Stack {
       inboundEnabled: props.config.inbound.enabled,
       customDomain: { domainName: props.config.apiDomain, hostedZone: dns.hostedZone },
       appOrigin,
+      ...(props.config.attachments ? { attachments: props.config.attachments } : {}),
     });
 
     // The React SPA on CloudFront + S3, learning the API origin at runtime. SPA-only
@@ -71,6 +73,7 @@ export class FreeMailStack extends Stack {
     // cross-origin at `apiBaseUrl`.
     const web = new WebConstruct(this, 'Web', {
       apiBaseUrl,
+      uploadOrigin,
       assetPath: resolveWebAssetPath(),
       inboundEnabled: props.config.inbound.enabled,
       customDomain: { domainName: props.config.appDomain, hostedZone: dns.hostedZone },

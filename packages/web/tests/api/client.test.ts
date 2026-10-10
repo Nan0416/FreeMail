@@ -187,6 +187,61 @@ describe('FreeMailClient (cookie auth)', () => {
     });
   });
 
+  it('createUpload asks the API where to PUT a file', async () => {
+    const upload = {
+      uploadId: 'u1',
+      uploadUrl: 'https://bucket.s3.us-east-1.amazonaws.com/uploads/u1?X-Amz-Signature=s',
+      uploadMethod: 'PUT',
+      expiresAt: '2026-10-10T00:15:00.000Z',
+    };
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(json(201, upload));
+    const client = makeClient(fetchMock);
+
+    const result = await client.createUpload({
+      filename: 'a.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 3,
+    });
+    expect(result).toEqual(upload);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`${BASE}/attachments/uploads`);
+    expect(init?.method).toBe('POST');
+    expect(init?.credentials).toBe('include');
+    expect(JSON.parse(String(init?.body))).toEqual({
+      filename: 'a.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 3,
+    });
+  });
+
+  it('putUpload PUTs the bytes straight to S3 — no cookies, no auth header', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }));
+    const client = makeClient(fetchMock);
+    const file = new Blob(['abc'], { type: 'application/pdf' });
+
+    await client.putUpload('https://bucket.s3.example/uploads/u1?sig', file);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://bucket.s3.example/uploads/u1?sig');
+    expect(init?.method).toBe('PUT');
+    expect(init?.body).toBe(file);
+    expect(init?.credentials).toBeUndefined();
+    expect(init?.headers).toEqual({ 'Content-Type': 'application/pdf' });
+  });
+
+  it('putUpload fails with an ApiError when S3 rejects the upload', async () => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(null, { status: 403 }));
+    const client = makeClient(fetchMock);
+
+    await expect(client.putUpload('https://s3/u1', new Blob(['x']))).rejects.toBeInstanceOf(
+      ApiError,
+    );
+  });
+
   it('logout posts to the revoke endpoint with no body and resolves on a 2xx', async () => {
     const fetchMock = vi
       .fn<typeof fetch>()

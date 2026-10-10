@@ -5,7 +5,7 @@
  * management. One config type could not describe both Lambdas without being wrong for one.
  */
 import { z } from 'zod';
-import { envString, parseEnv } from '../utils/env-config.js';
+import { envPositiveInt, envString, parseEnv } from '../utils/env-config.js';
 
 export interface McpConfig {
   readonly emailsTable: string;
@@ -14,6 +14,10 @@ export interface McpConfig {
   readonly emailDomain: string;
   readonly downloadBaseUrl: string;
   readonly sesConfigurationSet: string | undefined;
+  /** Embed an attachment at most this size (bytes); undefined → the default. */
+  readonly embedMaxBytes: number | undefined;
+  /** Cap on one message's embedded attachments (bytes); undefined → the default. */
+  readonly embedTotalBytes: number | undefined;
   /**
    * Gates the read tools (#13). Fail-closed: only the exact string `'true'` enables them,
    * so a typo'd or absent value leaves the mailbox unreadable rather than exposed.
@@ -28,6 +32,8 @@ const ENV_SCHEMA = z.object({
   EMAIL_DOMAIN: envString(),
   DOWNLOAD_BASE_URL: envString(),
   SES_CONFIGURATION_SET: envString().optional(),
+  EMBED_MAX_BYTES: envPositiveInt().optional(),
+  EMBED_TOTAL_BYTES: envPositiveInt().optional(),
   INBOUND_ENABLED: envString().optional(),
 });
 
@@ -40,6 +46,8 @@ export function getMcpConfig(env: NodeJS.ProcessEnv = process.env): McpConfig {
     emailDomain: parsed.EMAIL_DOMAIN,
     downloadBaseUrl: parsed.DOWNLOAD_BASE_URL,
     sesConfigurationSet: parsed.SES_CONFIGURATION_SET,
+    embedMaxBytes: parsed.EMBED_MAX_BYTES,
+    embedTotalBytes: parsed.EMBED_TOTAL_BYTES,
     inboundEnabled: parsed.INBOUND_ENABLED === 'true',
   };
 }

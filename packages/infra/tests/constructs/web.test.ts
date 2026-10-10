@@ -21,6 +21,30 @@ function synth(overrides: Partial<FreeMailConfig> = {}): Template {
   );
 }
 
+/**
+ * The deployed app CSP as one string. It names the mail bucket's S3 host, whose name is a
+ * deploy-time token, so CloudFormation receives an `Fn::Join`; each `Ref` renders as `{Id}`.
+ */
+function deployedCsp(template: Template): string {
+  const policies = Object.values(template.findResources('AWS::CloudFront::ResponseHeadersPolicy'));
+  expect(policies).toHaveLength(1);
+  return renderCfn(
+    policies[0].Properties.ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy
+      .ContentSecurityPolicy,
+  );
+}
+
+function renderCfn(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  const fn = value as { 'Fn::Join'?: [string, unknown[]]; Ref?: string };
+  if (fn['Fn::Join']) {
+    return fn['Fn::Join'][1].map(renderCfn).join(fn['Fn::Join'][0]);
+  }
+  return `{${fn.Ref ?? 'token'}}`;
+}
+
 describe('WebConstruct', () => {
   it('serves the SPA from one CloudFront distribution', () => {
     const template = synth();
@@ -129,16 +153,14 @@ describe('WebConstruct', () => {
     template.hasResourceProperties('AWS::CloudFront::ResponseHeadersPolicy', {
       ResponseHeadersPolicyConfig: {
         SecurityHeadersConfig: {
-          ContentSecurityPolicy: {
-            ContentSecurityPolicy: Match.stringLikeRegexp("frame-ancestors 'none'"),
-            Override: true,
-          },
+          ContentSecurityPolicy: { ContentSecurityPolicy: Match.anyValue(), Override: true },
           ContentTypeOptions: { Override: true },
           FrameOptions: { FrameOption: 'DENY', Override: true },
           ReferrerPolicy: { ReferrerPolicy: 'no-referrer', Override: true },
         },
       },
     });
+    expect(deployedCsp(template)).toContain("frame-ancestors 'none'");
     // It is attached to the SPA (default) behavior — NOT the /api proxy behavior.
     template.hasResourceProperties('AWS::CloudFront::Distribution', {
       DistributionConfig: { DefaultCacheBehavior: { ResponseHeadersPolicyId: Match.anyValue() } },
@@ -182,22 +204,16 @@ describe('WebConstruct custom domain (appDomain)', () => {
     expect(aliasRecords.every((r) => r.Properties?.AliasTarget !== undefined)).toBe(true);
   });
 
-  it('permits the cross-origin API in the deployed CSP (#47, supersedes #31)', () => {
+  it('permits the cross-origin API and the upload host in the deployed CSP (#47, supersedes #31)', () => {
     // The SPA is now cross-origin with the API, so the app CSP must name the api origin
     // in connect-src or every call is blocked before CORS is even consulted. (config.json
     // itself is bundled into an S3 asset, so its content is asserted directly against
     // `webRuntimeConfigJson` below — the repo's deployed-===-tested pattern.)
-    synth().hasResourceProperties('AWS::CloudFront::ResponseHeadersPolicy', {
-      ResponseHeadersPolicyConfig: {
-        SecurityHeadersConfig: {
-          ContentSecurityPolicy: {
-            ContentSecurityPolicy: Match.stringLikeRegexp(
-              "connect-src 'self' https://api\\.example\\.com",
-            ),
-          },
-        },
-      },
-    });
+    // The mail bucket's own virtual-hosted S3 host (where the presigned PUTs go) — that
+    // bucket only, never a wildcard over S3.
+    expect(deployedCsp(synth())).toMatch(
+      /connect-src 'self' https:\/\/api\.example\.com https:\/\/\{DataMailBucket[0-9A-F]+\}\.s3\.us-east-1\.amazonaws\.com;/,
+    );
   });
 });
 
@@ -222,7 +238,8 @@ describe('webRuntimeConfigJson (deployed config.json content)', () => {
 });
 
 describe('appContentSecurityPolicy', () => {
-  const policy = appContentSecurityPolicy('https://api.example.com');
+  const upload = 'https://mail-bucket.s3.us-east-1.amazonaws.com';
+  const policy = appContentSecurityPolicy('https://api.example.com', upload);
 
   it('is a strict deny-by-default policy that still permits the reader srcdoc frame', () => {
     expect(policy).toContain("default-src 'self'");
@@ -239,7 +256,7 @@ describe('appContentSecurityPolicy', () => {
   it('names the api origin in connect-src so the cross-origin API calls are permitted', () => {
     // CSP and CORS are independent gates: without this the app CSP would block every
     // API call even though the API's CORS policy allows it.
-    expect(policy).toContain("connect-src 'self' https://api.example.com");
+    expect(policy).toContain(`connect-src 'self' https://api.example.com ${upload}`);
   });
 
   it('permits https: images so the inherited policy does not block "show images"', () => {
@@ -248,11 +265,13 @@ describe('appContentSecurityPolicy', () => {
     expect(policy).toContain("img-src 'self' data: https:");
   });
 
-  it('adds exactly ONE extra origin, and only to connect-src', () => {
+  it('adds exactly two extra origins (api + upload host), and only to connect-src', () => {
     const api = 'https://api.example.com';
-    const directivesNamingApi = policy.split('; ').filter((directive) => directive.includes(api));
-    expect(directivesNamingApi).toEqual([`connect-src 'self' ${api}`]);
-    // script-src is never widened — the api origin must not become a script source.
+    const widened = policy
+      .split('; ')
+      .filter((directive) => directive.includes(api) || directive.includes(upload));
+    expect(widened).toEqual([`connect-src 'self' ${api} ${upload}`]);
+    // script-src is never widened — neither origin may become a script source.
     expect(policy).toContain("script-src 'self'");
   });
 });

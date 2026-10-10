@@ -147,12 +147,20 @@ describe('FreeMailStack', () => {
 
   it('expires only fully ingested raw inbound MIME after the retention window', () => {
     const template = synth(makeConfig());
-    // Exactly one rule: inbound/ AND the ingested tag. Untagged raw MIME (failed or
-    // dead-lettered mail — the only copy) is kept; bodies, attachments, and the sent archive
-    // are permanent (sent-mail downloads point at attachments/outbound/*).
+    // Exactly two rules. Raw inbound: inbound/ AND the ingested tag — untagged raw MIME
+    // (dead-lettered mail — the only copy) is kept. Uploads: never-sent ones are swept a day
+    // later (a sent one was copied to attachments/sent/*). Bodies, attachments, and the sent
+    // archive are permanent.
     template.hasResourceProperties('AWS::S3::Bucket', {
       LifecycleConfiguration: {
         Rules: [
+          {
+            Id: 'ExpireUnsentUploads',
+            Prefix: 'uploads/',
+            ExpirationInDays: 1,
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 1 },
+            Status: 'Enabled',
+          },
           {
             Id: 'ExpireIngestedInboundRawMime',
             Prefix: 'inbound/',
@@ -164,6 +172,22 @@ describe('FreeMailStack', () => {
       },
     });
     expect(INBOUND_RAW_RETENTION_DAYS).toBe(14);
+  });
+
+  it('lets only the app origin PUT uploads straight to the mail bucket (CORS)', () => {
+    synth(makeConfig()).hasResourceProperties('AWS::S3::Bucket', {
+      CorsConfiguration: {
+        CorsRules: [
+          {
+            AllowedMethods: ['PUT'],
+            AllowedOrigins: ['https://app.example.com'],
+            AllowedHeaders: ['content-type'],
+            ExposedHeaders: ['etag'],
+            MaxAge: 3000,
+          },
+        ],
+      },
+    });
   });
 
   it('lets the inbound parser tag the raw MIME it has fully ingested', () => {

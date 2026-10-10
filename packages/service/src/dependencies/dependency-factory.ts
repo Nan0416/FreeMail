@@ -33,6 +33,9 @@ import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import type { ApiKeysDao } from '../data/api-keys-dao.js';
 import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
+import { S3UploadStore } from '../facades/s3-upload-store.js';
+import { AttachmentUploadService } from '../services/attachment-upload-service.js';
+import { createUploadPresignClient, embedLimits } from './uploads.js';
 import { S3AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import { DownloadService } from '../services/download-service.js';
 import { EmailReadService } from '../services/email-read-service.js';
@@ -52,6 +55,7 @@ export interface Dependencies {
   readonly emailService: EmailService;
   readonly emailReadService: EmailReadService;
   readonly downloadService: DownloadService;
+  readonly attachmentUploadService: AttachmentUploadService;
 }
 
 export class DependencyFactory {
@@ -75,6 +79,7 @@ export class DependencyFactory {
     const inboundStore = new S3InboundObjectStore(s3, this.config.mailBucket);
     const outboundStore = new S3OutboundObjectStore(s3, this.config.mailBucket);
     const bodyStore = new S3MailBodyStore(s3, this.config.mailBucket);
+    const uploadStore = new S3UploadStore(s3, createUploadPresignClient(), this.config.mailBucket);
 
     const sesSender = new SesV2Sender({
       client: new SESv2Client({}),
@@ -99,6 +104,8 @@ export class DependencyFactory {
         objectStore: outboundStore,
         bodies: bodyStore,
         tokensDao: downloadTokensDao,
+        uploads: uploadStore,
+        ...embedLimits(this.config),
         downloadBaseUrl: this.config.downloadBaseUrl,
         emailDomain: this.config.emailDomain,
       }),
@@ -110,6 +117,7 @@ export class DependencyFactory {
         rawMime: inboundStore,
       }),
       downloadService: new DownloadService({ tokensDao: downloadTokensDao, presigner }),
+      attachmentUploadService: new AttachmentUploadService({ uploads: uploadStore }),
     };
   }
 }
