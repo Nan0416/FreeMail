@@ -21,11 +21,7 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { type DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { createDocumentClient } from '../data/document-client.js';
 import { DdbEmailsDao } from '../data/ddb-emails-dao.js';
-import type {
-  EmailsReadDao,
-  GetEmailOutput,
-  SentAttachmentDescriptor,
-} from '../data/emails-dao.js';
+import type { EmailsDao, GetEmailOutput, SentAttachmentDescriptor } from '../data/emails-dao.js';
 import { EmailEntity } from '../data/entities.js';
 import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import {
@@ -45,7 +41,7 @@ export interface SentAttachmentsWriter {
 }
 
 export interface BackfillDeps {
-  readonly emailsDao: EmailsReadDao;
+  readonly emailsDao: EmailsDao;
   readonly writer: SentAttachmentsWriter;
   readonly rawMime: RawMimeSource;
   readonly objectStore: OutboundObjectStore;
@@ -88,15 +84,15 @@ export async function backfillSentAttachments(deps: BackfillDeps): Promise<Backf
       limit: PAGE_SIZE,
       afterSk,
     });
-    for (const row of page) {
+    for (const row of page.emails) {
       scanned += 1;
       const outcome = await backfillRow(row, deps, log);
       outcomes[outcome] += 1;
     }
-    if (page.length < PAGE_SIZE) {
+    if (page.emails.length < PAGE_SIZE) {
       break;
     }
-    afterSk = page[page.length - 1].sk;
+    afterSk = page.emails[page.emails.length - 1].sk;
   }
   return { scanned, outcomes };
 }

@@ -67,21 +67,17 @@ function fileToAttachment(file: File): Promise<EmailAttachment> {
  * centred sheet when maximized. Edits auto-save to a browser-local draft (see
  * `lib/drafts.ts`); closing keeps the draft, discarding deletes it (with undo).
  */
-export function ComposeWindow({
-  init,
-  onClose,
-  onAttachmentCountChange,
-}: ComposeWindowProps): React.JSX.Element {
-  const { client } = useAuth();
-  const draftId = useRef(init.draftId ?? newDraftId());
-  const [from, setFrom] = useState(init.from);
-  const [fromName, setFromName] = useState(init.fromName ?? '');
-  const [to, setTo] = useState(init.to ?? '');
-  const [cc, setCc] = useState(init.cc ?? '');
-  const [bcc, setBcc] = useState(init.bcc ?? '');
-  const [showCcBcc, setShowCcBcc] = useState(Boolean(init.cc || init.bcc));
-  const [subject, setSubject] = useState(init.subject ?? '');
-  const [html, setHtml] = useState(init.html ?? '');
+export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
+  const auth = useAuth();
+  const draftId = useRef(props.init.draftId ?? newDraftId());
+  const [from, setFrom] = useState(props.init.from);
+  const [fromName, setFromName] = useState(props.init.fromName ?? '');
+  const [to, setTo] = useState(props.init.to ?? '');
+  const [cc, setCc] = useState(props.init.cc ?? '');
+  const [bcc, setBcc] = useState(props.init.bcc ?? '');
+  const [showCcBcc, setShowCcBcc] = useState(Boolean(props.init.cc || props.init.bcc));
+  const [subject, setSubject] = useState(props.init.subject ?? '');
+  const [html, setHtml] = useState(props.init.html ?? '');
   const [text, setText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [mode, setMode] = useState<WindowMode>('normal');
@@ -91,7 +87,7 @@ export function ComposeWindow({
   // The re-entrancy guard. `busy` drives the UI but only lands on the next render, so
   // a second ⌘↵ in the same tick would still see it false and send twice.
   const sending = useRef(false);
-  const [savedAt, setSavedAt] = useState<Date | null>(init.draftId ? new Date() : null);
+  const [savedAt, setSavedAt] = useState<Date | null>(props.init.draftId ? new Date() : null);
   const fileInput = useRef<HTMLInputElement>(null);
   const toInput = useRef<HTMLInputElement>(null);
   // Set once sent or discarded, so the unmount-save does not resurrect the draft.
@@ -102,11 +98,11 @@ export function ComposeWindow({
       StarterKit.configure({ link: { openOnClick: false, autolink: true } }),
       Placeholder.configure({ placeholder: 'Write your message…' }),
     ],
-    content: init.html ?? '',
-    onCreate: ({ editor: e }) => setText(e.getText()),
-    onUpdate: ({ editor: e }) => {
-      setHtml(e.getHTML());
-      setText(e.getText());
+    content: props.init.html ?? '',
+    onCreate: (event) => setText(event.editor.getText()),
+    onUpdate: (event) => {
+      setHtml(event.editor.getHTML());
+      setText(event.editor.getText());
     },
   });
 
@@ -142,8 +138,8 @@ export function ComposeWindow({
   }, [from, fromName, to, cc, bcc, subject, html, hasContent]);
 
   useEffect(() => {
-    onAttachmentCountChange?.(files.length);
-  }, [files.length, onAttachmentCountChange]);
+    props.onAttachmentCountChange?.(files.length);
+  }, [files.length, props.onAttachmentCountChange]);
 
   // Flush on unmount (window closed, or replaced by another compose).
   useEffect(
@@ -158,12 +154,12 @@ export function ComposeWindow({
   // Focus the first field that needs input, once the editor exists. `init` is fixed for
   // the life of the window, so this runs on open only.
   useEffect(() => {
-    if (!init.to) {
+    if (!props.init.to) {
       toInput.current?.focus();
     } else {
       editor?.commands.focus('start');
     }
-  }, [editor, init.to]);
+  }, [editor, props.init.to]);
 
   function close(): void {
     if (hasContent) {
@@ -171,14 +167,14 @@ export function ComposeWindow({
       toast('Draft saved', { description: 'Find it in Drafts.' });
     }
     finished.current = true;
-    onClose();
+    props.onClose();
   }
 
   function discard(): void {
     const kept = snapshot();
     finished.current = true;
     deleteDraft(draftId.current);
-    onClose();
+    props.onClose();
     if (hasContent) {
       toast('Draft discarded', {
         action: { label: 'Undo', onClick: () => saveDraft(kept) },
@@ -241,12 +237,12 @@ export function ComposeWindow({
         text: bodyText,
         ...(attachments.length ? { attachments } : {}),
       };
-      await client.sendEmail(request);
+      await auth.client.sendEmail(request);
       setLastSender({ address: request.from, name: fromName.trim() });
       finished.current = true;
       deleteDraft(draftId.current);
       toast.success('Message sent');
-      onClose();
+      props.onClose();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Failed to send the message.');
     } finally {
@@ -483,12 +479,7 @@ export function ComposeWindow({
 const fieldInput =
   'h-9 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground/80';
 
-function Field({
-  label,
-  htmlFor,
-  hideLabel,
-  children,
-}: {
+function Field(props: {
   label: string;
   htmlFor: string;
   hideLabel?: boolean;
@@ -497,23 +488,17 @@ function Field({
   return (
     <div className="flex items-center gap-2 focus-within:border-primary/40">
       <label
-        htmlFor={htmlFor}
-        className={cn('w-12 shrink-0 text-muted-foreground', hideLabel && 'sr-only')}
+        htmlFor={props.htmlFor}
+        className={cn('w-12 shrink-0 text-muted-foreground', props.hideLabel && 'sr-only')}
       >
-        {label}
+        {props.label}
       </label>
-      {children}
+      {props.children}
     </div>
   );
 }
 
-function WindowButton({
-  label,
-  onClick,
-  className,
-  dark,
-  children,
-}: {
+function WindowButton(props: {
   label: string;
   onClick: () => void;
   className?: string;
@@ -527,18 +512,18 @@ function WindowButton({
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label={label}
-          onClick={onClick}
+          aria-label={props.label}
+          onClick={props.onClick}
           className={cn(
             'size-7 text-muted-foreground [&_svg]:size-4',
-            dark && 'text-background/70 hover:bg-white/10 hover:text-background',
-            className,
+            props.dark && 'text-background/70 hover:bg-white/10 hover:text-background',
+            props.className,
           )}
         >
-          {children}
+          {props.children}
         </Button>
       </TooltipTrigger>
-      <TooltipContent>{label}</TooltipContent>
+      <TooltipContent>{props.label}</TooltipContent>
     </Tooltip>
   );
 }

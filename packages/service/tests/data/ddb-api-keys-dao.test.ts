@@ -110,7 +110,7 @@ describe('DdbApiKeysDao', () => {
     await dao.createApiKey(record({ keyId: 'b', createdAt: 2 }));
     await dao.createApiKey(record({ keyId: 'c', createdAt: 3 }));
 
-    const ids = (await dao.listApiKeys()).map((r) => r.keyId).sort();
+    const ids = (await dao.listApiKeys({})).apiKeys.map((r) => r.keyId).sort();
     expect(ids).toEqual(['a', 'b', 'c']);
   });
 
@@ -120,6 +120,6 @@ describe('DdbApiKeysDao', () => {
     await dao.createApiKey(record());
     await dao.deleteApiKey({ keyId: 'k1' });
     expect(await dao.getApiKey({ keyId: 'k1' })).toBeNull();
-    await expect(dao.deleteApiKey({ keyId: 'missing' })).resolves.toBeUndefined();
+    await expect(dao.deleteApiKey({ keyId: 'missing' })).resolves.toEqual({});
   });
 });

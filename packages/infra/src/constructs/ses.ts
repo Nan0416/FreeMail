@@ -109,10 +109,9 @@ export class SesConstruct extends Construct {
 
   constructor(scope: Construct, id: string, props: SesConstructProps) {
     super(scope, id);
-    const { hostedZone, emailDomain, region, sesIdentityMode } = props;
 
     this.bounceComplaintTopic = new Topic(this, 'BounceComplaintTopic', {
-      displayName: `FreeMail SES bounces & complaints (${emailDomain})`,
+      displayName: `FreeMail SES bounces & complaints (${props.emailDomain})`,
     });
 
     // Enable the account-level suppression list for bounces + complaints so a hard
@@ -136,10 +135,10 @@ export class SesConstruct extends Construct {
     // Import mode: the identity exists and is verified, and its DKIM/SPF/MAIL-FROM/DMARC
     // records are already in the zone. Creating either here would fail the deploy, so we
     // create neither and leave that surface entirely to the deployer.
-    if (sesIdentityMode === 'create') {
-      this.mailFromDomain = `bounce.${emailDomain}`;
+    if (props.sesIdentityMode === 'create') {
+      this.mailFromDomain = `bounce.${props.emailDomain}`;
       this.emailIdentity = new EmailIdentity(this, 'Identity', {
-        identity: Identity.domain(emailDomain),
+        identity: Identity.domain(props.emailDomain),
         configurationSet: this.configurationSet,
         dkimSigning: true,
         mailFromDomain: this.mailFromDomain,
@@ -150,9 +149,9 @@ export class SesConstruct extends Construct {
 
       this.writeAuthRecords(
         this.emailIdentity,
-        hostedZone,
-        emailDomain,
-        region,
+        props.hostedZone,
+        props.emailDomain,
+        props.region,
         props.inbound !== undefined,
       );
     }
@@ -163,9 +162,9 @@ export class SesConstruct extends Construct {
     // The stack's `confirmInboundMx` acknowledgement gate still fires first, at synth.
     if (props.inbound) {
       new InboundConstruct(this, 'Inbound', {
-        hostedZone,
-        emailDomain,
-        region,
+        hostedZone: props.hostedZone,
+        emailDomain: props.emailDomain,
+        region: props.region,
         mailBucket: props.inbound.mailBucket,
         emailsTable: props.inbound.emailsTable,
       });

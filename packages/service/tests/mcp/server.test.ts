@@ -88,9 +88,8 @@ describe('buildMcpServer send_email', () => {
 
   it('advertises send_email with a type-only schema (only `from` required)', async () => {
     const client = await connect(vi.fn());
-    const { tools } = await client.listTools();
 
-    const sendEmail = tools.find((tool) => tool.name === 'send_email');
+    const sendEmail = (await client.listTools()).tools.find((tool) => tool.name === 'send_email');
     expect(sendEmail).toBeDefined();
     expect(Object.keys(sendEmail?.inputSchema.properties ?? {})).toEqual(
       expect.arrayContaining([

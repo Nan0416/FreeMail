@@ -55,30 +55,32 @@ export class InboundProcessor {
 
   /** Process the object identified by a raw (still-encoded) S3 event key. */
   async process(request: ProcessInboundServiceRequest): Promise<ProcessInboundServiceResponse> {
-    const { rawKey } = request;
-    const key = validateInboundEventKey(rawKey);
+    const key = validateInboundEventKey(request.rawKey);
     if (!key.ok) {
       // No validated stable id → cannot write a keyed row. Log-and-succeed (no retry).
       return { outcome: 'skipped', reason: key.reason };
     }
-    const { messageId, rawS3Key } = key;
-
-    const head = await this.store.head(rawS3Key);
+    const head = await this.store.head(key.rawS3Key);
     if (!head) {
-      return { outcome: 'skipped', reason: 'object not found', messageId };
+      return { outcome: 'skipped', reason: 'object not found', messageId: key.messageId };
     }
     const receivedAt = head.lastModified.toISOString();
-    const base = { messageId, receivedAt, rawS3Key, sizeBytes: head.sizeBytes };
+    const base = {
+      messageId: key.messageId,
+      receivedAt,
+      rawS3Key: key.rawS3Key,
+      sizeBytes: head.sizeBytes,
+    };
 
     // Size gate BEFORE download — never fetch an over-cap object.
     if (head.sizeBytes > MAX_RAW_MESSAGE_BYTES) {
-      return this.commit(this.oversizeRecord(base), messageId);
+      return this.commit(this.oversizeRecord(base), key.messageId);
     }
 
     const writtenKeys: string[] = [];
     const sink: AttachmentSink = {
       store: async (partIndex, filename, contentType, bytes) => {
-        const s3Key = `${ATTACHMENTS_PREFIX}${messageId}/${partIndex}`;
+        const s3Key = `${ATTACHMENTS_PREFIX}${key.messageId}/${partIndex}`;
         await this.store.putAttachment(s3Key, bytes);
         writtenKeys.push(s3Key);
         return {
@@ -91,7 +93,7 @@ export class InboundProcessor {
       },
     };
 
-    const stream = await this.store.getStream(rawS3Key);
+    const stream = await this.store.getStream(key.rawS3Key);
     const parsed = await parseInbound(stream, sink); // rejects only on infra → caller retries
 
     if (parsed.parseStatus !== 'ok') {
@@ -99,7 +101,7 @@ export class InboundProcessor {
       // written this attempt is unreachable — best-effort delete it anyway.
       await this.cleanup(writtenKeys);
     }
-    return this.commit(this.record(base, parsed), messageId);
+    return this.commit(this.record(base, parsed), key.messageId);
   }
 
   /** Conditional-put the row (the commit marker) and map the outcome. */
@@ -107,8 +109,8 @@ export class InboundProcessor {
     record: CreateInboundEmailInput,
     messageId: string,
   ): Promise<ProcessInboundServiceResponse> {
-    const { created } = await this.emails.createInboundEmail(record);
-    if (!created) {
+    const result = await this.emails.createInboundEmail(record);
+    if (!result.created) {
       return { outcome: 'duplicate', messageId };
     }
     return { outcome: record.quarantined ? 'quarantined' : 'indexed', messageId };
@@ -125,7 +127,7 @@ export class InboundProcessor {
   }
 
   private oversizeRecord(base: RecordBase): CreateInboundEmailInput {
-    const { quarantined } = decideExposure(ABSENT_VERDICTS, 'oversize');
+    const exposure = decideExposure(ABSENT_VERDICTS, 'oversize');
     return {
       id: base.messageId,
       sesMessageId: base.messageId,
@@ -140,15 +142,15 @@ export class InboundProcessor {
       spamVerdict: ABSENT_VERDICTS.spamVerdict,
       virusVerdict: ABSENT_VERDICTS.virusVerdict,
       parseStatus: 'oversize',
-      quarantined,
+      quarantined: exposure.quarantined,
       rawS3Key: base.rawS3Key,
       sizeBytes: base.sizeBytes,
     };
   }
 
   private record(base: RecordBase, parsed: ParsedInbound): CreateInboundEmailInput {
-    const { exposeContent, quarantined } = decideExposure(parsed.verdicts, parsed.parseStatus);
-    const snippet = exposeContent ? this.snippet(parsed) : undefined;
+    const exposure = decideExposure(parsed.verdicts, parsed.parseStatus);
+    const snippet = exposure.exposeContent ? this.snippet(parsed) : undefined;
     return {
       id: base.messageId,
       sesMessageId: base.messageId,
@@ -162,11 +164,11 @@ export class InboundProcessor {
       headerDate: parsed.headerDate,
       hasAttachments: parsed.attachmentCount > 0,
       attachmentCount: parsed.attachmentCount,
-      attachments: exposeContent ? parsed.attachments : [],
+      attachments: exposure.exposeContent ? parsed.attachments : [],
       spamVerdict: parsed.verdicts.spamVerdict,
       virusVerdict: parsed.verdicts.virusVerdict,
       parseStatus: parsed.parseStatus,
-      quarantined,
+      quarantined: exposure.quarantined,
       rawS3Key: base.rawS3Key,
       sizeBytes: base.sizeBytes,
     };

@@ -10,6 +10,33 @@ deliberately departs from it, the departure is marked **[deviation]** with the r
 
 ---
 
+## Style rules at a glance
+
+The code-shape rules, in one place. Each links to the section with the reasoning and the
+edge cases; the tag says what catches a violation.
+
+1. **Braces on every control-statement body** — `if` / `else` / `for` / `while` / `do`,
+   even a single statement. _ESLint `curly`_ · §9
+2. **No object destructuring** — not in declarations, parameters, `for…of` heads, or
+   `catch`. Name the object and read its fields (`input.keyId`, `result.created`). Array
+   destructuring is allowed; `packages/web/src/components/ui/**` is exempt. _ESLint
+   `no-restricted-syntax`_ · §9
+3. **Parameter names follow the layer** — DAO methods take `input`, service methods
+   `request`, React components `props`. _Review_ · §9
+4. **One DAO interface per table** — reads and writes together, no `XReadDao` split.
+   _Review_ · §4
+5. **DAO methods: one Input interface in, one Output interface out** — named
+   `<Verb><Entity>Input` / `<Verb><Entity>Output`; `| null` is the only variation. No
+   parameters → empty Input; nothing to report → empty Output; a list → an Output wrapping
+   it; same shape as another type → `interface X extends Y {}`. A union is the only Output
+   that may be a `type`. _Compiler + review_ · §4
+6. **Service methods take one `<Method>ServiceRequest` named `request`** and return the
+   full response shape; genuinely void stays `Promise<void>`. _Review_ · §5
+7. **Interface and type-alias fields are `readonly`.** _ESLint `no-restricted-syntax`_ · §9
+8. **`import type` for type-only imports; relative imports end in `.js`.** _Compiler_ · §9
+
+---
+
 ## 1. Source layout
 
 One folder per architectural role. **No domain folders** (`auth/`, `email/`, `inbound/`) —
@@ -152,21 +179,52 @@ data/index.ts               barrel
 
 ### Method shape
 
-Every method takes one `<Verb><Entity>Input` and returns `<Verb><Entity>Output`,
-`XOutput | null`, or `Promise<void>`. Constructor order is `(client, tableName)`.
+**One interface per table.** Reads and writes live on the same DAO: there is no
+`XReadDao`/`XWriteDao` split. A consumer that only reads still depends on the whole
+interface, and its test fake stubs the methods it never calls. Constructor order is
+`(client, tableName)`.
+
+**Every method takes exactly one `<Verb><Entity>Input` interface and returns exactly one
+`<Verb><Entity>Output` interface.** That holds even when there is nothing to pass or nothing
+to report. The only variation allowed is `| null` on the Output, for a lookup that can miss.
 
 ```ts
 export interface ApiKeysDao {
   createApiKey(input: CreateApiKeyInput): Promise<CreateApiKeyOutput>;
   getApiKey(input: GetApiKeyInput): Promise<GetApiKeyOutput | null>;
-  listApiKeys(): Promise<ReadonlyArray<GetApiKeyOutput>>;
-  deleteApiKey(input: DeleteApiKeyInput): Promise<void>;
+  listApiKeys(input: ListApiKeysInput): Promise<ListApiKeysOutput>;
+  deleteApiKey(input: DeleteApiKeyInput): Promise<DeleteApiKeyOutput>;
 }
 ```
 
-Even single-scalar methods take an object. Two same-typed positional arguments are a
-transposition waiting to happen, and an Input object lets the shape grow without touching a
-signature.
+| Situation                  | Write                                                      | Not                                       |
+| -------------------------- | ---------------------------------------------------------- | ----------------------------------------- |
+| No parameters              | `interface ListApiKeysInput {}`, called with `{}`          | `listApiKeys()`                           |
+| Nothing to report          | `interface DeleteApiKeyOutput {}`, implemented `return {}` | `Promise<void>`                           |
+| A list                     | `interface ListApiKeysOutput { readonly apiKeys: [...] }`  | `Promise<ReadonlyArray<GetApiKeyOutput>>` |
+| May be absent              | `Promise<GetApiKeyOutput \| null>`                         | `undefined`, or a `found` flag            |
+| Same shape as another type | `interface GetLockoutOutput extends LockoutState {}`       | `type GetLockoutOutput = LockoutState`    |
+| One of several shapes      | `type GetEmailOutput = SentRow \| InboundRow`              | —                                         |
+
+An implementation names an unused empty Input `_input`. A union is the one place a `type`
+alias stands in for an Output, because an interface cannot be a union.
+
+Why the strictness:
+
+- **No transpositions.** Even single-scalar methods take an object. Two same-typed positional
+  arguments are a transposition waiting to happen.
+- **Signatures grow in one place.** Adding a field to an existing Input or Output (a cursor
+  on a list, a `created` flag on a write) changes no call site. Turning a bare array, a
+  `void`, or a zero-argument method into one later touches every caller and every fake.
+- **Nothing to second-guess.** Every method reads the same way, so a reviewer never has to
+  ask whether a missing Input or Output was deliberate.
+
+Empty interfaces need a lint exception: `eslint.config.mjs` relaxes `no-empty-object-type`
+for `packages/service/src/data/**` only (see §9).
+
+> **Sharp edge.** An empty interface accepts any non-null value, so `Promise<DeleteApiKeyOutput>`
+> does not stop an implementation from returning `true`. The compiler only checks that
+> _something_ comes back. Return a literal `{}`.
 
 ### Booleans that mean something get a named Output
 
@@ -229,7 +287,7 @@ Responses reuse the shared wire types where one exists (`ListApiKeysResponse`,
 - **Return the full response shape**, not a bare array — `{ keys: [...] }`, so the route
   does no hand-wrapping.
 - **Genuinely void stays `Promise<void>`.** Inventing a field to have a Response type is
-  worse than not having one.
+  worse than not having one. (DAOs are stricter and return an empty Output — see §4.)
 - **Zero-input still takes a Request:** `type ListApiKeysServiceRequest = Record<string, never>`.
   (Not an empty interface — see §9.)
 
@@ -318,10 +376,44 @@ style, or the style will not typecheck.
 
 - All interface properties and type-alias object properties must be **`readonly`**
   (enforced by `no-restricted-syntax` selectors — no type-aware linting needed).
-- `curly: ['error', 'all']` — every control statement takes a block.
-- `no-empty-object-type` (from the recommended set) **rejects `interface X {}`**. When you
-  need "no fields", use `type X = Record<string, never>`; when you need "no return", use
-  `Promise<void>`.
+- `curly: ['error', 'all']` — every `if` / `else` / `for` / `while` / `do` body takes braces,
+  even when it is a single statement.
+
+  ```ts
+  if (!record) {
+    return null;
+  }
+  // never: if (!record) return null;
+  ```
+
+- **No object destructuring** (`no-restricted-syntax` → `ObjectPattern`). This covers
+  declarations, parameters, `for…of` heads and `catch` clauses alike. Name the object and
+  read its fields where you use them, so every use site shows where the value came from.
+
+  ```ts
+  async getApiKey(input: GetApiKeyInput) {          // not ({ keyId }: GetApiKeyInput)
+    ... ApiKeyEntity.key(input.keyId) ...
+  }
+  const result = await dao.createApiKey(...);       // not const { created } = ...
+  if (result.created) { ... }
+  function Sidebar(props: SidebarProps) { ... props.view ... }
+  ```
+
+  Parameter names follow the layer: DAO methods take `input`, service methods `request`,
+  React components `props`. Do not swap destructuring for alias lines
+  (`const keyId = input.keyId;`); that is the same unpacking spelled out by hand. A local
+  copy is fine only when it is genuinely needed: to keep a type narrowing inside a closure,
+  to snapshot a value before it changes, or to apply a default once.
+
+  Two things are allowed. Array destructuring (`const [open, setOpen] = useState(false)`)
+  stays, because a tuple has no field names to preserve. `packages/web/src/components/ui/**`
+  is exempt, because the shadcn CLI generates those files and they strip props with
+  `({ className, ...props })`, an omit-and-spread that has no destructuring-free equivalent.
+
+- `no-empty-object-type` (from the recommended set) **rejects `interface X {}`** everywhere
+  except `packages/service/src/data/**`, where §4 requires empty Input/Output interfaces.
+  Elsewhere, when you need "no fields", use `type X = Record<string, never>`; when you need
+  "no return", use `Promise<void>`.
 - `no-unused-vars` is configured with `argsIgnorePattern: '^_'` to **agree with
   `noUnusedParameters`**. Without this the compiler and the linter disagree, and a parameter
   that must exist but is deliberately unused — an Express error handler's four-argument

@@ -16,7 +16,7 @@ function previewOf(html: string): string {
 }
 
 /** Browser-local drafts (see `lib/drafts.ts`). Opening one resumes it in the compose window. */
-export function DraftList({ drafts, onOpen, onOpenNav }: DraftListProps): React.JSX.Element {
+export function DraftList(props: DraftListProps): React.JSX.Element {
   return (
     <section aria-label="Drafts" className="flex h-full min-w-0 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
@@ -25,33 +25,35 @@ export function DraftList({ drafts, onOpen, onOpenNav }: DraftListProps): React.
           size="icon-sm"
           className="lg:hidden"
           aria-label="Open navigation"
-          onClick={onOpenNav}
+          onClick={props.onOpenNav}
         >
           <Menu />
         </Button>
         <h1 className="text-[15px] font-semibold tracking-tight">Drafts</h1>
-        {drafts.length > 0 && (
-          <span className="ml-1 text-xs text-muted-foreground tabular-nums">{drafts.length}</span>
+        {props.drafts.length > 0 && (
+          <span className="ml-1 text-xs text-muted-foreground tabular-nums">
+            {props.drafts.length}
+          </span>
         )}
       </header>
       <p className="shrink-0 border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
         Drafts are saved in this browser only. Attachments aren&rsquo;t kept.
       </p>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {drafts.length === 0 ? (
+        {props.drafts.length === 0 ? (
           <div className="flex flex-col items-center px-6 py-16 text-center">
             <FileText className="size-8 text-muted-foreground/50" strokeWidth={1.5} />
             <p className="mt-3 text-[13px] text-muted-foreground">No drafts.</p>
           </div>
         ) : (
           <ul aria-label="Drafts" className="divide-y divide-border/70">
-            {drafts.map((draft) => {
+            {props.drafts.map((draft) => {
               const preview = previewOf(draft.html);
               return (
                 <li key={draft.id} className="group relative">
                   <button
                     type="button"
-                    onClick={() => onOpen(draft)}
+                    onClick={() => props.onOpen(draft)}
                     className="block w-full px-4 py-2.5 pr-12 text-left transition-colors hover:bg-accent/70 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
                   >
                     <span className="flex items-baseline gap-2">

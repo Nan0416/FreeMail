@@ -193,16 +193,19 @@ function optionalAttachments(body: Record<string, unknown>): EmailAttachment[] |
       throw emailErrors.invalidRequest(`"attachments[${index}]" must be an object.`);
     }
     const record = item as Record<string, unknown>;
-    const { filename, contentType, contentBase64 } = record;
     if (
-      typeof filename !== 'string' ||
-      typeof contentType !== 'string' ||
-      typeof contentBase64 !== 'string'
+      typeof record.filename !== 'string' ||
+      typeof record.contentType !== 'string' ||
+      typeof record.contentBase64 !== 'string'
     ) {
       throw emailErrors.invalidRequest(
         `"attachments[${index}]" must have string filename, contentType, and contentBase64.`,
       );
     }
-    return { filename, contentType, contentBase64 };
+    return {
+      filename: record.filename,
+      contentType: record.contentType,
+      contentBase64: record.contentBase64,
+    };
   });
 }

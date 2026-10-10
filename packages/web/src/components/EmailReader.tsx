@@ -52,13 +52,8 @@ export interface EmailReaderProps {
   readonly onLoaded?: (email: EmailDetail | null) => void;
 }
 
-export function EmailReader({
-  id,
-  onBack,
-  onReply,
-  onLoaded,
-}: EmailReaderProps): React.JSX.Element {
-  const { client } = useAuth();
+export function EmailReader(props: EmailReaderProps): React.JSX.Element {
+  const auth = useAuth();
   const [state, setState] = useState<State>({ status: 'loading' });
   // Remote images blocked by default (tracking pixels); revealed per message.
   const [showImages, setShowImages] = useState(false);
@@ -70,13 +65,13 @@ export function EmailReader({
     setState({ status: 'loading' });
     setShowImages(false);
     setRevealed(false);
-    onLoaded?.(null);
-    client
-      .getEmail(id)
+    props.onLoaded?.(null);
+    auth.client
+      .getEmail(props.id)
       .then((email) => {
         if (active) {
           setState({ status: 'ready', email });
-          onLoaded?.(email);
+          props.onLoaded?.(email);
         }
       })
       .catch((err: unknown) => {
@@ -92,12 +87,12 @@ export function EmailReader({
     };
     // `onLoaded` is deliberately not a dependency: it is a notification sink, and
     // re-fetching whenever its identity changes would refetch on every parent render.
-  }, [client, id]);
+  }, [auth.client, props.id]);
 
   async function download(attachment: EmailAttachmentInfo): Promise<void> {
     try {
-      const { url } = await client.getAttachmentUrl(id, attachment.id);
-      triggerDownload(url);
+      const response = await auth.client.getAttachmentUrl(props.id, attachment.id);
+      triggerDownload(response.url);
     } catch (err) {
       toast.error(err instanceof ApiError ? err.message : 'Could not download the attachment.');
     }
@@ -105,8 +100,8 @@ export function EmailReader({
 
   async function downloadOriginal(): Promise<void> {
     try {
-      const { url } = await client.getRawUrl(id);
-      triggerDownload(url);
+      const response = await auth.client.getRawUrl(props.id);
+      triggerDownload(response.url);
     } catch (err) {
       toast.error(
         err instanceof ApiError ? err.message : 'Could not download the original message.',
@@ -124,7 +119,7 @@ export function EmailReader({
           size="icon-sm"
           className="md:hidden"
           aria-label="Back to list"
-          onClick={onBack}
+          onClick={props.onBack}
         >
           <ArrowLeft />
         </Button>
@@ -132,7 +127,7 @@ export function EmailReader({
           label="Reply"
           shortcut="R"
           disabled={!email}
-          onClick={() => email && onReply?.(email, 'reply')}
+          onClick={() => email && props.onReply?.(email, 'reply')}
         >
           <Reply />
         </ToolbarButton>
@@ -140,7 +135,7 @@ export function EmailReader({
           label="Reply all"
           shortcut="A"
           disabled={!email}
-          onClick={() => email && onReply?.(email, 'replyAll')}
+          onClick={() => email && props.onReply?.(email, 'replyAll')}
         >
           <ReplyAll />
         </ToolbarButton>
@@ -148,7 +143,7 @@ export function EmailReader({
           label="Forward"
           shortcut="F"
           disabled={!email}
-          onClick={() => email && onReply?.(email, 'forward')}
+          onClick={() => email && props.onReply?.(email, 'forward')}
         >
           <Forward />
         </ToolbarButton>
@@ -229,13 +224,7 @@ async function copy(value: string, message: string): Promise<void> {
   }
 }
 
-function ToolbarButton({
-  label,
-  shortcut,
-  disabled,
-  onClick,
-  children,
-}: {
+function ToolbarButton(props: {
   label: string;
   shortcut: string;
   disabled: boolean;
@@ -248,29 +237,22 @@ function ToolbarButton({
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label={label}
-          disabled={disabled}
-          onClick={onClick}
+          aria-label={props.label}
+          disabled={props.disabled}
+          onClick={props.onClick}
         >
-          {children}
+          {props.children}
         </Button>
       </TooltipTrigger>
       <TooltipContent className="flex items-center gap-2">
-        {label}
-        <Kbd className="border-white/20 bg-white/10 text-background/80">{shortcut}</Kbd>
+        {props.label}
+        <Kbd className="border-white/20 bg-white/10 text-background/80">{props.shortcut}</Kbd>
       </TooltipContent>
     </Tooltip>
   );
 }
 
-function ReaderContent({
-  email,
-  showImages,
-  onShowImages,
-  revealed,
-  onReveal,
-  onDownload,
-}: {
+function ReaderContent(props: {
   email: EmailDetail;
   showImages: boolean;
   onShowImages: () => void;
@@ -278,18 +260,18 @@ function ReaderContent({
   onReveal: () => void;
   onDownload: (attachment: EmailAttachmentInfo) => void;
 }): React.JSX.Element {
-  const notice = quarantineNotice(email);
-  const statusNotice = sentStatusNotice(email);
-  const showBody = !notice || revealed;
-  const kind = bodyKind(email);
+  const notice = quarantineNotice(props.email);
+  const statusNotice = sentStatusNotice(props.email);
+  const showBody = !notice || props.revealed;
+  const kind = bodyKind(props.email);
   // Our own outgoing mail: its remote images are ones we chose to send, so no opt-in gate.
-  const allowImages = showImages || email.direction === 'sent';
+  const allowImages = props.showImages || props.email.direction === 'sent';
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="mx-auto w-full max-w-3xl shrink-0 px-5 md:px-8 pt-6 pb-4">
         <h2 className="text-xl leading-snug font-semibold tracking-tight text-balance">
-          {email.subject || '(no subject)'}
+          {props.email.subject || '(no subject)'}
         </h2>
 
         <div className="mt-5 flex items-start gap-3">
@@ -297,52 +279,54 @@ function ReaderContent({
             aria-hidden
             className={cn(
               'grid size-9 shrink-0 place-items-center rounded-full text-[13px] font-medium',
-              avatarTint(email.from),
+              avatarTint(props.email.from),
             )}
           >
-            {initials(email.fromName, email.from)}
+            {initials(props.email.fromName, props.email.from)}
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-x-2">
-              <span className="font-semibold">{email.fromName || email.from}</span>
-              {email.fromName && (
+              <span className="font-semibold">{props.email.fromName || props.email.from}</span>
+              {props.email.fromName && (
                 <span className="truncate text-[13px] text-muted-foreground">
-                  &lt;{email.from}&gt;
+                  &lt;{props.email.from}&gt;
                 </span>
               )}
             </div>
             <dl className="mt-0.5 grid grid-cols-[auto_1fr] gap-x-1.5 text-[13px] text-muted-foreground">
               <dt>To</dt>
-              <dd className="min-w-0 truncate">{email.to.length ? email.to.join(', ') : '—'}</dd>
-              {email.cc.length > 0 && (
+              <dd className="min-w-0 truncate">
+                {props.email.to.length ? props.email.to.join(', ') : '—'}
+              </dd>
+              {props.email.cc.length > 0 && (
                 <>
                   <dt>Cc</dt>
-                  <dd className="min-w-0 truncate">{email.cc.join(', ')}</dd>
+                  <dd className="min-w-0 truncate">{props.email.cc.join(', ')}</dd>
                 </>
               )}
-              {email.bcc && email.bcc.length > 0 && (
+              {props.email.bcc && props.email.bcc.length > 0 && (
                 <>
                   <dt>Bcc</dt>
-                  <dd className="min-w-0 truncate">{email.bcc.join(', ')}</dd>
+                  <dd className="min-w-0 truncate">{props.email.bcc.join(', ')}</dd>
                 </>
               )}
             </dl>
           </div>
           <time
-            dateTime={email.date}
+            dateTime={props.email.date}
             className="shrink-0 pt-0.5 text-xs text-muted-foreground tabular-nums"
           >
-            {formatLongDate(email.date)}
+            {formatLongDate(props.email.date)}
           </time>
         </div>
 
-        {email.attachments.length > 0 && (
+        {props.email.attachments.length > 0 && (
           <ul aria-label="Attachments" className="mt-5 flex flex-wrap gap-2">
-            {email.attachments.map((attachment) => (
+            {props.email.attachments.map((attachment) => (
               <li key={attachment.id}>
                 <button
                   type="button"
-                  onClick={() => onDownload(attachment)}
+                  onClick={() => props.onDownload(attachment)}
                   aria-label={`Download ${attachment.filename}`}
                   className="group flex max-w-64 items-center gap-2.5 rounded-md border px-2.5 py-1.5 text-left transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 >
@@ -369,8 +353,8 @@ function ReaderContent({
           >
             <ShieldAlert className="mt-px size-4 shrink-0 text-warning" />
             <p className="flex-1">{notice.message}</p>
-            {notice.canReveal && !revealed && (
-              <Button variant="outline" size="xs" onClick={onReveal}>
+            {notice.canReveal && !props.revealed && (
+              <Button variant="outline" size="xs" onClick={props.onReveal}>
                 Show message
               </Button>
             )}
@@ -393,7 +377,7 @@ function ReaderContent({
             Remote images are blocked.
             <button
               type="button"
-              onClick={onShowImages}
+              onClick={props.onShowImages}
               className="font-medium text-primary hover:underline focus-visible:underline focus-visible:outline-none"
             >
               Show images
@@ -404,12 +388,12 @@ function ReaderContent({
 
       {showBody && (
         <>
-          {kind === 'html' && email.html !== undefined && (
-            <EmailBodyFrame html={email.html} allowImages={allowImages} />
+          {kind === 'html' && props.email.html !== undefined && (
+            <EmailBodyFrame html={props.email.html} allowImages={allowImages} />
           )}
           {kind === 'text' && (
             <pre className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-10 font-sans text-sm leading-relaxed whitespace-pre-wrap">
-              {email.text}
+              {props.email.text}
             </pre>
           )}
           {kind === 'none' && (
@@ -417,7 +401,7 @@ function ReaderContent({
               This message has no readable body.
             </p>
           )}
-          {email.bodyTruncated && (
+          {props.email.bodyTruncated && (
             <p className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-6 text-xs text-muted-foreground">
               This message was truncated for display.
             </p>

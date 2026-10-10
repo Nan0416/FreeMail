@@ -31,22 +31,22 @@ export async function getOrCreateSigningKey(authDao: AuthDao): Promise<string> {
     return cache;
   }
 
-  const existing = await authDao.getSigningKey();
+  const existing = await authDao.getSigningKey({});
   if (existing !== null) {
     cache = existing.key;
     return existing.key;
   }
 
   const generated = randomBytes(SIGNING_KEY_BYTES).toString('base64url');
-  const { created } = await authDao.createSigningKey({ key: generated });
-  if (created) {
+  const result = await authDao.createSigningKey({ key: generated });
+  if (result.created) {
     cache = generated;
     return generated;
   }
 
   // Lost the create race to a concurrent cold start — adopt the winner's key, which is
   // the one the authorizer will verify against.
-  const winner = await authDao.getSigningKey();
+  const winner = await authDao.getSigningKey({});
   if (winner === null) {
     throw new Error('Signing key is absent immediately after a lost create race.');
   }
@@ -64,7 +64,7 @@ export async function getSigningKey(authDao: AuthDao): Promise<string | null> {
   if (cache !== undefined) {
     return cache;
   }
-  const existing = await authDao.getSigningKey();
+  const existing = await authDao.getSigningKey({});
   if (existing !== null) {
     cache = existing.key;
   }

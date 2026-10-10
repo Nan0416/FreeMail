@@ -2,11 +2,15 @@ import { Readable } from 'node:stream';
 import { MAX_EMAIL_RESPONSE_BYTES, MAX_READ_BODY_BYTES } from '@freemail/shared';
 import { describe, expect, it } from 'vitest';
 import {
-  type EmailsReadDao,
+  type CreateInboundEmailOutput,
+  type CreateSentEmailOutput,
+  type EmailsDao,
   INBOUND_PARTITION,
   SENT_PARTITION,
   type GetEmailOutput,
   type QueryEmailsByDirectionInput,
+  type QueryEmailsByDirectionOutput,
+  type UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
 import type {
   AttachmentPresigner,
@@ -93,22 +97,31 @@ function inboundRow(
   } as GetEmailOutput;
 }
 
-class FakeDao implements EmailsReadDao {
+class FakeDao implements EmailsDao {
   private readonly byKey = new Map<string, GetEmailOutput>();
-  queryImpl: EmailsReadDao['queryDirection'] = () => Promise.resolve([]);
+  queryImpl: (direction: QueryEmailsByDirectionInput['direction']) => Promise<GetEmailOutput[]> =
+    () => Promise.resolve([]);
 
   put(pk: string, row: GetEmailOutput): string {
     this.byKey.set(`${pk}|${row.sk}`, row);
     return encodeEmailRef({ pk, sk: row.sk });
   }
+  createSentEmail(): Promise<CreateSentEmailOutput> {
+    return Promise.resolve({});
+  }
+  updateSentEmailStatus(): Promise<UpdateSentEmailStatusOutput> {
+    return Promise.resolve({});
+  }
+  createInboundEmail(): Promise<CreateInboundEmailOutput> {
+    return Promise.resolve({ created: true });
+  }
   getEmail(key: { pk: string; sk: string }): Promise<GetEmailOutput | null> {
     return Promise.resolve(this.byKey.get(`${key.pk}|${key.sk}`) ?? null);
   }
-  queryEmailsByDirection({
-    direction,
-    ...opts
-  }: QueryEmailsByDirectionInput): Promise<GetEmailOutput[]> {
-    return this.queryImpl(direction, opts);
+  queryEmailsByDirection(
+    input: QueryEmailsByDirectionInput,
+  ): Promise<QueryEmailsByDirectionOutput> {
+    return this.queryImpl(input.direction).then((emails) => ({ emails }));
   }
 }
 
@@ -191,13 +204,13 @@ describe('EmailReadService.getEmail', () => {
   it('sent with archive (#29) → materializes body via assumeExposed, skips the verdict gate, surfaces status', async () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
-    const { fn, calls } = fakeParse({ textBody: 'my sent body', htmlBody: '<p>sent</p>' });
+    const parser = fakeParse({ textBody: 'my sent body', htmlBody: '<p>sent</p>' });
     const handle = repo.put(
       SENT_PARTITION,
       sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>),
     );
 
-    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail({
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
     });
 
@@ -207,11 +220,11 @@ describe('EmailReadService.getEmail', () => {
     expect(detail.attachments).toEqual([]);
     // Re-parses the sent archive, forcing exposure (no verdict headers on our own MIME).
     expect(rawMime.getStreamCalls).toEqual(['sent/s1']);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].options).toEqual({ assumeExposed: true });
-    expect((calls[0].limits as { maxSnippetSourceBytes: number }).maxSnippetSourceBytes).toBe(
-      MAX_READ_BODY_BYTES,
-    );
+    expect(parser.calls).toHaveLength(1);
+    expect(parser.calls[0].options).toEqual({ assumeExposed: true });
+    expect(
+      (parser.calls[0].limits as { maxSnippetSourceBytes: number }).maxSnippetSourceBytes,
+    ).toBe(MAX_READ_BODY_BYTES);
   });
 
   it('sent row with recorded attachments → lists them WITHOUT the S3 key', async () => {
@@ -234,13 +247,13 @@ describe('EmailReadService.getEmail', () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
     // A corrupt archive → parseInbound resolves with exposed:false; the reader falls back.
-    const { fn } = fakeParse({ parseStatus: 'parse_failed', exposed: false });
+    const parser = fakeParse({ parseStatus: 'parse_failed', exposed: false });
     const handle = repo.put(
       SENT_PARTITION,
       sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>),
     );
 
-    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail({
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
     });
     expect(detail.text).toBeUndefined();
@@ -251,13 +264,13 @@ describe('EmailReadService.getEmail', () => {
   it('send_failed sent row → status surfaced, body materialized from the archive', async () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
-    const { fn } = fakeParse({ textBody: 'the message we tried to send' });
+    const parser = fakeParse({ textBody: 'the message we tried to send' });
     const handle = repo.put(
       SENT_PARTITION,
       sentRow({ rawS3Key: 'sent/s1', status: 'send_failed' } as Partial<GetEmailOutput>),
     );
 
-    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail({
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
     });
     expect(detail.status).toBe('send_failed');
@@ -294,9 +307,9 @@ describe('EmailReadService.getEmail', () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
     const handle = repo.put(INBOUND_PARTITION, inboundRow());
-    const { fn, calls } = fakeParse({ textBody: 'plain body', htmlBody: '<p>body</p>' });
+    const parser = fakeParse({ textBody: 'plain body', htmlBody: '<p>body</p>' });
 
-    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail({
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
     });
 
@@ -304,10 +317,10 @@ describe('EmailReadService.getEmail', () => {
     expect(detail.html).toBe('<p>body</p>');
     expect(rawMime.getStreamCalls).toEqual(['inbound/i1']);
     // Re-parse uses the no-op sink and the read limits (full body retention).
-    expect(calls).toHaveLength(1);
-    expect((calls[0].limits as { maxSnippetSourceBytes: number }).maxSnippetSourceBytes).toBe(
-      MAX_READ_BODY_BYTES,
-    );
+    expect(parser.calls).toHaveLength(1);
+    expect(
+      (parser.calls[0].limits as { maxSnippetSourceBytes: number }).maxSnippetSourceBytes,
+    ).toBe(MAX_READ_BODY_BYTES);
     // The S3 key is stripped from the public descriptor.
     expect(detail.attachments).toEqual([
       { id: '0', filename: 'r.pdf', contentType: 'application/pdf', sizeBytes: 9 },
@@ -318,7 +331,7 @@ describe('EmailReadService.getEmail', () => {
   it('virus/parse-quarantined → metadata-only and NEVER re-parses', async () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
-    const { fn, calls } = fakeParse({});
+    const parser = fakeParse({});
     const handle = repo.put(
       INBOUND_PARTITION,
       inboundRow({
@@ -330,7 +343,7 @@ describe('EmailReadService.getEmail', () => {
       }),
     );
 
-    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail({
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
     });
 
@@ -340,19 +353,19 @@ describe('EmailReadService.getEmail', () => {
     expect(detail.attachments).toEqual([]);
     // Gated on the STORED verdicts — no raw fetch, no parse.
     expect(rawMime.getStreamCalls).toEqual([]);
-    expect(calls).toHaveLength(0);
+    expect(parser.calls).toHaveLength(0);
   });
 
   it('spam-quarantined (virus PASS, parse ok) → viewable-but-hidden: body materialized, quarantined:true', async () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
-    const { fn } = fakeParse({ htmlBody: '<p>spammy</p>' });
+    const parser = fakeParse({ htmlBody: '<p>spammy</p>' });
     const handle = repo.put(
       INBOUND_PARTITION,
       inboundRow({ spamVerdict: 'FAIL', quarantined: true }),
     );
 
-    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail({
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
     });
 
@@ -364,10 +377,10 @@ describe('EmailReadService.getEmail', () => {
   it('flags bodyTruncated when a body part exceeds the read cap', async () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
-    const { fn } = fakeParse({ htmlBody: 'x'.repeat(MAX_READ_BODY_BYTES + 100) });
+    const parser = fakeParse({ htmlBody: 'x'.repeat(MAX_READ_BODY_BYTES + 100) });
     const handle = repo.put(INBOUND_PARTITION, inboundRow());
 
-    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail({
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
     });
     expect(detail.bodyTruncated).toBe(true);
@@ -379,10 +392,10 @@ describe('EmailReadService.getEmail', () => {
     const rawMime = new FakeRawMime();
     // Control chars each JSON-escape to \u00XX (6×); a naive char-count cap would blow 6 MB.
     const dense = '\x01'.repeat(3 * 1024 * 1024);
-    const { fn } = fakeParse({ textBody: dense, htmlBody: dense });
+    const parser = fakeParse({ textBody: dense, htmlBody: dense });
     const handle = repo.put(INBOUND_PARTITION, inboundRow());
 
-    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail({
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
     });
     const responseBytes = Buffer.byteLength(JSON.stringify(detail), 'utf8');
@@ -396,13 +409,13 @@ describe('EmailReadService.getEmail', () => {
     const rawMime = new FakeRawMime();
     // Each part is well under a naive 1M-CHARACTER cap but far over the 1 MB BYTE cap:
     // '中' = 3 UTF-8 bytes (1.2 MB), '😀' = 4 UTF-8 bytes over 2 code units (1.2 MB).
-    const { fn } = fakeParse({
+    const parser = fakeParse({
       textBody: '中'.repeat(400_000),
       htmlBody: '😀'.repeat(300_000),
     });
     const handle = repo.put(INBOUND_PARTITION, inboundRow());
 
-    const detail = await service(repo, new FakePresigner(), rawMime, fn).getEmail({
+    const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
     });
     expect(detail.bodyTruncated).toBe(true);

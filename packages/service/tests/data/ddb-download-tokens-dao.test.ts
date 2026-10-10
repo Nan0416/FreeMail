@@ -1,7 +1,7 @@
 import { PutCommand, UpdateCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { DdbDownloadTokensDao } from '../../src/data/ddb-download-tokens-dao.js';
-import type { GetDownloadTokenOutput } from '../../src/data/download-tokens-dao.js';
+import type { ClaimDownloadTokenOutput } from '../../src/data/download-tokens-dao.js';
 
 function conditionalCheckFailed(): Error {
   const error = new Error('The conditional request failed');
@@ -63,7 +63,7 @@ class FakeDoc {
   }
 }
 
-function record(overrides: Partial<GetDownloadTokenOutput> = {}): GetDownloadTokenOutput {
+function record(overrides: Partial<ClaimDownloadTokenOutput> = {}): ClaimDownloadTokenOutput {
   return {
     token: 'tok-1',
     s3Key: 'attachments/outbound/email-1/0',

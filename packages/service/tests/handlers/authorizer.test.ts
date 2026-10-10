@@ -8,10 +8,10 @@ vi.mock('../../src/utils/signing-key.js', () => ({
   getOrCreateSigningKey: () => Promise.resolve('test-key'),
 }));
 
-const { verifyMock } = vi.hoisted(() => ({ verifyMock: vi.fn() }));
+const verifyMock = vi.hoisted(() => vi.fn());
 vi.mock('../../src/utils/jwt.js', () => ({ verifyAccessToken: verifyMock }));
 
-const { verifyKeyMock } = vi.hoisted(() => ({ verifyKeyMock: vi.fn() }));
+const verifyKeyMock = vi.hoisted(() => vi.fn());
 vi.mock('../../src/services/api-key-service.js', () => ({
   ApiKeyService: class {
     verify = verifyKeyMock;

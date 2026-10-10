@@ -32,21 +32,12 @@ export interface SidebarProps {
 }
 
 /** Folder navigation + compose + account. Compact by design: the list and reader get the room. */
-export function Sidebar({
-  folder,
-  onSelectFolder,
-  onCompose,
-  inboundEnabled,
-  draftCount,
-  subject,
-  signingOut,
-  onSignOut,
-}: SidebarProps): React.JSX.Element {
+export function Sidebar(props: SidebarProps): React.JSX.Element {
   const mail: readonly NavItem[] = [
-    ...(inboundEnabled ? [{ id: 'inbox' as const, label: 'Inbox', icon: Inbox }] : []),
+    ...(props.inboundEnabled ? [{ id: 'inbox' as const, label: 'Inbox', icon: Inbox }] : []),
     { id: 'sent', label: 'Sent', icon: Send },
     { id: 'drafts', label: 'Drafts', icon: FileText },
-    ...(inboundEnabled ? [{ id: 'all' as const, label: 'All mail', icon: Layers }] : []),
+    ...(props.inboundEnabled ? [{ id: 'all' as const, label: 'All mail', icon: Layers }] : []),
   ];
 
   return (
@@ -59,7 +50,7 @@ export function Sidebar({
       </div>
 
       <div className="px-3 pt-1 pb-3">
-        <Button className="w-full justify-start gap-2 shadow-none" onClick={onCompose}>
+        <Button className="w-full justify-start gap-2 shadow-none" onClick={props.onCompose}>
           <PenSquare className="size-4" />
           Compose
           <Kbd className="ml-auto border-white/25 bg-white/10 text-primary-foreground/80">C</Kbd>
@@ -72,9 +63,9 @@ export function Sidebar({
             <NavRow
               key={item.id}
               item={item}
-              active={folder === item.id}
-              count={item.id === 'drafts' ? draftCount : undefined}
-              onSelect={onSelectFolder}
+              active={props.folder === item.id}
+              count={item.id === 'drafts' ? props.draftCount : undefined}
+              onSelect={props.onSelectFolder}
             />
           ))}
         </ul>
@@ -84,8 +75,8 @@ export function Sidebar({
         <ul>
           <NavRow
             item={{ id: 'keys', label: 'API keys', icon: KeyRound }}
-            active={folder === 'keys'}
-            onSelect={onSelectFolder}
+            active={props.folder === 'keys'}
+            onSelect={props.onSelectFolder}
           />
         </ul>
       </nav>
@@ -98,11 +89,11 @@ export function Sidebar({
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
               <span className="grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-xs font-medium">
-                {(subject ?? '?').slice(0, 1).toUpperCase()}
+                {(props.subject ?? '?').slice(0, 1).toUpperCase()}
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-medium">
-                  {subject ?? 'Account'}
+                  {props.subject ?? 'Account'}
                 </span>
                 <span className="block text-xs text-muted-foreground">Signed in</span>
               </span>
@@ -110,16 +101,16 @@ export function Sidebar({
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-56">
             <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-              Signed in as {subject}
+              Signed in as {props.subject}
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onSelectFolder('keys')}>
+            <DropdownMenuItem onSelect={() => props.onSelectFolder('keys')}>
               <KeyRound />
               API keys
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={signingOut} onSelect={onSignOut}>
+            <DropdownMenuItem disabled={props.signingOut} onSelect={props.onSignOut}>
               <LogOut />
-              {signingOut ? 'Signing out…' : 'Sign out'}
+              {props.signingOut ? 'Signing out…' : 'Sign out'}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -128,37 +119,34 @@ export function Sidebar({
   );
 }
 
-function NavRow({
-  item,
-  active,
-  count,
-  onSelect,
-}: {
+function NavRow(props: {
   item: NavItem;
   active: boolean;
   count?: number;
   onSelect: (folder: FolderId) => void;
 }): React.JSX.Element {
-  const Icon = item.icon;
   return (
     <li>
       <button
         type="button"
-        aria-current={active ? 'page' : undefined}
-        onClick={() => onSelect(item.id)}
+        aria-current={props.active ? 'page' : undefined}
+        onClick={() => props.onSelect(props.item.id)}
         className={cn(
           'flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
-          active
+          props.active
             ? 'bg-selected font-medium text-selected-foreground'
             : 'text-foreground/80 hover:bg-accent hover:text-foreground',
         )}
       >
-        <Icon
-          className={cn('size-4', active ? 'text-selected-foreground' : 'text-muted-foreground')}
+        <props.item.icon
+          className={cn(
+            'size-4',
+            props.active ? 'text-selected-foreground' : 'text-muted-foreground',
+          )}
         />
-        <span className="flex-1 text-left">{item.label}</span>
-        {count !== undefined && count > 0 && (
-          <span className="text-xs text-muted-foreground tabular-nums">{count}</span>
+        <span className="flex-1 text-left">{props.item.label}</span>
+        {props.count !== undefined && props.count > 0 && (
+          <span className="text-xs text-muted-foreground tabular-nums">{props.count}</span>
         )}
       </button>
     </li>

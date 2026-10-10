@@ -205,7 +205,7 @@ export class EmailService {
 
     let messageId: string;
     try {
-      ({ messageId } = await this.ses.send({ from, to, cc, bcc, raw }));
+      messageId = (await this.ses.send({ from, to, cc, bcc, raw })).messageId;
     } catch (error) {
       // SES rejected the message: mark the archived row send_failed so the failure is visible
       // in the mailbox, then surface the error to the caller (delivery did not happen).

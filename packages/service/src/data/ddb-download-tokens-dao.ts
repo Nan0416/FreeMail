@@ -20,8 +20,9 @@ import {
 import type {
   ClaimDownloadTokenInput,
   CreateDownloadTokenInput,
+  CreateDownloadTokenOutput,
   DownloadTokensDao,
-  GetDownloadTokenOutput,
+  ClaimDownloadTokenOutput,
 } from './download-tokens-dao.js';
 import { CONDITIONAL_CHECK_FAILED, DownloadTokenEntity } from './entities.js';
 
@@ -35,7 +36,7 @@ export class DdbDownloadTokensDao implements DownloadTokensDao {
     this.doc = doc;
   }
 
-  async createDownloadToken(input: CreateDownloadTokenInput): Promise<void> {
+  async createDownloadToken(input: CreateDownloadTokenInput): Promise<CreateDownloadTokenOutput> {
     await this.doc.send(
       new PutCommand({
         TableName: this.tableName,
@@ -59,17 +60,17 @@ export class DdbDownloadTokensDao implements DownloadTokensDao {
         ExpressionAttributeNames: { '#tk': 'token' },
       }),
     );
+    return {};
   }
 
-  async claimDownloadToken({
-    token,
-    nowIso,
-  }: ClaimDownloadTokenInput): Promise<GetDownloadTokenOutput | null> {
+  async claimDownloadToken(
+    input: ClaimDownloadTokenInput,
+  ): Promise<ClaimDownloadTokenOutput | null> {
     try {
       const out = (await this.doc.send(
         new UpdateCommand({
           TableName: this.tableName,
-          Key: DownloadTokenEntity.key(token),
+          Key: DownloadTokenEntity.key(input.token),
           // Atomic gate + consume. `expiresAt > :now` is a lexicographic string compare,
           // which is correct because ISO-8601 UTC (`YYYY-MM-DDTHH:mm:ss.sssZ`) is fixed-width
           // and sorts chronologically. A missing item fails `attribute_exists(#tk)` (so no
@@ -79,7 +80,12 @@ export class DdbDownloadTokensDao implements DownloadTokensDao {
             'attribute_exists(#tk) AND revoked = :false AND expiresAt > :now AND ' +
             '(attribute_not_exists(maxDownloads) OR downloadCount < maxDownloads)',
           ExpressionAttributeNames: { '#tk': 'token' },
-          ExpressionAttributeValues: { ':zero': 0, ':one': 1, ':false': false, ':now': nowIso },
+          ExpressionAttributeValues: {
+            ':zero': 0,
+            ':one': 1,
+            ':false': false,
+            ':now': input.nowIso,
+          },
           ReturnValues: 'ALL_NEW',
         }),
       )) as UpdateCommandOutput;
@@ -94,7 +100,7 @@ export class DdbDownloadTokensDao implements DownloadTokensDao {
   }
 }
 
-function toRecord(item: Record<string, unknown> | undefined): GetDownloadTokenOutput | null {
+function toRecord(item: Record<string, unknown> | undefined): ClaimDownloadTokenOutput | null {
   if (
     !item ||
     typeof item.token !== 'string' ||

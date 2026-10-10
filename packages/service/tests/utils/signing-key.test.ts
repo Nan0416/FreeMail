@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type {
   AuthDao,
+  ClearLockoutOutput,
   CreateSigningKeyInput,
   CreateSigningKeyOutput,
   GetSigningKeyOutput,
+  PutRefreshTokenOutput,
 } from '../../src/data/auth-dao.js';
 import {
   getOrCreateSigningKey,
@@ -27,13 +29,13 @@ class FakeAuthDao implements AuthDao {
     return Promise.resolve(this.key === null ? null : { key: this.key });
   }
 
-  createSigningKey({ key }: CreateSigningKeyInput): Promise<CreateSigningKeyOutput> {
+  createSigningKey(input: CreateSigningKeyInput): Promise<CreateSigningKeyOutput> {
     this.creates += 1;
     this.onBeforeCreate?.();
     if (this.key !== null) {
       return Promise.resolve({ created: false });
     }
-    this.key = key;
+    this.key = input.key;
     return Promise.resolve({ created: true });
   }
 
@@ -49,10 +51,10 @@ class FakeAuthDao implements AuthDao {
   registerFailedAttempt(): never {
     throw new Error('unexpected');
   }
-  clearLockout(): Promise<void> {
+  clearLockout(): Promise<ClearLockoutOutput> {
     throw new Error('unexpected');
   }
-  putRefreshToken(): Promise<void> {
+  putRefreshToken(): Promise<PutRefreshTokenOutput> {
     throw new Error('unexpected');
   }
   consumeRefreshToken(): never {

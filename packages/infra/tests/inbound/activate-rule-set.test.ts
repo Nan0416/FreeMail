@@ -90,36 +90,36 @@ function loadHandler(activeName: string | undefined): {
 
 describe('buildActivateHandlerSource (deployed inline handler)', () => {
   it('activates ours on Create when nothing is active', async () => {
-    const { handler, sent } = loadHandler(undefined);
-    await handler({ RequestType: 'Create', ResourceProperties: { RuleSetName: OURS } });
-    expect(sent).toEqual([{ type: 'SetActive', input: { RuleSetName: OURS } }]);
+    const loaded = loadHandler(undefined);
+    await loaded.handler({ RequestType: 'Create', ResourceProperties: { RuleSetName: OURS } });
+    expect(loaded.sent).toEqual([{ type: 'SetActive', input: { RuleSetName: OURS } }]);
   });
 
   it('throws (aborts the deploy) on Create when a foreign set is active, and calls no Set', async () => {
-    const { handler, sent } = loadHandler(FOREIGN);
+    const loaded = loadHandler(FOREIGN);
     await expect(
-      handler({ RequestType: 'Create', ResourceProperties: { RuleSetName: OURS } }),
+      loaded.handler({ RequestType: 'Create', ResourceProperties: { RuleSetName: OURS } }),
     ).rejects.toThrow(FOREIGN);
-    expect(sent).toEqual([]);
+    expect(loaded.sent).toEqual([]);
   });
 
   it('deactivates (empty Set) on Delete when ours is active', async () => {
-    const { handler, sent } = loadHandler(OURS);
-    await handler({
+    const loaded = loadHandler(OURS);
+    await loaded.handler({
       RequestType: 'Delete',
       PhysicalResourceId: OURS,
       ResourceProperties: { RuleSetName: OURS },
     });
-    expect(sent).toEqual([{ type: 'SetActive', input: {} }]);
+    expect(loaded.sent).toEqual([{ type: 'SetActive', input: {} }]);
   });
 
   it('does nothing on Delete when a foreign set is active', async () => {
-    const { handler, sent } = loadHandler(FOREIGN);
-    await handler({
+    const loaded = loadHandler(FOREIGN);
+    await loaded.handler({
       RequestType: 'Delete',
       PhysicalResourceId: OURS,
       ResourceProperties: { RuleSetName: OURS },
     });
-    expect(sent).toEqual([]);
+    expect(loaded.sent).toEqual([]);
   });
 });

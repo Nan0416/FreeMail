@@ -17,8 +17,11 @@ export interface EmailBodyFrameProps {
  * the frame cannot self-size (postMessage would need scripts), so it fills the rest of the
  * reading pane and scrolls internally — the correct script-free sizing.
  */
-export function EmailBodyFrame({ html, allowImages }: EmailBodyFrameProps): React.JSX.Element {
-  const srcDoc = useMemo(() => buildEmailSrcdoc(html, { allowImages }), [html, allowImages]);
+export function EmailBodyFrame(props: EmailBodyFrameProps): React.JSX.Element {
+  const srcDoc = useMemo(
+    () => buildEmailSrcdoc(props.html, { allowImages: props.allowImages }),
+    [props.html, props.allowImages],
+  );
   return (
     <iframe
       className="block min-h-80 w-full flex-1 border-0 bg-white"

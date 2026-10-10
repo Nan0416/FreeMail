@@ -25,25 +25,21 @@ export interface AuthProviderProps {
   readonly children: React.ReactNode;
 }
 
-export function AuthProvider({
-  apiBaseUrl,
-  fetchImpl,
-  children,
-}: AuthProviderProps): React.JSX.Element {
+export function AuthProvider(props: AuthProviderProps): React.JSX.Element {
   const [status, setStatus] = useState<Status>('loading');
   const [subject, setSubject] = useState<string | null>(null);
 
   const client = useMemo(
     () =>
       new FreeMailClient({
-        baseUrl: apiBaseUrl,
-        fetchImpl,
+        baseUrl: props.apiBaseUrl,
+        fetchImpl: props.fetchImpl,
         onAuthLost: () => {
           setSubject(null);
           setStatus('unauthenticated');
         },
       }),
-    [apiBaseUrl, fetchImpl],
+    [props.apiBaseUrl, props.fetchImpl],
   );
 
   // The session cookies are httpOnly, so the SPA cannot tell whether it has one
@@ -86,7 +82,7 @@ export function AuthProvider({
     [status, subject, client],
   );
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return <AuthContext.Provider value={value}>{props.children}</AuthContext.Provider>;
 }
 
 export function useAuth(): AuthContextValue {

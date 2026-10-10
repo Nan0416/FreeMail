@@ -64,7 +64,6 @@ export class InboundConstruct extends Construct {
 
   constructor(scope: Construct, id: string, props: InboundConstructProps) {
     super(scope, id);
-    const { hostedZone, emailDomain, region, mailBucket, emailsTable } = props;
 
     this.ruleSet = new ReceiptRuleSet(this, 'RuleSet');
 
@@ -74,11 +73,11 @@ export class InboundConstruct extends Construct {
     // active receipt rule set. `scanEnabled` makes SES run spam/virus scanning and
     // embed the verdict headers in the stored message.
     this.ruleSet.addRule('Catchall', {
-      recipients: [emailDomain],
+      recipients: [props.emailDomain],
       scanEnabled: true,
       actions: [
         new S3Action({
-          bucket: mailBucket,
+          bucket: props.mailBucket,
           objectKeyPrefix: INBOUND_PREFIX,
         }),
       ],
@@ -87,15 +86,15 @@ export class InboundConstruct extends Construct {
     // Route the domain's mail to SES. This OVERRIDES any existing MX on the domain
     // — the stack warns about it and gates on `confirmInboundMx`.
     new CfnRecordSet(this, 'InboundMx', {
-      hostedZoneId: hostedZone.hostedZoneId,
-      name: emailDomain,
+      hostedZoneId: props.hostedZone.hostedZoneId,
+      name: props.emailDomain,
       type: 'MX',
       ttl: RECORD_TTL,
-      resourceRecords: [`10 inbound-smtp.${region}.amazonaws.com`],
+      resourceRecords: [`10 inbound-smtp.${props.region}.amazonaws.com`],
     });
 
     this.activateRuleSet(this.ruleSet.receiptRuleSetName);
-    this.wireParser(mailBucket, emailsTable);
+    this.wireParser(props.mailBucket, props.emailsTable);
   }
 
   /**

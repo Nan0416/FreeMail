@@ -45,13 +45,15 @@ export function parseWebRuntimeConfig(input: unknown): WebRuntimeConfig {
   if (!isRecord(input)) {
     throw new Error('WebRuntimeConfig: expected a JSON object.');
   }
-  const { apiBaseUrl, inboundEnabled } = input;
-  if (typeof apiBaseUrl !== 'string' || apiBaseUrl.trim().length === 0) {
+  if (typeof input.apiBaseUrl !== 'string' || input.apiBaseUrl.trim().length === 0) {
     throw new Error('WebRuntimeConfig: "apiBaseUrl" must be a non-empty string.');
   }
   // Absent → false (a pre-#12 config.json is tolerated); present-but-wrong-type fails loud.
-  if (inboundEnabled !== undefined && typeof inboundEnabled !== 'boolean') {
+  if (input.inboundEnabled !== undefined && typeof input.inboundEnabled !== 'boolean') {
     throw new Error('WebRuntimeConfig: "inboundEnabled" must be a boolean.');
   }
-  return { apiBaseUrl: normalizeBaseUrl(apiBaseUrl), inboundEnabled: inboundEnabled === true };
+  return {
+    apiBaseUrl: normalizeBaseUrl(input.apiBaseUrl),
+    inboundEnabled: input.inboundEnabled === true,
+  };
 }

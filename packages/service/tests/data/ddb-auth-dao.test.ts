@@ -126,7 +126,7 @@ describe('DdbAuthDao — password', () => {
     const dao = new DdbAuthDao(asDocClient(doc), 't');
     expect(await dao.createPasswordHash({ hash: 'hash-1' })).toEqual({ created: true });
     expect(await dao.createPasswordHash({ hash: 'hash-2' })).toEqual({ created: false });
-    expect(await dao.getPasswordHash()).toEqual({ hash: 'hash-1' });
+    expect(await dao.getPasswordHash({})).toEqual({ hash: 'hash-1' });
   });
 });
 
@@ -136,11 +136,11 @@ describe('DdbAuthDao — signing key', () => {
     const dao = new DdbAuthDao(asDocClient(doc), 't');
     expect(await dao.createSigningKey({ key: 'key-1' })).toEqual({ created: true });
     expect(await dao.createSigningKey({ key: 'key-2' })).toEqual({ created: false });
-    expect(await dao.getSigningKey()).toEqual({ key: 'key-1' });
+    expect(await dao.getSigningKey({})).toEqual({ key: 'key-1' });
   });
 
   it('returns null before any key is generated', async () => {
-    expect(await new DdbAuthDao(asDocClient(new FakeDoc()), 't').getSigningKey()).toBeNull();
+    expect(await new DdbAuthDao(asDocClient(new FakeDoc()), 't').getSigningKey({})).toBeNull();
   });
 
   it('lives in its own row — the password guard and the key guard do not collide', async () => {
@@ -150,8 +150,8 @@ describe('DdbAuthDao — signing key', () => {
     // addressed item, so enrolling a password must not block generating a key.
     expect(await dao.createPasswordHash({ hash: 'hash' })).toEqual({ created: true });
     expect(await dao.createSigningKey({ key: 'key' })).toEqual({ created: true });
-    expect(await dao.getPasswordHash()).toEqual({ hash: 'hash' });
-    expect(await dao.getSigningKey()).toEqual({ key: 'key' });
+    expect(await dao.getPasswordHash({})).toEqual({ hash: 'hash' });
+    expect(await dao.getSigningKey({})).toEqual({ key: 'key' });
     expect(doc.store.has('auth|password')).toBe(true);
     expect(doc.store.has('auth|signing-key')).toBe(true);
   });
@@ -216,7 +216,7 @@ describe('DdbAuthDao — lockout CAS', () => {
     await dao.registerFailedAttempt({ nowSeconds: NOW }); // version 1
     await dao.registerFailedAttempt({ nowSeconds: NOW }); // version 2
 
-    await dao.clearLockout();
+    await dao.clearLockout({});
 
     const row = doc.store.get('auth|lockout');
     expect(row?.version).toBe(3);
@@ -232,7 +232,7 @@ describe('DdbAuthDao — lockout CAS', () => {
     // A successful login's reset advances the version between our read (count 4) and
     // our write — the exact interleaving powerbanana flagged.
     doc.onceBeforePut(() => {
-      void dao.clearLockout();
+      void dao.clearLockout({});
     });
 
     const committed = await dao.registerFailedAttempt({ nowSeconds: NOW });

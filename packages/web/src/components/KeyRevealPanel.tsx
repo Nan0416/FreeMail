@@ -15,12 +15,12 @@ export interface KeyRevealPanelProps {
  * it. Copy puts it on the OS clipboard — we say so plainly and make no attempt to
  * auto-clear the clipboard (a false sense of security; the OS owns it).
  */
-export function KeyRevealPanel({ apiKey, onDismiss }: KeyRevealPanelProps): React.JSX.Element {
+export function KeyRevealPanel(props: KeyRevealPanelProps): React.JSX.Element {
   const [copied, setCopied] = useState(false);
 
   async function onCopy(): Promise<void> {
     try {
-      await navigator.clipboard?.writeText(apiKey);
+      await navigator.clipboard?.writeText(props.apiKey);
       setCopied(true);
     } catch {
       // Clipboard access can be denied; the key is still shown for manual copy.
@@ -45,7 +45,7 @@ export function KeyRevealPanel({ apiKey, onDismiss }: KeyRevealPanelProps): Reac
             data-testid="revealed-key"
             className="mt-3 block rounded border bg-background px-3 py-2 font-mono text-xs break-all select-all"
           >
-            {apiKey}
+            {props.apiKey}
           </code>
           <div className="mt-3 flex items-center gap-2">
             <Button
@@ -57,7 +57,7 @@ export function KeyRevealPanel({ apiKey, onDismiss }: KeyRevealPanelProps): Reac
               {copied ? <Check /> : <Copy />}
               {copied ? 'Copied to clipboard' : 'Copy'}
             </Button>
-            <Button size="sm" onClick={onDismiss}>
+            <Button size="sm" onClick={props.onDismiss}>
               I&apos;ve saved it
             </Button>
           </div>

@@ -75,14 +75,14 @@ export const errorHandler: ErrorRequestHandler = (
 function asBodyParserError(
   err: Error,
 ): { readonly status: number; readonly body: AuthErrorBody } | undefined {
-  const { type } = err as BodyParserError;
-  if (type === 'entity.too.large') {
+  const parserError = err as BodyParserError;
+  if (parserError.type === 'entity.too.large') {
     return {
       status: 413,
       body: { error: 'invalid_request', message: 'Request body is too large.' },
     };
   }
-  if (type === 'entity.parse.failed') {
+  if (parserError.type === 'entity.parse.failed') {
     return {
       status: 400,
       body: { error: 'invalid_request', message: 'Request body must be valid JSON.' },

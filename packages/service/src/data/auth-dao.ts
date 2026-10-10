@@ -3,8 +3,9 @@
  * whole login/refresh/lockout flow is unit-testable against an in-memory fake. The DynamoDB
  * implementation lives in `ddb-auth-dao.ts`.
  *
- * Every method takes a named `Input` and returns a named `Output` (or `void`), so a caller
- * never passes two bare positional values that could be transposed.
+ * Every method takes a named `Input` and returns a named `Output` (or `Output | null`) —
+ * empty ones when there is nothing to pass or report — so a caller never passes two bare
+ * positional values that could be transposed, and every signature can grow in one place.
  *
  * The `created` / `consumed` booleans are not conveniences — each is the observable result
  * of a DynamoDB `ConditionExpression`, and the caller's correctness depends on it. They are
@@ -27,6 +28,8 @@ export interface CreatePasswordHashOutput {
   readonly created: boolean;
 }
 
+export interface GetPasswordHashInput {}
+
 export interface GetPasswordHashOutput {
   readonly hash: string;
 }
@@ -45,14 +48,18 @@ export interface CreateSigningKeyOutput {
   readonly created: boolean;
 }
 
+export interface GetSigningKeyInput {}
+
 export interface GetSigningKeyOutput {
   readonly key: string;
 }
 
 // --- Lockout ---
 
+export interface GetLockoutInput {}
+
 /** Current lockout counters. Shaped by the policy in `utils/lockout.ts`, which owns them. */
-export type GetLockoutOutput = LockoutState;
+export interface GetLockoutOutput extends LockoutState {}
 
 export interface RegisterFailedAttemptInput {
   /** Server clock, epoch seconds — decides whether the failure window has rolled over. */
@@ -60,7 +67,11 @@ export interface RegisterFailedAttemptInput {
 }
 
 /** The committed counters after folding in one failure. */
-export type RegisterFailedAttemptOutput = LockoutState;
+export interface RegisterFailedAttemptOutput extends LockoutState {}
+
+export interface ClearLockoutInput {}
+
+export interface ClearLockoutOutput {}
 
 // --- Refresh tokens ---
 
@@ -70,6 +81,8 @@ export interface PutRefreshTokenInput {
   /** DynamoDB TTL, epoch seconds. */
   readonly ttlEpochSeconds: number;
 }
+
+export interface PutRefreshTokenOutput {}
 
 export interface ConsumeRefreshTokenInput {
   readonly tokenHash: string;
@@ -88,14 +101,14 @@ export interface AuthDao {
   createPasswordHash(input: CreatePasswordHashInput): Promise<CreatePasswordHashOutput>;
 
   /** The stored password hash, or null when no password has been enrolled yet. */
-  getPasswordHash(): Promise<GetPasswordHashOutput | null>;
+  getPasswordHash(input: GetPasswordHashInput): Promise<GetPasswordHashOutput | null>;
 
   /**
    * The persisted HS256 access-token signing key, or null when none has been generated yet.
    * Read by both the token writer and the authorizer, which fails closed on null (no key can
    * have signed a token that does not exist yet).
    */
-  getSigningKey(): Promise<GetSigningKeyOutput | null>;
+  getSigningKey(input: GetSigningKeyInput): Promise<GetSigningKeyOutput | null>;
 
   /** Store the signing key only if none exists yet. */
   createSigningKey(input: CreateSigningKeyInput): Promise<CreateSigningKeyOutput>;
@@ -105,7 +118,7 @@ export interface AuthDao {
    * pre-verify fast reject. A slightly stale read is safe — it only gates whether to attempt
    * the password check; the authoritative count is advanced by {@link registerFailedAttempt}.
    */
-  getLockout(): Promise<GetLockoutOutput | null>;
+  getLockout(input: GetLockoutInput): Promise<GetLockoutOutput | null>;
 
   /**
    * Atomically fold one failed attempt into the lockout state and return the committed
@@ -120,10 +133,10 @@ export interface AuthDao {
    * failed-attempt CAS uses (not merely delete), so an in-flight failure that read the
    * pre-reset state cannot land afterward and resurrect a stale count.
    */
-  clearLockout(): Promise<void>;
+  clearLockout(input: ClearLockoutInput): Promise<ClearLockoutOutput>;
 
   /** Persist a refresh token by its hash, expiring at `ttlEpochSeconds` (DynamoDB TTL). */
-  putRefreshToken(input: PutRefreshTokenInput): Promise<void>;
+  putRefreshToken(input: PutRefreshTokenInput): Promise<PutRefreshTokenOutput>;
 
   /** Atomically consume a refresh token: delete it and report whether it existed. */
   consumeRefreshToken(input: ConsumeRefreshTokenInput): Promise<ConsumeRefreshTokenOutput>;

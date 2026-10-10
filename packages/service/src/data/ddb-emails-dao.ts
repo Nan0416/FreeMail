@@ -22,12 +22,14 @@ import type {
   CreateInboundEmailInput,
   CreateInboundEmailOutput,
   CreateSentEmailInput,
+  CreateSentEmailOutput,
   EmailsDao,
-  EmailsReadDao,
   GetEmailInput,
   GetEmailOutput,
   QueryEmailsByDirectionInput,
+  QueryEmailsByDirectionOutput,
   UpdateSentEmailStatusInput,
+  UpdateSentEmailStatusOutput,
 } from './emails-dao.js';
 
 /** Reconstruct the typed union row from a stored item (we wrote the shape, so trust `direction`). */
@@ -39,7 +41,7 @@ function toRow(item: Record<string, unknown>): GetEmailOutput {
   return { ...(item as unknown as CreateSentEmailInput), direction: 'sent', sk };
 }
 
-export class DdbEmailsDao implements EmailsDao, EmailsReadDao {
+export class DdbEmailsDao implements EmailsDao {
   private readonly doc: DynamoDBDocumentClient;
 
   constructor(
@@ -49,7 +51,7 @@ export class DdbEmailsDao implements EmailsDao, EmailsReadDao {
     this.doc = doc;
   }
 
-  async createSentEmail(input: CreateSentEmailInput): Promise<void> {
+  async createSentEmail(input: CreateSentEmailInput): Promise<CreateSentEmailOutput> {
     await this.doc.send(
       new PutCommand({
         TableName: this.tableName,
@@ -77,9 +79,12 @@ export class DdbEmailsDao implements EmailsDao, EmailsReadDao {
         ConditionExpression: 'attribute_not_exists(pk)',
       }),
     );
+    return {};
   }
 
-  async updateSentEmailStatus(input: UpdateSentEmailStatusInput): Promise<void> {
+  async updateSentEmailStatus(
+    input: UpdateSentEmailStatusInput,
+  ): Promise<UpdateSentEmailStatusOutput> {
     // 'status' is a DynamoDB reserved word; alias every updated name to be safe.
     const names: Record<string, string> = { '#status': 'status' };
     const values: Record<string, unknown> = { ':status': input.status };
@@ -105,6 +110,7 @@ export class DdbEmailsDao implements EmailsDao, EmailsReadDao {
         ConditionExpression: 'attribute_exists(pk)',
       }),
     );
+    return {};
   }
 
   async createInboundEmail(input: CreateInboundEmailInput): Promise<CreateInboundEmailOutput> {
@@ -149,12 +155,10 @@ export class DdbEmailsDao implements EmailsDao, EmailsReadDao {
     }
   }
 
-  async queryEmailsByDirection({
-    direction,
-    limit,
-    afterSk,
-  }: QueryEmailsByDirectionInput): Promise<GetEmailOutput[]> {
-    const pk = EmailEntity.partitionFor(direction);
+  async queryEmailsByDirection(
+    input: QueryEmailsByDirectionInput,
+  ): Promise<QueryEmailsByDirectionOutput> {
+    const pk = EmailEntity.partitionFor(input.direction);
     const out = (await this.doc.send(
       new QueryCommand({
         TableName: this.tableName,
@@ -162,18 +166,18 @@ export class DdbEmailsDao implements EmailsDao, EmailsReadDao {
         ExpressionAttributeValues: { ':pk': pk },
         // Newest-first: sk = '<iso>#<id>' sorts lexicographically by receipt/send time.
         ScanIndexForward: false,
-        Limit: limit,
+        Limit: input.limit,
         // Resume strictly after the last row we emitted for this partition. pk is
         // server-derived (never client-supplied), so a crafted cursor can't retarget it.
-        ...(afterSk ? { ExclusiveStartKey: { pk, sk: afterSk } } : {}),
+        ...(input.afterSk ? { ExclusiveStartKey: { pk, sk: input.afterSk } } : {}),
       }),
     )) as QueryCommandOutput;
-    return (out.Items ?? []).map(toRow);
+    return { emails: (out.Items ?? []).map(toRow) };
   }
 
-  async getEmail(key: GetEmailInput): Promise<GetEmailOutput | null> {
+  async getEmail(input: GetEmailInput): Promise<GetEmailOutput | null> {
     const out = (await this.doc.send(
-      new GetCommand({ TableName: this.tableName, Key: { pk: key.pk, sk: key.sk } }),
+      new GetCommand({ TableName: this.tableName, Key: { pk: input.pk, sk: input.sk } }),
     )) as GetCommandOutput;
     return out.Item ? toRow(out.Item) : null;
   }

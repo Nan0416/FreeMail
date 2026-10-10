@@ -56,266 +56,257 @@ const FILTER_LABELS: Record<QuickFilter, string> = {
   spam: 'Flagged as spam',
 };
 
-export const MessageList = forwardRef<HTMLInputElement, MessageListProps>(function MessageList(
-  {
-    title,
-    state,
-    visible,
-    view,
-    onViewChange,
-    selectedId,
-    onSelect,
-    refreshing,
-    onRefresh,
-    loadingMore,
-    onLoadMore,
-    emptyMessage,
-    showSpamFilter,
-    onOpenNav,
-  },
-  searchRef,
-) {
-  const listRef = useRef<HTMLUListElement>(null);
-  const filters: readonly QuickFilter[] = showSpamFilter
-    ? ['all', 'attachments', 'spam']
-    : ['all', 'attachments'];
-  const total = state.status === 'ready' ? state.emails.length : 0;
-  const narrowed = view.query.trim() !== '' || view.filter !== 'all';
+export const MessageList = forwardRef<HTMLInputElement, MessageListProps>(
+  function MessageList(props, searchRef) {
+    const listRef = useRef<HTMLUListElement>(null);
+    const filters: readonly QuickFilter[] = props.showSpamFilter
+      ? ['all', 'attachments', 'spam']
+      : ['all', 'attachments'];
+    const total = props.state.status === 'ready' ? props.state.emails.length : 0;
+    const narrowed = props.view.query.trim() !== '' || props.view.filter !== 'all';
 
-  // Keep the keyboard-selected row in view.
-  useEffect(() => {
-    if (!selectedId) {
-      return;
-    }
-    const row = listRef.current?.querySelector<HTMLElement>(
-      `[data-id="${CSS.escape(selectedId)}"]`,
-    );
-    row?.scrollIntoView?.({ block: 'nearest' });
-  }, [selectedId]);
+    // Keep the keyboard-selected row in view.
+    useEffect(() => {
+      if (!props.selectedId) {
+        return;
+      }
+      const row = listRef.current?.querySelector<HTMLElement>(
+        `[data-id="${CSS.escape(props.selectedId)}"]`,
+      );
+      row?.scrollIntoView?.({ block: 'nearest' });
+    }, [props.selectedId]);
 
-  return (
-    <section aria-label={title} className="flex h-full min-w-0 flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="lg:hidden"
-          aria-label="Open navigation"
-          onClick={onOpenNav}
-        >
-          <Menu />
-        </Button>
-        <h1 className="text-[15px] font-semibold tracking-tight">{title}</h1>
-        {state.status === 'ready' && (
-          <span className="ml-1 text-xs text-muted-foreground tabular-nums">
-            {narrowed ? `${visible.length} of ${total}` : total}
-            {state.nextCursor ? '+' : ''}
-          </span>
-        )}
-        <div className="ml-auto flex items-center">
-          <DropdownMenu>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label="Filter"
-                    className={cn(view.filter !== 'all' && 'text-primary')}
+    return (
+      <section aria-label={props.title} className="flex h-full min-w-0 flex-col">
+        <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="lg:hidden"
+            aria-label="Open navigation"
+            onClick={props.onOpenNav}
+          >
+            <Menu />
+          </Button>
+          <h1 className="text-[15px] font-semibold tracking-tight">{props.title}</h1>
+          {props.state.status === 'ready' && (
+            <span className="ml-1 text-xs text-muted-foreground tabular-nums">
+              {narrowed ? `${props.visible.length} of ${total}` : total}
+              {props.state.nextCursor ? '+' : ''}
+            </span>
+          )}
+          <div className="ml-auto flex items-center">
+            <DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Filter"
+                      className={cn(props.view.filter !== 'all' && 'text-primary')}
+                    >
+                      <ListFilter />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>Filter</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuLabel className="text-xs text-muted-foreground">
+                  Show
+                </DropdownMenuLabel>
+                {filters.map((f) => (
+                  <DropdownMenuItem
+                    key={f}
+                    onSelect={() => props.onViewChange({ ...props.view, filter: f })}
                   >
-                    <ListFilter />
-                  </Button>
-                </DropdownMenuTrigger>
-              </TooltipTrigger>
-              <TooltipContent>Filter</TooltipContent>
-            </Tooltip>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuLabel className="text-xs text-muted-foreground">Show</DropdownMenuLabel>
-              {filters.map((f) => (
-                <DropdownMenuItem key={f} onSelect={() => onViewChange({ ...view, filter: f })}>
-                  <Check className={cn(view.filter === f ? 'opacity-100' : 'opacity-0')} />
-                  {FILTER_LABELS[f]}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <DropdownMenu>
+                    <Check className={cn(props.view.filter === f ? 'opacity-100' : 'opacity-0')} />
+                    {FILTER_LABELS[f]}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="ghost" size="icon-sm" aria-label="Sort">
+                      <ArrowDownUp />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </TooltipTrigger>
+                <TooltipContent>Sort</TooltipContent>
+              </Tooltip>
+              <DropdownMenuContent align="end" className="w-44">
+                {(Object.keys(SORT_LABELS) as SortOrder[]).map((s) => (
+                  <DropdownMenuItem
+                    key={s}
+                    onSelect={() => props.onViewChange({ ...props.view, sort: s })}
+                  >
+                    <Check className={cn(props.view.sort === s ? 'opacity-100' : 'opacity-0')} />
+                    {SORT_LABELS[s]}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Tooltip>
               <TooltipTrigger asChild>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon-sm" aria-label="Sort">
-                    <ArrowDownUp />
-                  </Button>
-                </DropdownMenuTrigger>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label="Refresh"
+                  disabled={props.refreshing || props.state.status === 'loading'}
+                  onClick={props.onRefresh}
+                >
+                  <RotateCw className={cn(props.refreshing && 'animate-spin')} />
+                </Button>
               </TooltipTrigger>
-              <TooltipContent>Sort</TooltipContent>
+              <TooltipContent>Refresh</TooltipContent>
             </Tooltip>
-            <DropdownMenuContent align="end" className="w-44">
-              {(Object.keys(SORT_LABELS) as SortOrder[]).map((s) => (
-                <DropdownMenuItem key={s} onSelect={() => onViewChange({ ...view, sort: s })}>
-                  <Check className={cn(view.sort === s ? 'opacity-100' : 'opacity-0')} />
-                  {SORT_LABELS[s]}
-                </DropdownMenuItem>
+          </div>
+        </header>
+
+        <div className="shrink-0 border-b px-3 py-2">
+          <div className="relative">
+            <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <input
+              ref={searchRef}
+              type="search"
+              aria-label="Search messages"
+              placeholder="Search loaded messages"
+              value={props.view.query}
+              onChange={(e) => props.onViewChange({ ...props.view, query: e.target.value })}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') {
+                  props.onViewChange({ ...props.view, query: '' });
+                  e.currentTarget.blur();
+                }
+              }}
+              className="h-8 w-full rounded-md border border-transparent bg-muted pr-8 pl-8 text-[13px] transition-colors outline-none placeholder:text-muted-foreground focus:border-input focus:bg-background focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-search-cancel-button]:hidden"
+            />
+            {props.view.query ? (
+              <button
+                type="button"
+                aria-label="Clear search"
+                onClick={() => props.onViewChange({ ...props.view, query: '' })}
+                className="absolute top-1/2 right-2 grid size-5 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-3.5" />
+              </button>
+            ) : (
+              <Kbd className="absolute top-1/2 right-2 -translate-y-1/2">/</Kbd>
+            )}
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          {props.state.status === 'loading' && <ListSkeleton />}
+          {props.state.status === 'error' && (
+            <div className="p-6 text-center">
+              <p role="alert" className="text-[13px] text-destructive">
+                {props.state.message}
+              </p>
+              <Button variant="outline" size="sm" className="mt-3" onClick={props.onRefresh}>
+                Try again
+              </Button>
+            </div>
+          )}
+          {props.state.status === 'ready' && props.visible.length === 0 && (
+            <EmptyState
+              icon={narrowed ? SearchX : Inbox}
+              message={narrowed ? 'No loaded messages match.' : props.emptyMessage}
+              hint={
+                narrowed && props.state.nextCursor ? 'Load more to search further back.' : undefined
+              }
+            />
+          )}
+          {props.state.status === 'ready' && props.visible.length > 0 && (
+            <ul ref={listRef} aria-label={props.title} className="divide-y divide-border/70">
+              {props.visible.map((email) => (
+                <MessageRow
+                  key={email.id}
+                  email={email}
+                  selected={email.id === props.selectedId}
+                  onSelect={props.onSelect}
+                />
               ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <Tooltip>
-            <TooltipTrigger asChild>
+            </ul>
+          )}
+          {props.state.status === 'ready' && props.state.nextCursor && (
+            <div className="border-t p-3">
               <Button
                 variant="ghost"
-                size="icon-sm"
-                aria-label="Refresh"
-                disabled={refreshing || state.status === 'loading'}
-                onClick={onRefresh}
+                size="sm"
+                className="w-full text-muted-foreground"
+                disabled={props.loadingMore}
+                onClick={props.onLoadMore}
               >
-                <RotateCw className={cn(refreshing && 'animate-spin')} />
+                {props.loadingMore ? 'Loading…' : 'Load more'}
               </Button>
-            </TooltipTrigger>
-            <TooltipContent>Refresh</TooltipContent>
-          </Tooltip>
-        </div>
-      </header>
-
-      <div className="shrink-0 border-b px-3 py-2">
-        <div className="relative">
-          <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-          <input
-            ref={searchRef}
-            type="search"
-            aria-label="Search messages"
-            placeholder="Search loaded messages"
-            value={view.query}
-            onChange={(e) => onViewChange({ ...view, query: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape') {
-                onViewChange({ ...view, query: '' });
-                e.currentTarget.blur();
-              }
-            }}
-            className="h-8 w-full rounded-md border border-transparent bg-muted pr-8 pl-8 text-[13px] transition-colors outline-none placeholder:text-muted-foreground focus:border-input focus:bg-background focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-search-cancel-button]:hidden"
-          />
-          {view.query ? (
-            <button
-              type="button"
-              aria-label="Clear search"
-              onClick={() => onViewChange({ ...view, query: '' })}
-              className="absolute top-1/2 right-2 grid size-5 -translate-y-1/2 place-items-center rounded text-muted-foreground hover:text-foreground"
-            >
-              <X className="size-3.5" />
-            </button>
-          ) : (
-            <Kbd className="absolute top-1/2 right-2 -translate-y-1/2">/</Kbd>
+            </div>
           )}
         </div>
-      </div>
+      </section>
+    );
+  },
+);
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {state.status === 'loading' && <ListSkeleton />}
-        {state.status === 'error' && (
-          <div className="p-6 text-center">
-            <p role="alert" className="text-[13px] text-destructive">
-              {state.message}
-            </p>
-            <Button variant="outline" size="sm" className="mt-3" onClick={onRefresh}>
-              Try again
-            </Button>
-          </div>
-        )}
-        {state.status === 'ready' && visible.length === 0 && (
-          <EmptyState
-            icon={narrowed ? SearchX : Inbox}
-            message={narrowed ? 'No loaded messages match.' : emptyMessage}
-            hint={narrowed && state.nextCursor ? 'Load more to search further back.' : undefined}
-          />
-        )}
-        {state.status === 'ready' && visible.length > 0 && (
-          <ul ref={listRef} aria-label={title} className="divide-y divide-border/70">
-            {visible.map((email) => (
-              <MessageRow
-                key={email.id}
-                email={email}
-                selected={email.id === selectedId}
-                onSelect={onSelect}
-              />
-            ))}
-          </ul>
-        )}
-        {state.status === 'ready' && state.nextCursor && (
-          <div className="border-t p-3">
-            <Button
-              variant="ghost"
-              size="sm"
-              className="w-full text-muted-foreground"
-              disabled={loadingMore}
-              onClick={onLoadMore}
-            >
-              {loadingMore ? 'Loading…' : 'Load more'}
-            </Button>
-          </div>
-        )}
-      </div>
-    </section>
-  );
-});
-
-function MessageRow({
-  email,
-  selected,
-  onSelect,
-}: {
+function MessageRow(props: {
   email: EmailListItem;
   selected: boolean;
   onSelect: (id: string) => void;
 }): React.JSX.Element {
   const party =
-    email.direction === 'inbound'
-      ? email.fromName || email.from
-      : `To: ${email.to.map(shortAddress).join(', ') || '—'}`;
+    props.email.direction === 'inbound'
+      ? props.email.fromName || props.email.from
+      : `To: ${props.email.to.map(shortAddress).join(', ') || '—'}`;
   return (
-    <li data-id={email.id}>
+    <li data-id={props.email.id}>
       <button
         type="button"
-        aria-current={selected ? 'true' : undefined}
-        onClick={() => onSelect(email.id)}
+        aria-current={props.selected ? 'true' : undefined}
+        onClick={() => props.onSelect(props.email.id)}
         className={cn(
           'relative block w-full px-4 py-2.5 text-left transition-colors focus-visible:z-10 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset',
-          selected ? 'bg-selected' : 'hover:bg-accent/70',
+          props.selected ? 'bg-selected' : 'hover:bg-accent/70',
         )}
       >
-        {selected && <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-primary" />}
+        {props.selected && (
+          <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-primary" />
+        )}
         <span className="flex items-baseline gap-2">
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium">{party}</span>
-          {email.hasAttachments && (
+          {props.email.hasAttachments && (
             <Paperclip
               aria-label="Has attachments"
               className="size-3.5 shrink-0 self-center text-muted-foreground"
             />
           )}
           <time
-            dateTime={email.date}
+            dateTime={props.email.date}
             className="shrink-0 text-xs text-muted-foreground tabular-nums"
           >
-            {formatListDate(email.date)}
+            {formatListDate(props.email.date)}
           </time>
         </span>
         <span className="mt-0.5 flex items-center gap-1.5">
           <span className="min-w-0 flex-1 truncate text-[13px]">
-            <span className="text-foreground/90">{email.subject || '(no subject)'}</span>
-            {email.snippet && <span className="text-muted-foreground"> — {email.snippet}</span>}
+            <span className="text-foreground/90">{props.email.subject || '(no subject)'}</span>
+            {props.email.snippet && (
+              <span className="text-muted-foreground"> — {props.email.snippet}</span>
+            )}
           </span>
-          {email.quarantined && <RowTag tone="warning">Spam</RowTag>}
-          {email.status === 'send_failed' && <RowTag tone="destructive">Failed</RowTag>}
-          {email.status === 'sending' && <RowTag tone="muted">Sending</RowTag>}
+          {props.email.quarantined && <RowTag tone="warning">Spam</RowTag>}
+          {props.email.status === 'send_failed' && <RowTag tone="destructive">Failed</RowTag>}
+          {props.email.status === 'sending' && <RowTag tone="muted">Sending</RowTag>}
         </span>
       </button>
     </li>
   );
 }
 
-function RowTag({
-  tone,
-  children,
-}: {
+function RowTag(props: {
   tone: 'warning' | 'destructive' | 'muted';
   children: React.ReactNode;
 }): React.JSX.Element {
@@ -323,12 +314,12 @@ function RowTag({
     <span
       className={cn(
         'shrink-0 rounded px-1.5 py-px text-[11px] font-medium',
-        tone === 'warning' && 'bg-warning-surface text-warning',
-        tone === 'destructive' && 'bg-destructive/10 text-destructive',
-        tone === 'muted' && 'bg-muted text-muted-foreground',
+        props.tone === 'warning' && 'bg-warning-surface text-warning',
+        props.tone === 'destructive' && 'bg-destructive/10 text-destructive',
+        props.tone === 'muted' && 'bg-muted text-muted-foreground',
       )}
     >
-      {children}
+      {props.children}
     </span>
   );
 }
@@ -351,20 +342,16 @@ function ListSkeleton(): React.JSX.Element {
   );
 }
 
-function EmptyState({
-  icon: Icon,
-  message,
-  hint,
-}: {
+function EmptyState(props: {
   icon: typeof Inbox;
   message: string;
   hint?: string;
 }): React.JSX.Element {
   return (
     <div className="flex flex-col items-center px-6 py-16 text-center">
-      <Icon className="size-8 text-muted-foreground/50" strokeWidth={1.5} />
-      <p className="mt-3 text-[13px] text-muted-foreground">{message}</p>
-      {hint && <p className="mt-1 text-xs text-muted-foreground/80">{hint}</p>}
+      <props.icon className="size-8 text-muted-foreground/50" strokeWidth={1.5} />
+      <p className="mt-3 text-[13px] text-muted-foreground">{props.message}</p>
+      {props.hint && <p className="mt-1 text-xs text-muted-foreground/80">{props.hint}</p>}
     </div>
   );
 }

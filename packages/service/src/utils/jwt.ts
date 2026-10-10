@@ -56,18 +56,25 @@ export async function verifyAccessToken(
   nowSeconds: number,
 ): Promise<VerifyResult> {
   try {
-    const { payload } = await jwtVerify(token, encodeKey(key), {
+    const verified = await jwtVerify(token, encodeKey(key), {
       algorithms: ['HS256'],
       currentDate: new Date(nowSeconds * 1000),
     });
     if (
-      typeof payload.sub !== 'string' ||
-      typeof payload.iat !== 'number' ||
-      typeof payload.exp !== 'number'
+      typeof verified.payload.sub !== 'string' ||
+      typeof verified.payload.iat !== 'number' ||
+      typeof verified.payload.exp !== 'number'
     ) {
       return { valid: false, reason: 'malformed' };
     }
-    return { valid: true, claims: { sub: payload.sub, iat: payload.iat, exp: payload.exp } };
+    return {
+      valid: true,
+      claims: {
+        sub: verified.payload.sub,
+        iat: verified.payload.iat,
+        exp: verified.payload.exp,
+      },
+    };
   } catch (error) {
     if (error instanceof errors.JWTExpired) {
       return { valid: false, reason: 'expired' };

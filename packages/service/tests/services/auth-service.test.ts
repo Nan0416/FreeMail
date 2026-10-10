@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import type {
   AuthDao,
+  ClearLockoutOutput,
   ConsumeRefreshTokenInput,
   ConsumeRefreshTokenOutput,
   CreatePasswordHashInput,
@@ -11,6 +12,7 @@ import type {
   GetPasswordHashOutput,
   GetSigningKeyOutput,
   PutRefreshTokenInput,
+  PutRefreshTokenOutput,
   RegisterFailedAttemptInput,
   RegisterFailedAttemptOutput,
 } from '../../src/data/auth-dao.js';
@@ -34,12 +36,12 @@ class FakeAuthDao implements AuthDao {
   /** Runs immediately before the conditional create — models a concurrent enroller. */
   onBeforeCreatePasswordHash?: () => void;
 
-  createPasswordHash({ hash }: CreatePasswordHashInput): Promise<CreatePasswordHashOutput> {
+  createPasswordHash(input: CreatePasswordHashInput): Promise<CreatePasswordHashOutput> {
     this.onBeforeCreatePasswordHash?.();
     if (this.passwordHash !== null) {
       return Promise.resolve({ created: false });
     }
-    this.passwordHash = hash;
+    this.passwordHash = input.hash;
     return Promise.resolve({ created: true });
   }
   getPasswordHash(): Promise<GetPasswordHashOutput | null> {
@@ -48,33 +50,31 @@ class FakeAuthDao implements AuthDao {
   getSigningKey(): Promise<GetSigningKeyOutput | null> {
     return Promise.resolve(this.signingKeyRow === null ? null : { key: this.signingKeyRow });
   }
-  createSigningKey({ key }: CreateSigningKeyInput): Promise<CreateSigningKeyOutput> {
+  createSigningKey(input: CreateSigningKeyInput): Promise<CreateSigningKeyOutput> {
     if (this.signingKeyRow !== null) {
       return Promise.resolve({ created: false });
     }
-    this.signingKeyRow = key;
+    this.signingKeyRow = input.key;
     return Promise.resolve({ created: true });
   }
   getLockout(): Promise<GetLockoutOutput | null> {
     return Promise.resolve(this.lockout);
   }
-  registerFailedAttempt({
-    nowSeconds,
-  }: RegisterFailedAttemptInput): Promise<RegisterFailedAttemptOutput> {
-    const next = registerFailure(this.lockout ?? INITIAL_LOCKOUT_STATE, nowSeconds);
+  registerFailedAttempt(input: RegisterFailedAttemptInput): Promise<RegisterFailedAttemptOutput> {
+    const next = registerFailure(this.lockout ?? INITIAL_LOCKOUT_STATE, input.nowSeconds);
     this.lockout = next;
     return Promise.resolve(next);
   }
-  clearLockout(): Promise<void> {
+  clearLockout(): Promise<ClearLockoutOutput> {
     this.lockout = null;
-    return Promise.resolve();
+    return Promise.resolve({});
   }
-  putRefreshToken({ tokenHash }: PutRefreshTokenInput): Promise<void> {
-    this.refreshTokens.add(tokenHash);
-    return Promise.resolve();
+  putRefreshToken(input: PutRefreshTokenInput): Promise<PutRefreshTokenOutput> {
+    this.refreshTokens.add(input.tokenHash);
+    return Promise.resolve({});
   }
-  consumeRefreshToken({ tokenHash }: ConsumeRefreshTokenInput): Promise<ConsumeRefreshTokenOutput> {
-    return Promise.resolve({ consumed: this.refreshTokens.delete(tokenHash) });
+  consumeRefreshToken(input: ConsumeRefreshTokenInput): Promise<ConsumeRefreshTokenOutput> {
+    return Promise.resolve({ consumed: this.refreshTokens.delete(input.tokenHash) });
   }
 }
 

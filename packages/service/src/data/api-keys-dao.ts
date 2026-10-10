@@ -35,9 +35,19 @@ export interface GetApiKeyOutput {
   readonly createdAt: number;
 }
 
+export interface ListApiKeysInput {}
+
+export interface ListApiKeysOutput {
+  /** Unordered. */
+  readonly apiKeys: ReadonlyArray<GetApiKeyOutput>;
+}
+
 export interface DeleteApiKeyInput {
   readonly keyId: string;
 }
+
+/** Nothing to report: the delete is idempotent, so an unknown id succeeds too. */
+export interface DeleteApiKeyOutput {}
 
 export interface ApiKeysDao {
   /** Store a new key row only if its id is unused. */
@@ -47,8 +57,8 @@ export interface ApiKeysDao {
   getApiKey(input: GetApiKeyInput): Promise<GetApiKeyOutput | null>;
 
   /** Every key row (single-tenant → a handful; returned unordered). */
-  listApiKeys(): Promise<ReadonlyArray<GetApiKeyOutput>>;
+  listApiKeys(input: ListApiKeysInput): Promise<ListApiKeysOutput>;
 
   /** Delete a key by id. Idempotent — deleting an unknown id is a no-op. */
-  deleteApiKey(input: DeleteApiKeyInput): Promise<void>;
+  deleteApiKey(input: DeleteApiKeyInput): Promise<DeleteApiKeyOutput>;
 }

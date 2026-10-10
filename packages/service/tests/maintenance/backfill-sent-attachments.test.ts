@@ -2,10 +2,14 @@ import { Readable } from 'node:stream';
 import type { DynamoDBDocumentClient, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import type {
-  EmailsReadDao,
+  CreateInboundEmailOutput,
+  CreateSentEmailOutput,
+  EmailsDao,
   GetEmailOutput,
   QueryEmailsByDirectionInput,
+  QueryEmailsByDirectionOutput,
   SentAttachmentDescriptor,
+  UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
 import type { OutboundObjectStore } from '../../src/facades/s3-outbound-object-store.js';
 import {
@@ -36,14 +40,22 @@ function sentRow(id: string, overrides: Record<string, unknown> = {}): GetEmailO
 }
 
 /** Serves `rows` newest-first in pages, honouring `afterSk` like the real Query. */
-class FakeDao implements EmailsReadDao {
+class FakeDao implements EmailsDao {
   constructor(private readonly rows: GetEmailOutput[]) {}
-  queryEmailsByDirection({
-    limit,
-    afterSk,
-  }: QueryEmailsByDirectionInput): Promise<GetEmailOutput[]> {
-    const start = afterSk ? this.rows.findIndex((r) => r.sk === afterSk) + 1 : 0;
-    return Promise.resolve(this.rows.slice(start, start + limit));
+  createSentEmail(): Promise<CreateSentEmailOutput> {
+    return Promise.resolve({});
+  }
+  updateSentEmailStatus(): Promise<UpdateSentEmailStatusOutput> {
+    return Promise.resolve({});
+  }
+  createInboundEmail(): Promise<CreateInboundEmailOutput> {
+    return Promise.resolve({ created: true });
+  }
+  queryEmailsByDirection(
+    input: QueryEmailsByDirectionInput,
+  ): Promise<QueryEmailsByDirectionOutput> {
+    const start = input.afterSk ? this.rows.findIndex((r) => r.sk === input.afterSk) + 1 : 0;
+    return Promise.resolve({ emails: this.rows.slice(start, start + input.limit) });
   }
   getEmail(): Promise<GetEmailOutput | null> {
     return Promise.resolve(null);
@@ -123,28 +135,28 @@ describe('backfillSentAttachments', () => {
   it('dry run: reports what it would record, writes nothing', async () => {
     const store = new FakeStore();
     await archive(store, 's1', TWO_FILES);
-    const { promise, writer, lines } = run([sentRow('s1', { attachmentCount: 2 })], store, false);
+    const backfill = run([sentRow('s1', { attachmentCount: 2 })], store, false);
 
-    const report = await promise;
+    const report = await backfill.promise;
 
     expect(report.outcomes.would_backfill).toBe(1);
-    expect(writer.writes).toEqual([]);
+    expect(backfill.writer.writes).toEqual([]);
     expect(store.puts).toEqual([]);
-    expect(lines[0]).toContain('notes.txt');
+    expect(backfill.lines[0]).toContain('notes.txt');
   });
 
   it('apply: copies each embedded attachment and records descriptors in order', async () => {
     const store = new FakeStore();
     await archive(store, 's1', TWO_FILES);
-    const { promise, writer } = run([sentRow('s1', { attachmentCount: 2 })], store, true);
+    const backfill = run([sentRow('s1', { attachmentCount: 2 })], store, true);
 
-    const report = await promise;
+    const report = await backfill.promise;
 
     expect(report.outcomes.backfilled).toBe(1);
     expect(store.objects.get('attachments/sent/s1/0')?.toString()).toBe('hello notes');
     expect(store.objects.get('attachments/sent/s1/1')?.toString()).toBe('a,b\n1,2\n');
-    expect(writer.writes).toHaveLength(1);
-    expect(writer.writes[0].attachments).toEqual([
+    expect(backfill.writer.writes).toHaveLength(1);
+    expect(backfill.writer.writes[0].attachments).toEqual([
       {
         id: '0',
         filename: 'notes.txt',
@@ -164,7 +176,7 @@ describe('backfillSentAttachments', () => {
 
   it('skips rows already recorded, without attachments, or without an archive', async () => {
     const store = new FakeStore();
-    const { promise, writer } = run(
+    const backfill = run(
       [
         sentRow('done', { attachmentCount: 1, attachments: [] }),
         sentRow('plain', { attachmentCount: 0 }),
@@ -174,7 +186,7 @@ describe('backfillSentAttachments', () => {
       true,
     );
 
-    const report = await promise;
+    const report = await backfill.promise;
 
     expect(report.scanned).toBe(3);
     expect(report.outcomes).toMatchObject({
@@ -182,25 +194,25 @@ describe('backfillSentAttachments', () => {
       no_attachments: 1,
       no_archive: 1,
     });
-    expect(writer.writes).toEqual([]);
+    expect(backfill.writer.writes).toEqual([]);
   });
 
   it('leaves a row untouched when the archive holds fewer attachments than recorded (a linked one)', async () => {
     const store = new FakeStore();
     await archive(store, 's1', [TWO_FILES[0]]);
-    const { promise, writer, lines } = run([sentRow('s1', { attachmentCount: 2 })], store, true);
+    const backfill = run([sentRow('s1', { attachmentCount: 2 })], store, true);
 
-    const report = await promise;
+    const report = await backfill.promise;
 
     expect(report.outcomes.mismatch).toBe(1);
-    expect(writer.writes).toEqual([]);
-    expect(lines[0]).toMatch(/recorded 2 .* yielded 1/);
+    expect(backfill.writer.writes).toEqual([]);
+    expect(backfill.lines[0]).toMatch(/recorded 2 .* yielded 1/);
   });
 
   it('pages through the whole SENT partition', async () => {
     const rows = Array.from({ length: 250 }, (_, i) => sentRow(`s${String(i).padStart(3, '0')}`));
-    const { promise } = run(rows, new FakeStore(), true);
-    expect((await promise).scanned).toBe(250);
+    const backfill = run(rows, new FakeStore(), true);
+    expect((await backfill.promise).scanned).toBe(250);
   });
 });
 

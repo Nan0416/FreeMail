@@ -269,7 +269,9 @@ export function parseInbound(
     parser.on('headers', (headers) => {
       ensureVerdicts();
       const fromObj = headers.get('from') as AddressObject | undefined;
-      ({ from, fromName } = normalizeFrom(fromObj));
+      const normalizedFrom = normalizeFrom(fromObj);
+      from = normalizedFrom.from;
+      fromName = normalizedFrom.fromName;
       to = normalizeAddressList(headers.get('to') as AddressObject | AddressObject[] | undefined);
       cc = normalizeAddressList(headers.get('cc') as AddressObject | AddressObject[] | undefined);
       const rawSubject = headers.get('subject');

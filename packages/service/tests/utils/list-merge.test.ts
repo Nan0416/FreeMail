@@ -62,15 +62,17 @@ function makeStore(
     inbound: inboundSks.map((sk) => rowFor('inbound', sk)).sort((a, b) => (a.sk < b.sk ? 1 : -1)),
   };
   let calls = 0;
-  const query: MergeQuery = (direction, { limit, afterSk }) => {
+  const query: MergeQuery = (direction, opts) => {
     calls++;
     const all = partitions[direction];
     let start = 0;
+    // Local copy so the `!== undefined` narrowing survives into the findIndex callback.
+    const afterSk = opts.afterSk;
     if (afterSk !== undefined) {
       const idx = all.findIndex((r) => r.sk < afterSk); // first strictly-older row
       start = idx === -1 ? all.length : idx;
     }
-    return Promise.resolve(all.slice(start, start + limit));
+    return Promise.resolve(all.slice(start, start + opts.limit));
   };
   return {
     get calls() {
@@ -113,9 +115,9 @@ describe('listEmailsPage — merge + cursor', () => {
   it('merges two partitions newest-first with no dupes or drops (interleaved, across page boundary)', async () => {
     const sent = [`${T(3)}#s3`, `${T(1)}#s1`];
     const inbound = [`${T(4)}#i4`, `${T(2)}#i2`, `${T(0)}#i0`];
-    const { query } = makeStore(sent, inbound);
+    const store = makeStore(sent, inbound);
 
-    const rows = await drainAll(query, { limit: 2 });
+    const rows = await drainAll(store.query, { limit: 2 });
     const order = rows.map((r) => r.sk);
     // Strict interleaved global order, newest-first.
     expect(order).toEqual([`${T(4)}#i4`, `${T(3)}#s3`, `${T(2)}#i2`, `${T(1)}#s1`, `${T(0)}#i0`]);
@@ -127,9 +129,9 @@ describe('listEmailsPage — merge + cursor', () => {
   it('handles one partition dominating the timeline', async () => {
     const sent = Array.from({ length: 10 }, (_, i) => `${T(9 - i)}#s${9 - i}`);
     const inbound = [`2026-07-17T09:59:00.000Z#iA`, `2026-07-17T08:00:00.000Z#iB`];
-    const { query } = makeStore(sent, inbound);
+    const store = makeStore(sent, inbound);
 
-    const rows = await drainAll(query, { limit: 3 });
+    const rows = await drainAll(store.query, { limit: 3 });
     const order = rows.map((r) => r.sk);
     expect(order).toEqual(skDescending([...sent, ...inbound]));
     expect(new Set(order).size).toBe(12);
@@ -139,9 +141,9 @@ describe('listEmailsPage — merge + cursor', () => {
     const iso = '2026-07-17T10:00:00.000Z';
     const sent = [`${iso}#s2`, `${iso}#s0`];
     const inbound = [`${iso}#i1`, `${iso}#i3`];
-    const { query } = makeStore(sent, inbound);
+    const store = makeStore(sent, inbound);
 
-    const rows = await drainAll(query, { limit: 2 });
+    const rows = await drainAll(store.query, { limit: 2 });
     const order = rows.map((r) => r.sk);
     // Total order = full-sk descending; ties resolved by id.
     expect(order).toEqual(skDescending([...sent, ...inbound]));
@@ -150,15 +152,15 @@ describe('listEmailsPage — merge + cursor', () => {
 
   it('drains correctly when one partition is empty', async () => {
     const sent = [`${T(3)}#s3`, `${T(1)}#s1`, `${T(0)}#s0`];
-    const { query } = makeStore(sent, []);
-    const rows = await drainAll(query, { limit: 2 });
+    const store = makeStore(sent, []);
+    const rows = await drainAll(store.query, { limit: 2 });
     expect(rows.map((r) => r.sk)).toEqual(skDescending(sent));
     expect(rows.every((r) => r.direction === 'sent')).toBe(true);
   });
 
   it('returns nothing when both partitions are empty', async () => {
-    const { query } = makeStore([], []);
-    const page = await listEmailsPage({ query, limit: 5 });
+    const store = makeStore([], []);
+    const page = await listEmailsPage({ query: store.query, limit: 5 });
     expect(page.rows).toEqual([]);
     expect(page.nextCursor).toBeUndefined();
   });
@@ -166,13 +168,13 @@ describe('listEmailsPage — merge + cursor', () => {
   it('filters to a single direction', async () => {
     const sent = [`${T(3)}#s3`, `${T(1)}#s1`];
     const inbound = [`${T(4)}#i4`, `${T(2)}#i2`];
-    const { query } = makeStore(sent, inbound);
+    const store = makeStore(sent, inbound);
 
-    const sentOnly = await drainAll(query, { direction: 'sent', limit: 1 });
+    const sentOnly = await drainAll(store.query, { direction: 'sent', limit: 1 });
     expect(sentOnly.map((r) => r.sk)).toEqual(skDescending(sent));
     expect(sentOnly.every((r) => r.direction === 'sent')).toBe(true);
 
-    const inboundOnly = await drainAll(query, { direction: 'inbound', limit: 1 });
+    const inboundOnly = await drainAll(store.query, { direction: 'inbound', limit: 1 });
     expect(inboundOnly.map((r) => r.sk)).toEqual(skDescending(inbound));
   });
 
@@ -181,15 +183,15 @@ describe('listEmailsPage — merge + cursor', () => {
     const inbound = [`${T(3)}#i3`, `${T(0)}#i0`];
     // Total 4 rows, limit 4 → first page returns all, but a partition that hit its fetch
     // limit reports "more"; the driver must terminate with the next (empty) page.
-    const { query } = makeStore(sent, inbound);
-    const rows = await drainAll(query, { limit: 4 });
+    const store = makeStore(sent, inbound);
+    const rows = await drainAll(store.query, { limit: 4 });
     expect(rows.map((r) => r.sk)).toEqual(skDescending([...sent, ...inbound]));
     expect(new Set(rows.map((r) => r.sk)).size).toBe(4);
   });
 
   it('single page fits everything → no cursor', async () => {
-    const { query } = makeStore([`${T(2)}#s2`], [`${T(1)}#i1`]);
-    const page = await listEmailsPage({ query, limit: 10 });
+    const store = makeStore([`${T(2)}#s2`], [`${T(1)}#i1`]);
+    const page = await listEmailsPage({ query: store.query, limit: 10 });
     expect(page.rows.map((r) => r.sk)).toEqual([`${T(2)}#s2`, `${T(1)}#i1`]);
     expect(page.nextCursor).toBeUndefined();
   });

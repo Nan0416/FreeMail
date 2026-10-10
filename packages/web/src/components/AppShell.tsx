@@ -65,9 +65,9 @@ function isTypingTarget(target: EventTarget | null): boolean {
  * share one column and the reader shows with a back button. Views unmount on navigation
  * (not merely hide), so leaving API keys drops any revealed secret.
  */
-export function AppShell({ inboundEnabled = false }: AppShellProps): React.JSX.Element {
-  const { subject, logout } = useAuth();
-  const [folder, setFolder] = useState<FolderId>(inboundEnabled ? 'inbox' : 'sent');
+export function AppShell(props: AppShellProps): React.JSX.Element {
+  const auth = useAuth();
+  const [folder, setFolder] = useState<FolderId>(props.inboundEnabled ? 'inbox' : 'sent');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [openEmail, setOpenEmail] = useState<EmailDetail | null>(null);
   const [view, setView] = useState<ListView>(DEFAULT_VIEW);
@@ -82,10 +82,9 @@ export function AppShell({ inboundEnabled = false }: AppShellProps): React.JSX.E
 
   const spec = MAIL_FOLDERS[folder];
   const mailbox = useMailbox(spec?.direction, spec !== undefined);
-  const { state, refresh, loadMore } = mailbox;
   const visible = useMemo(
-    () => (state.status === 'ready' ? applyListView(state.emails, view) : []),
-    [state, view],
+    () => (mailbox.state.status === 'ready' ? applyListView(mailbox.state.emails, view) : []),
+    [mailbox.state, view],
   );
 
   const selectFolder = useCallback((next: FolderId) => {
@@ -144,7 +143,7 @@ export function AppShell({ inboundEnabled = false }: AppShellProps): React.JSX.E
 
   async function handleRefresh(): Promise<void> {
     try {
-      await refresh();
+      await mailbox.refresh();
     } catch {
       toast.error('Could not refresh. Check your connection and try again.');
     }
@@ -152,7 +151,7 @@ export function AppShell({ inboundEnabled = false }: AppShellProps): React.JSX.E
 
   async function handleLoadMore(): Promise<void> {
     try {
-      await loadMore();
+      await mailbox.loadMore();
     } catch {
       toast.error('Could not load more messages.');
     }
@@ -163,7 +162,7 @@ export function AppShell({ inboundEnabled = false }: AppShellProps): React.JSX.E
   async function handleSignOut(): Promise<void> {
     setSigningOut(true);
     try {
-      await logout();
+      await auth.logout();
     } catch {
       toast.error('Sign-out failed — you are still signed in. Please retry.');
     } finally {
@@ -239,9 +238,9 @@ export function AppShell({ inboundEnabled = false }: AppShellProps): React.JSX.E
       folder={folder}
       onSelectFolder={selectFolder}
       onCompose={() => openCompose()}
-      inboundEnabled={inboundEnabled}
+      inboundEnabled={props.inboundEnabled ?? false}
       draftCount={drafts.length}
-      subject={subject}
+      subject={auth.subject}
       signingOut={signingOut}
       onSignOut={() => void handleSignOut()}
     />
@@ -279,7 +278,7 @@ export function AppShell({ inboundEnabled = false }: AppShellProps): React.JSX.E
                 <MessageList
                   ref={searchRef}
                   title={spec.title}
-                  state={state}
+                  state={mailbox.state}
                   visible={visible}
                   view={view}
                   onViewChange={setView}
@@ -331,14 +330,14 @@ export function AppShell({ inboundEnabled = false }: AppShellProps): React.JSX.E
   );
 }
 
-function NothingSelected({ drafts }: { drafts: boolean }): React.JSX.Element {
+function NothingSelected(props: { drafts: boolean }): React.JSX.Element {
   return (
     <div className="flex h-full flex-col items-center justify-center bg-sidebar/50 px-6 text-center">
       <MailOpen className="size-10 text-muted-foreground/40" strokeWidth={1.25} />
       <p className="mt-3 text-[13px] text-muted-foreground">
-        {drafts ? 'Select a draft to keep writing.' : 'Select a message to read it.'}
+        {props.drafts ? 'Select a draft to keep writing.' : 'Select a message to read it.'}
       </p>
-      {!drafts && (
+      {!props.drafts && (
         <p className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground/90">
           <span className="flex items-center gap-1">
             <Kbd>J</Kbd>

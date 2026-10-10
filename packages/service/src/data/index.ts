@@ -19,16 +19,22 @@ export { optimisticUpdate, type VersionedValue } from './optimistic.js';
 
 export type {
   AuthDao,
+  ClearLockoutInput,
+  ClearLockoutOutput,
   ConsumeRefreshTokenInput,
   ConsumeRefreshTokenOutput,
   CreatePasswordHashInput,
   CreatePasswordHashOutput,
   CreateSigningKeyInput,
   CreateSigningKeyOutput,
+  GetLockoutInput,
   GetLockoutOutput,
+  GetPasswordHashInput,
   GetPasswordHashOutput,
+  GetSigningKeyInput,
   GetSigningKeyOutput,
   PutRefreshTokenInput,
+  PutRefreshTokenOutput,
   RegisterFailedAttemptInput,
   RegisterFailedAttemptOutput,
 } from './auth-dao.js';
@@ -39,8 +45,11 @@ export type {
   CreateApiKeyInput,
   CreateApiKeyOutput,
   DeleteApiKeyInput,
+  DeleteApiKeyOutput,
   GetApiKeyInput,
   GetApiKeyOutput,
+  ListApiKeysInput,
+  ListApiKeysOutput,
 } from './api-keys-dao.js';
 export { DdbApiKeysDao } from './ddb-api-keys-dao.js';
 
@@ -48,12 +57,14 @@ export type {
   CreateInboundEmailInput,
   CreateInboundEmailOutput,
   CreateSentEmailInput,
+  CreateSentEmailOutput,
   EmailsDao,
-  EmailsReadDao,
   GetEmailInput,
   GetEmailOutput,
   QueryEmailsByDirectionInput,
+  QueryEmailsByDirectionOutput,
   UpdateSentEmailStatusInput,
+  UpdateSentEmailStatusOutput,
 } from './emails-dao.js';
 export { INBOUND_PARTITION, SENT_PARTITION } from './emails-dao.js';
 export { DdbEmailsDao } from './ddb-emails-dao.js';
@@ -61,7 +72,8 @@ export { DdbEmailsDao } from './ddb-emails-dao.js';
 export type {
   ClaimDownloadTokenInput,
   CreateDownloadTokenInput,
+  CreateDownloadTokenOutput,
   DownloadTokensDao,
-  GetDownloadTokenOutput,
+  ClaimDownloadTokenOutput,
 } from './download-tokens-dao.js';
 export { DdbDownloadTokensDao } from './ddb-download-tokens-dao.js';

@@ -27,7 +27,7 @@ export interface Mailbox {
  * flashes back to a skeleton once it has loaded.
  */
 export function useMailbox(direction: EmailDirection | undefined, enabled = true): Mailbox {
-  const { client } = useAuth();
+  const auth = useAuth();
   const [state, setState] = useState<MailboxState>({ status: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -44,7 +44,7 @@ export function useMailbox(direction: EmailDirection | undefined, enabled = true
         setState({ status: 'loading' });
       }
       try {
-        const res = await client.listEmails(direction ? { direction } : {});
+        const res = await auth.client.listEmails(direction ? { direction } : {});
         if (gen === generation.current) {
           setState({ status: 'ready', emails: res.emails, nextCursor: res.nextCursor });
         }
@@ -69,7 +69,7 @@ export function useMailbox(direction: EmailDirection | undefined, enabled = true
         }
       }
     },
-    [client, direction],
+    [auth.client, direction],
   );
 
   useEffect(() => {
@@ -90,7 +90,7 @@ export function useMailbox(direction: EmailDirection | undefined, enabled = true
     const gen = generation.current;
     setLoadingMore(true);
     try {
-      const res = await client.listEmails({
+      const res = await auth.client.listEmails({
         ...(direction ? { direction } : {}),
         cursor: state.nextCursor,
       });
@@ -108,7 +108,7 @@ export function useMailbox(direction: EmailDirection | undefined, enabled = true
     } finally {
       setLoadingMore(false);
     }
-  }, [client, direction, state, loadingMore]);
+  }, [auth.client, direction, state, loadingMore]);
 
   return { state, refreshing, loadingMore, refresh, loadMore };
 }

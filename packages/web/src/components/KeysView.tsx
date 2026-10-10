@@ -25,8 +25,8 @@ export interface KeysViewProps {
   readonly onOpenNav?: () => void;
 }
 
-export function KeysView({ onOpenNav }: KeysViewProps): React.JSX.Element {
-  const { client } = useAuth();
+export function KeysView(props: KeysViewProps): React.JSX.Element {
+  const auth = useAuth();
   const [keys, setKeys] = useState<readonly ApiKeySummary[] | null>(null);
   const [name, setName] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -38,13 +38,13 @@ export function KeysView({ onOpenNav }: KeysViewProps): React.JSX.Element {
 
   const refresh = useCallback(async () => {
     try {
-      const response = await client.listKeys();
+      const response = await auth.client.listKeys();
       setKeys(response.keys);
     } catch (err) {
       setKeys([]);
       setError(err instanceof ApiError ? err.message : 'Could not load API keys.');
     }
-  }, [client]);
+  }, [auth.client]);
 
   useEffect(() => {
     void refresh();
@@ -59,7 +59,7 @@ export function KeysView({ onOpenNav }: KeysViewProps): React.JSX.Element {
     setError(null);
     setBusy(true);
     try {
-      const created = await client.createKey(name.trim() || undefined);
+      const created = await auth.client.createKey(name.trim() || undefined);
       // Keep ONLY the raw string; put just the summary fields into the list.
       setRevealed(created.key);
       setKeys((prev) => [
@@ -78,7 +78,7 @@ export function KeysView({ onOpenNav }: KeysViewProps): React.JSX.Element {
     setError(null);
     setRevoking(null);
     try {
-      await client.revokeKey(key.id);
+      await auth.client.revokeKey(key.id);
       setKeys((prev) => (prev ?? []).filter((k) => k.id !== key.id));
       toast.success('API key revoked');
     } catch (err) {
@@ -89,13 +89,13 @@ export function KeysView({ onOpenNav }: KeysViewProps): React.JSX.Element {
   return (
     <section aria-label="API keys" className="flex h-full min-w-0 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
-        {onOpenNav && (
+        {props.onOpenNav && (
           <Button
             variant="ghost"
             size="icon-sm"
             className="lg:hidden"
             aria-label="Open navigation"
-            onClick={onOpenNav}
+            onClick={props.onOpenNav}
           >
             <Menu />
           </Button>

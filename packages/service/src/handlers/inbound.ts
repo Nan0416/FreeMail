@@ -29,10 +29,10 @@ function init(): InboundDependencies {
 }
 
 export const handler = async (event: S3Event): Promise<void> => {
-  const { processor } = init();
+  const instance = init();
   for (const record of event.Records) {
     const rawKey = record.s3.object.key;
-    const result = await processor.process({ rawKey });
+    const result = await instance.processor.process({ rawKey });
     console.log(
       JSON.stringify({
         msg: 'inbound.processed',

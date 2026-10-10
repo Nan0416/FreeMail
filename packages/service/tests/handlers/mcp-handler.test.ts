@@ -17,15 +17,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // The dependency factory builds the real services; stub them so routing, the guards, and
 // the MCP protocol path are exercised without DDB, S3, or SES.
-const { sendMock } = vi.hoisted(() => ({ sendMock: vi.fn() }));
+const sendMock = vi.hoisted(() => vi.fn());
 vi.mock('../../src/services/email-service.js', () => ({
   EmailService: class {
     send = sendMock;
   },
 }));
 
-const { readMocks } = vi.hoisted(() => ({
-  readMocks: { listEmails: vi.fn(), getEmail: vi.fn(), getAttachmentUrl: vi.fn() },
+const readMocks = vi.hoisted(() => ({
+  listEmails: vi.fn(),
+  getEmail: vi.fn(),
+  getAttachmentUrl: vi.fn(),
 }));
 vi.mock('../../src/services/email-read-service.js', () => ({
   EmailReadService: class {
