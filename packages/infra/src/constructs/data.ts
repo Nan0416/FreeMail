@@ -1,5 +1,6 @@
+import { EMAIL_LIST_INDEX_ATTRIBUTES, EMAIL_LIST_INDEX_NAME } from '@freemail/shared/storage';
 import { RemovalPolicy } from 'aws-cdk-lib';
-import { AttributeType, BillingMode, Table } from 'aws-cdk-lib/aws-dynamodb';
+import { AttributeType, BillingMode, ProjectionType, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { BlockPublicAccess, Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 
@@ -48,6 +49,16 @@ export class DataConstruct extends Construct {
       sortKey: { name: 'sk', type: STRING },
       billingMode: BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.RETAIN,
+    });
+    // The mailbox list reads this index, not the table: same keys, but only the list fields
+    // are projected, so a page is sized (and billed) by those fields however large the stored
+    // bodies and attachment descriptors get. The attribute list is shared with the service.
+    this.emailsTable.addGlobalSecondaryIndex({
+      indexName: EMAIL_LIST_INDEX_NAME,
+      partitionKey: { name: 'pk', type: STRING },
+      sortKey: { name: 'sk', type: STRING },
+      projectionType: ProjectionType.INCLUDE,
+      nonKeyAttributes: [...EMAIL_LIST_INDEX_ATTRIBUTES],
     });
 
     this.downloadTokensTable = new Table(this, 'DownloadTokensTable', {

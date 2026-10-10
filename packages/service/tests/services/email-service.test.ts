@@ -12,6 +12,7 @@ import type {
   CreateSentEmailInput,
   CreateSentEmailOutput,
   GetEmailOutput,
+  ListEmailSummariesOutput,
   QueryEmailsByDirectionOutput,
   UpdateSentEmailStatusInput,
   UpdateSentEmailStatusOutput,
@@ -69,6 +70,9 @@ class FakeEmails implements EmailsDao {
     return Promise.resolve({ created: true });
   }
   queryEmailsByDirection(): Promise<QueryEmailsByDirectionOutput> {
+    return Promise.resolve({ emails: [] });
+  }
+  listEmailSummaries(): Promise<ListEmailSummariesOutput> {
     return Promise.resolve({ emails: [] });
   }
   getEmail(): Promise<GetEmailOutput | null> {

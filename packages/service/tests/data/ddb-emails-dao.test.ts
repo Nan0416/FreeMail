@@ -231,6 +231,20 @@ class ReadFakeDoc {
   }
 }
 
+/** Answers successive Queries from a queue of pages — models DynamoDB's 1 MB page cut. */
+class PagedFakeDoc {
+  readonly queries: QueryCommand[] = [];
+  constructor(private readonly pages: { Items: unknown[]; LastEvaluatedKey?: unknown }[]) {}
+  send(command: QueryCommand): Promise<unknown> {
+    this.queries.push(command);
+    return Promise.resolve(this.pages.shift() ?? { Items: [] });
+  }
+}
+
+function inboundItem(sk: string): Record<string, unknown> {
+  return { ...inboundRecord(), pk: 'INBOUND', sk, direction: 'inbound' };
+}
+
 describe('DdbEmailsDao — reads', () => {
   it('queries a partition newest-first with a limit and no start key', async () => {
     const doc = new ReadFakeDoc();
@@ -289,5 +303,72 @@ describe('DdbEmailsDao — reads', () => {
 
     doc.result = {};
     expect(await dao.getEmail({ pk: 'INBOUND', sk: 'missing' })).toBeNull();
+  });
+});
+
+describe('DdbEmailsDao — list index + paging', () => {
+  it('reads the list from the list index, newest-first', async () => {
+    const doc = new PagedFakeDoc([{ Items: [inboundItem('sk-1')] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 10 });
+
+    const input = doc.queries[0].input;
+    expect(input.IndexName).toBe('list');
+    expect(input.KeyConditionExpression).toBe('pk = :pk');
+    expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'INBOUND' });
+    expect(input.ScanIndexForward).toBe(false);
+    expect(result.emails[0]).toMatchObject({ direction: 'inbound', sk: 'sk-1' });
+  });
+
+  it('keeps the full-row query on the table, not the index', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.queryEmailsByDirection({ direction: 'sent', limit: 5 });
+
+    expect(doc.queries[0].input.IndexName).toBeUndefined();
+  });
+
+  it('follows LastEvaluatedKey after a 1 MB page cut until the page is full', async () => {
+    const doc = new PagedFakeDoc([
+      {
+        Items: [inboundItem('sk-3'), inboundItem('sk-2')],
+        LastEvaluatedKey: { pk: 'INBOUND', sk: 'sk-2' },
+      },
+      { Items: [inboundItem('sk-1')], LastEvaluatedKey: { pk: 'INBOUND', sk: 'sk-1' } },
+    ]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 3 });
+
+    expect(result.emails.map((e) => e.sk)).toEqual(['sk-3', 'sk-2', 'sk-1']);
+    expect(doc.queries).toHaveLength(2);
+    // Each follow-up asks only for what is still missing, resuming where the last page stopped.
+    expect(doc.queries[0].input.Limit).toBe(3);
+    expect(doc.queries[1].input.Limit).toBe(1);
+    expect(doc.queries[1].input.ExclusiveStartKey).toEqual({ pk: 'INBOUND', sk: 'sk-2' });
+  });
+
+  it('returns a short page only when the partition really ends', async () => {
+    const doc = new PagedFakeDoc([
+      { Items: [inboundItem('sk-2')], LastEvaluatedKey: { pk: 'INBOUND', sk: 'sk-2' } },
+      { Items: [inboundItem('sk-1')] },
+    ]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 10 });
+
+    expect(result.emails).toHaveLength(2);
+    expect(doc.queries).toHaveLength(2);
+  });
+
+  it('resumes from a cursor sk on the first page', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5, afterSk: 'sk-9' });
+
+    expect(doc.queries[0].input.ExclusiveStartKey).toEqual({ pk: 'SENT', sk: 'sk-9' });
   });
 });

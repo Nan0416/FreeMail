@@ -8,6 +8,7 @@
  * newest-first and merges them into one timeline.
  */
 import type { SentStatus } from '@freemail/shared';
+import type { EmailListIndexAttribute } from '@freemail/shared/storage';
 
 /** Partition holding sent messages. */
 export const SENT_PARTITION = 'SENT';
@@ -184,6 +185,29 @@ export interface QueryEmailsByDirectionOutput {
   readonly emails: ReadonlyArray<GetEmailOutput>;
 }
 
+/**
+ * One row as the list index carries it: its keys plus only the projected list fields. Derived
+ * from the projection list itself, so a field the index does not carry is not on this type —
+ * reading one (in the list mapper, say) is a compile error rather than a silent `undefined`.
+ */
+export type EmailSummary =
+  | ({ readonly direction: 'sent'; readonly sk: string } & Pick<
+      CreateSentEmailInput,
+      EmailListIndexAttribute & keyof CreateSentEmailInput
+    >)
+  | ({ readonly direction: 'inbound'; readonly sk: string } & Pick<
+      CreateInboundEmailInput,
+      EmailListIndexAttribute & keyof CreateInboundEmailInput
+    >);
+
+/** Same paging contract as {@link QueryEmailsByDirectionInput}, answered from the list index. */
+export interface ListEmailSummariesInput extends QueryEmailsByDirectionInput {}
+
+export interface ListEmailSummariesOutput {
+  /** Newest-first, at most the requested `limit`. */
+  readonly emails: ReadonlyArray<EmailSummary>;
+}
+
 export interface EmailsDao {
   /**
    * Record a sent message before the SES call (`status:'sending'`, with `rawS3Key` +
@@ -209,6 +233,13 @@ export interface EmailsDao {
    * read service uses that to decide when a direction is drained.
    */
   queryEmailsByDirection(input: QueryEmailsByDirectionInput): Promise<QueryEmailsByDirectionOutput>;
+
+  /**
+   * The mailbox list page for one partition: the same paging contract as
+   * {@link queryEmailsByDirection}, but read from the list index, so each row carries only the
+   * list fields ({@link EmailSummary}) and the read is sized by those, not by the full items.
+   */
+  listEmailSummaries(input: ListEmailSummariesInput): Promise<ListEmailSummariesOutput>;
 
   /** Fetch exactly one row by its full primary key, or `null` if absent. */
   getEmail(input: GetEmailInput): Promise<GetEmailOutput | null>;

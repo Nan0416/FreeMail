@@ -47,7 +47,9 @@ export const ApiKeyEntity = {
  * Emails table — two partitions, each sorted newest-first by a timestamp-prefixed sort key.
  * The `<iso>#<id>` shape is load-bearing: ISO-8601 UTC is fixed-width and sorts
  * chronologically as a string, so a descending Query is a reverse-chronological timeline,
- * and the `#<id>` suffix keeps two messages in the same millisecond distinct.
+ * and the `#<id>` suffix keeps two messages in the same millisecond distinct. The mailbox list
+ * reads the `list` GSI, which shares these keys (its name and projection live in
+ * `@freemail/shared/storage`, because the CDK app creates it).
  */
 export const EmailEntity = {
   SENT_PARTITION,

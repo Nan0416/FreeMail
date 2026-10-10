@@ -15,7 +15,7 @@
  * The partition (`pk`) is derived server-side from the direction, so a crafted cursor can
  * carry only sk strings — it can never retarget the query at an arbitrary partition.
  */
-import type { GetEmailOutput } from '../data/emails-dao.js';
+import type { EmailSummary } from '../data/emails-dao.js';
 import { emailErrors } from './errors.js';
 
 type Direction = 'sent' | 'inbound';
@@ -24,7 +24,7 @@ type Direction = 'sent' | 'inbound';
 export type MergeQuery = (
   direction: Direction,
   opts: { readonly limit: number; readonly afterSk?: string },
-) => Promise<readonly GetEmailOutput[]>;
+) => Promise<readonly EmailSummary[]>;
 
 export interface ListEmailsParams {
   readonly query: MergeQuery;
@@ -37,7 +37,7 @@ export interface ListEmailsParams {
 }
 
 export interface MergedPage {
-  readonly rows: readonly GetEmailOutput[];
+  readonly rows: readonly EmailSummary[];
   /** Absent → the timeline is exhausted. */
   readonly nextCursor?: string;
 }
@@ -82,7 +82,7 @@ export function decodeListCursor(token: string): ListCursor {
 }
 
 /** Descending sk order (newest first); total because sk carries the unique `#<id>` suffix. */
-function bySkDescending(a: GetEmailOutput, b: GetEmailOutput): number {
+function bySkDescending(a: EmailSummary, b: EmailSummary): number {
   if (a.sk < b.sk) {
     return 1;
   }
@@ -97,7 +97,7 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
   const decoded = params.cursor ? decodeListCursor(params.cursor) : { v: 1 as const };
   const directions: Direction[] = params.direction ? [params.direction] : ['sent', 'inbound'];
 
-  const fetched = {} as Record<Direction, readonly GetEmailOutput[]>;
+  const fetched = {} as Record<Direction, readonly EmailSummary[]>;
   for (const dir of directions) {
     fetched[dir] = await params.query(dir, { limit: params.limit, afterSk: decoded[dir] });
   }
