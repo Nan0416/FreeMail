@@ -89,7 +89,7 @@ export const handler = async (
   // single-tenant owner, so downstream routes need not care which scheme was used.
   const apiKey = headers['x-api-key'];
   if (apiKey) {
-    const verified = await init().apiKeyService.verify({ rawKey: apiKey });
+    const verified = await init().apiKeyService.verifyApiKey({ rawKey: apiKey });
     if (verified) {
       return { isAuthorized: true, context: { sub: OWNER_SUBJECT, scheme: 'apiKey' } };
     }

@@ -21,8 +21,8 @@ edge cases; the tag says what catches a violation.
    `catch`. Name the object and read its fields (`input.keyId`, `result.created`). Array
    destructuring is allowed; `packages/web/src/components/ui/**` is exempt. _ESLint
    `no-restricted-syntax`_ · §9
-3. **Parameter names follow the layer** — DAO methods take `input`, service methods
-   `request`, React components `props`. _Review_ · §9
+3. **Parameter names follow the layer** — DAO methods take `input`, service and processor
+   methods `request`, React components `props`. _Review_ · §9
 4. **One DAO interface per table** — reads and writes together, no `XReadDao` split.
    _Review_ · §4
 5. **DAO methods: one Input interface in, one Output interface out** — named
@@ -31,9 +31,18 @@ edge cases; the tag says what catches a violation.
    it; same shape as another type → `interface X extends Y {}`. A union is the only Output
    that may be a `type`. _Compiler + review_ · §4
 6. **Service methods take one `<Method>ServiceRequest` named `request`** and return the
-   full response shape; genuinely void stays `Promise<void>`. _Review_ · §5
-7. **Interface and type-alias fields are `readonly`.** _ESLint `no-restricted-syntax`_ · §9
-8. **`import type` for type-only imports; relative imports end in `.js`.** _Compiler_ (`NodeNext`
+   full response shape — a shared wire type or a `<Method>ServiceResponse`; genuinely void
+   stays `Promise<void>`. Processors do the same with `<Method>Request` / `<Method>Response`
+   (no "Service" — they serve no API). _Review_ · §5
+7. **A method is named after its types** — DAO, service, and processor alike: the method is
+   the type's stem, lower-camel-cased — `createApiKey(input: CreateApiKeyInput)`,
+   `createApiKey(request: CreateApiKeyServiceRequest)`,
+   `processInboundEmail(request: ProcessInboundEmailRequest)`. The type names the action and
+   what it acts on, so the method does too, and reads the same at the call site as in its
+   class. Facades (and the ports services declare for them) and module-level helper functions
+   are out of scope: they mirror the system or call they wrap. _Review_ · §4, §5
+8. **Interface and type-alias fields are `readonly`.** _ESLint `no-restricted-syntax`_ · §9
+9. **`import type` for type-only imports; relative imports end in `.js`.** _Compiler_ (`NodeNext`
    packages); _review_ in `packages/web`, whose `bundler` resolution accepts either · §9
 
 ---
@@ -48,7 +57,8 @@ src/
   handlers/       Lambda entry points + their per-Lambda config + the app assembly
   routes/         HTTP route tables, one Endpoints class per domain surface
   middleware/     Cross-cutting request stages
-  services/       Business logic
+  services/       Business logic behind an API surface
+  processors/     Event-triggered work (the S3-delivered inbound message), no API surface
   facades/        Adapters over systems we do not own (SES, S3, secrets)
   data/           DAOs: one interface + one implementation per table
   dependencies/   Per-Lambda dependency factories
@@ -59,7 +69,12 @@ src/
 **Why no domain folders.** A feature touches every layer, so domain folders guarantee that
 adding one means editing five directories anyway — while making "what does the send path
 actually talk to?" unanswerable without opening all of them. Role folders make the
-dependency direction visible: `routes → services → {facades, data}`, never backwards.
+dependency direction visible: `routes → services → {facades, data}`, and
+`handlers → processors → services`, never backwards.
+
+**`services/` vs `processors/`.** Both hold business logic and reach AWS only through DAOs
+and facades. A service backs an API surface (a route or an MCP tool); a processor is driven
+by an AWS event instead. A processor may use services; a service never uses a processor.
 
 **`services/` vs `facades/`.** A facade contains no business rules. It exists so a service
 can depend on a small fakeable interface instead of an AWS SDK client. If it decides
@@ -190,8 +205,9 @@ interface, and its test fake stubs the methods it never calls. Constructor order
 `(client, tableName)`.
 
 **Every method takes exactly one `<Verb><Entity>Input` interface and returns exactly one
-`<Verb><Entity>Output` interface.** That holds even when there is nothing to pass or nothing
-to report. The only variation allowed is `| null` on the Output, for a lookup that can miss.
+`<Verb><Entity>Output` interface, and is named `<verb><Entity>` after them.** That holds even
+when there is nothing to pass or nothing to report. The only variation allowed is `| null` on
+the Output, for a lookup that can miss.
 
 ```ts
 export interface ApiKeysDao {
@@ -286,12 +302,18 @@ unit-testable against an in-memory fake with no AWS involved.
 Business logic. Reaches storage and AWS only through injected DAOs and facades.
 
 **Every public method takes a named `<Method>ServiceRequest`** — even for one parameter,
-even for none — and the parameter is called `request`.
+even for none — the parameter is called `request`, and **the method is named `<method>` after
+the type**: the stem of `CreateApiKeyServiceRequest` is `createApiKey`, so that is the method.
+A bare verb (`create`, `resolve`, `send`) reads fine inside its class and means nothing at the
+call site.
 
 ```ts
 async login(request: LoginServiceRequest): Promise<LoginServiceResponse>;
-async list(_request: ListApiKeysServiceRequest): Promise<ListApiKeysResponse>;
-async revoke(request: RevokeApiKeyServiceRequest): Promise<void>;
+async listApiKeys(_request: ListApiKeysServiceRequest): Promise<ListApiKeysResponse>;
+async revokeApiKey(request: RevokeApiKeyServiceRequest): Promise<void>;
+async resolveAttachmentDownloadPresignedUrl(
+  request: ResolveAttachmentDownloadPresignedUrlServiceRequest,
+): Promise<ResolveAttachmentDownloadPresignedUrlServiceResponse | null>;
 ```
 
 Responses reuse the shared wire types where one exists (`ListApiKeysResponse`,
@@ -303,6 +325,20 @@ Responses reuse the shared wire types where one exists (`ListApiKeysResponse`,
   worse than not having one. (DAOs are stricter and return an empty Output — see §4.)
 - **Zero-input still takes a Request:** `type ListApiKeysServiceRequest = Record<string, never>`.
   (Not an empty interface — see §9.)
+- **A shared wire request still gets a service name** (so the method and its type stay
+  aligned):
+
+  ```ts
+  type SendEmailServiceRequest = SendEmailRequest;
+  async sendEmail(request: SendEmailServiceRequest): Promise<SendEmailResponse>;
+  ```
+
+**Processors** (`processors/`) follow the same shape, minus the word "Service" — they serve
+no API:
+
+```ts
+async processInboundEmail(request: ProcessInboundEmailRequest): Promise<ProcessInboundEmailResponse>;
+```
 
 ---
 
@@ -319,7 +355,7 @@ export class KeysEndpoints implements Endpoints {
     this.router = Router();
     this.router.post('/keys', requireJsonContentType, requireAccessScheme, async (req, res, next) => {
       try {
-        res.status(201).json(await apiKeyService.create({ name: /* ... */ }));
+        res.status(201).json(await apiKeyService.createApiKey({ name: /* ... */ }));
       } catch (err) {
         next(err);
       }

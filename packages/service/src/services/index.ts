@@ -5,7 +5,12 @@
  */
 export { AuthService, OWNER_SUBJECT, type AuthServiceDeps } from './auth-service.js';
 export { ApiKeyService, type ApiKeyServiceDeps } from './api-key-service.js';
-export { EmailService, type EmailServiceDeps, sentRawKey } from './email-service.js';
+export {
+  EmailService,
+  type EmailServiceDeps,
+  type SendEmailServiceRequest,
+  sentRawKey,
+} from './email-service.js';
 export {
   EmailReadService,
   type EmailReadServiceDeps,
@@ -14,9 +19,12 @@ export {
   type GetAttachmentUrlServiceRequest,
   type ListEmailsServiceRequest,
 } from './email-read-service.js';
-export { DownloadService, type DownloadServiceDeps } from './download-service.js';
 export {
-  InboundProcessor,
-  type ProcessInboundServiceRequest,
-  type ProcessInboundServiceResponse,
-} from './inbound-service.js';
+  AttachmentService,
+  type AttachmentDownloadResolver,
+  type AttachmentServiceDeps,
+  type AttachmentUploader,
+  type CreateAttachmentUploadServiceRequest,
+  type ResolveAttachmentDownloadPresignedUrlServiceRequest,
+  type ResolveAttachmentDownloadPresignedUrlServiceResponse,
+} from './attachment-service.js';

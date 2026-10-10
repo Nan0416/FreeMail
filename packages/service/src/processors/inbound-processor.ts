@@ -46,19 +46,19 @@ import {
   snippetFromText,
 } from '../utils/sanitize.js';
 import { decideExposure, type Exposure } from '../utils/verdicts.js';
-import { bodyKey, estimateRowBytes, storeEmailBody } from './email-body-storage.js';
+import { bodyKey, estimateRowBytes, storeEmailBody } from '../services/email-body-storage.js';
 
 /** Extracted attachments live OUTSIDE the `inbound/` trigger prefix so writes never re-invoke the parser. */
 export const ATTACHMENTS_PREFIX = 'attachments/inbound/';
 
 export type ProcessOutcome = 'indexed' | 'quarantined' | 'duplicate' | 'skipped';
 
-export interface ProcessInboundServiceRequest {
+export interface ProcessInboundEmailRequest {
   /** The still-URL-encoded S3 object key from the event record. Validated before any read. */
   readonly rawKey: string;
 }
 
-export interface ProcessInboundServiceResponse {
+export interface ProcessInboundEmailResponse {
   readonly outcome: ProcessOutcome;
   readonly messageId?: string;
   readonly reason?: string;
@@ -97,7 +97,9 @@ export class InboundProcessor {
   ) {}
 
   /** Process the object identified by a raw (still-encoded) S3 event key. */
-  async process(request: ProcessInboundServiceRequest): Promise<ProcessInboundServiceResponse> {
+  async processInboundEmail(
+    request: ProcessInboundEmailRequest,
+  ): Promise<ProcessInboundEmailResponse> {
     const key = validateInboundEventKey(request.rawKey);
     if (!key.ok) {
       // No validated stable id → cannot write a keyed row. Log-and-succeed (no retry).
@@ -160,11 +162,11 @@ export class InboundProcessor {
   private async finish(
     base: RecordBase,
     parsed: ParsedInbound,
-  ): Promise<ProcessInboundServiceResponse> {
+  ): Promise<ProcessInboundEmailResponse> {
     const exposure = decideExposure(parsed.verdicts, parsed.parseStatus);
     const linked = await this.linkedAttachments(base, parsed, exposure);
     const record = this.record(base, parsed, exposure, linked);
-    let response: ProcessInboundServiceResponse;
+    let response: ProcessInboundEmailResponse;
     if (exposure.exposeContent) {
       // Store the body exactly like the snippet and attachments — only for exposable content —
       // sized against the rest of the row so an inline body can't push it past DynamoDB's limit.
@@ -229,7 +231,7 @@ export class InboundProcessor {
     if (this.ownLinks === undefined || !exposure.exposeContent || exposure.quarantined) {
       return [];
     }
-    const resolved = await this.ownLinks.resolve({
+    const resolved = await this.ownLinks.resolveLinkedAttachments({
       bodies: [parsed.textBody, parsed.htmlBody],
       from: parsed.from,
       authenticatedDomain: parsed.dmarcPassDomain,
@@ -242,7 +244,7 @@ export class InboundProcessor {
   private async commit(
     record: CreateInboundEmailInput,
     messageId: string,
-  ): Promise<ProcessInboundServiceResponse> {
+  ): Promise<ProcessInboundEmailResponse> {
     const result = await this.emails.createInboundEmail(record);
     if (!result.created) {
       return { outcome: 'duplicate', messageId };

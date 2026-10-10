@@ -34,10 +34,9 @@ import type { ApiKeysDao } from '../data/api-keys-dao.js';
 import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { S3UploadStore } from '../facades/s3-upload-store.js';
-import { AttachmentUploadService } from '../services/attachment-upload-service.js';
+import { AttachmentService } from '../services/attachment-service.js';
 import { createUploadPresignClient, embedLimits } from './uploads.js';
 import { S3AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
-import { DownloadService } from '../services/download-service.js';
 import { EmailReadService } from '../services/email-read-service.js';
 import { EmailService } from '../services/email-service.js';
 import { SesV2Sender } from '../facades/ses-email-facade.js';
@@ -54,8 +53,7 @@ export interface Dependencies {
   readonly apiKeyService: ApiKeyService;
   readonly emailService: EmailService;
   readonly emailReadService: EmailReadService;
-  readonly downloadService: DownloadService;
-  readonly attachmentUploadService: AttachmentUploadService;
+  readonly attachmentService: AttachmentService;
 }
 
 export class DependencyFactory {
@@ -116,8 +114,11 @@ export class DependencyFactory {
         bodies: bodyStore,
         rawMime: inboundStore,
       }),
-      downloadService: new DownloadService({ tokensDao: downloadTokensDao, presigner }),
-      attachmentUploadService: new AttachmentUploadService({ uploads: uploadStore }),
+      attachmentService: new AttachmentService({
+        uploads: uploadStore,
+        tokensDao: downloadTokensDao,
+        presigner,
+      }),
     };
   }
 }

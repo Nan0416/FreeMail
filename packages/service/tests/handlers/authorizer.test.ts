@@ -14,7 +14,7 @@ vi.mock('../../src/utils/jwt.js', () => ({ verifyAccessToken: verifyMock }));
 const verifyKeyMock = vi.hoisted(() => vi.fn());
 vi.mock('../../src/services/api-key-service.js', () => ({
   ApiKeyService: class {
-    verify = verifyKeyMock;
+    verifyApiKey = verifyKeyMock;
   },
 }));
 vi.mock('../../src/data/ddb-api-keys-dao.js', () => ({ DdbApiKeysDao: class {} }));

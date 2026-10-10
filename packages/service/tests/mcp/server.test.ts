@@ -3,7 +3,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { emailErrors } from '../../src/utils/errors.js';
-import type { AttachmentUploadService } from '../../src/services/attachment-upload-service.js';
+import type { AttachmentService } from '../../src/services/attachment-service.js';
 import type { EmailReadService } from '../../src/services/email-read-service.js';
 import type { EmailService } from '../../src/services/email-service.js';
 import { buildMcpServer, type McpServerDeps } from '../../src/mcp/server.js';
@@ -23,7 +23,10 @@ async function connectWith(deps: McpServerDeps): Promise<Client> {
 
 /** Send-only (inbound off) — the historical send_email surface. */
 function connect(send: ReturnType<typeof vi.fn>): Promise<Client> {
-  return connectWith({ emailService: { send } as unknown as EmailService, inboundEnabled: false });
+  return connectWith({
+    emailService: { sendEmail: send } as unknown as EmailService,
+    inboundEnabled: false,
+  });
 }
 
 function fakeReadService(over: Partial<EmailReadService>): EmailReadService {
@@ -38,7 +41,7 @@ function fakeReadService(over: Partial<EmailReadService>): EmailReadService {
 /** Read-enabled server with a fixed nonce so the text boundary is deterministic. */
 function connectRead(readService: EmailReadService): Promise<Client> {
   return connectWith({
-    emailService: { send: vi.fn() } as unknown as EmailService,
+    emailService: { sendEmail: vi.fn() } as unknown as EmailService,
     readService,
     inboundEnabled: true,
     nonce: () => 'TESTNONCE',
@@ -178,8 +181,8 @@ describe('buildMcpServer send_email', () => {
 describe('create_attachment_upload tool', () => {
   function connectUpload(create: ReturnType<typeof vi.fn>): Promise<Client> {
     return connectWith({
-      emailService: { send: vi.fn() } as unknown as EmailService,
-      uploadService: { create } as unknown as AttachmentUploadService,
+      emailService: { sendEmail: vi.fn() } as unknown as EmailService,
+      attachmentService: { createAttachmentUpload: create } as unknown as AttachmentService,
       inboundEnabled: false,
     });
   }
@@ -273,7 +276,7 @@ describe('read tools registration gate (inbound)', () => {
 
   it('does NOT register the read tools when inboundEnabled is true but no read service is supplied (fail-closed)', async () => {
     const client = await connectWith({
-      emailService: { send: vi.fn() } as unknown as EmailService,
+      emailService: { sendEmail: vi.fn() } as unknown as EmailService,
       inboundEnabled: true,
     });
     const names = (await client.listTools()).tools.map((t) => t.name);

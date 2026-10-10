@@ -241,11 +241,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe('EmailService.send', () => {
+describe('EmailService.sendEmail', () => {
   it('archives the MIME, records the attempt, sends, and marks it sent (write-before-send)', async () => {
     const setup = makeService();
 
-    const result = await setup.service.send(
+    const result = await setup.service.sendEmail(
       request({ to: ['a@x.com'], cc: ['c@x.com'], bcc: ['b@x.com'], html: '<p>hi</p>' }),
     );
 
@@ -289,7 +289,7 @@ describe('EmailService.send', () => {
 
   it('passes the display name + bcc to the MIME builder AND the SES envelope', async () => {
     const setup = makeService();
-    await setup.service.send(request({ fromName: 'Me', to: ['a@x.com'], bcc: ['b@x.com'] }));
+    await setup.service.sendEmail(request({ fromName: 'Me', to: ['a@x.com'], bcc: ['b@x.com'] }));
     // bcc reaches both the builder (which strips it from headers via keepBcc) and the envelope.
     expect(setup.mimeInputs[0]).toMatchObject({
       from: 'me@example.com',
@@ -301,13 +301,13 @@ describe('EmailService.send', () => {
 
   it('accepts a sender under a subdomain of the configured domain', async () => {
     const setup = makeService();
-    await setup.service.send(request({ from: 'bot@mail.example.com' }));
+    await setup.service.sendEmail(request({ from: 'bot@mail.example.com' }));
     expect(setup.ses.calls[0]?.from).toBe('bot@mail.example.com');
   });
 
   it('rejects a sender outside the configured domain with invalid_sender (no send, no archive)', async () => {
     const setup = makeService();
-    await expect(setup.service.send(request({ from: 'me@evil.com' }))).rejects.toMatchObject({
+    await expect(setup.service.sendEmail(request({ from: 'me@evil.com' }))).rejects.toMatchObject({
       code: 'invalid_sender',
       status: 400,
     });
@@ -318,7 +318,7 @@ describe('EmailService.send', () => {
 
   it('rejects a malformed sender address with invalid_sender', async () => {
     const setup = makeService();
-    await expect(setup.service.send(request({ from: 'not-an-email' }))).rejects.toBeInstanceOf(
+    await expect(setup.service.sendEmail(request({ from: 'not-an-email' }))).rejects.toBeInstanceOf(
       EmailError,
     );
   });
@@ -326,13 +326,13 @@ describe('EmailService.send', () => {
   it('requires at least one recipient', async () => {
     const setup = makeService();
     await expect(
-      setup.service.send(request({ to: [], cc: undefined, bcc: undefined })),
+      setup.service.sendEmail(request({ to: [], cc: undefined, bcc: undefined })),
     ).rejects.toMatchObject({ code: 'invalid_request' });
   });
 
   it('rejects an invalid recipient address', async () => {
     const setup = makeService();
-    await expect(setup.service.send(request({ to: ['nope'] }))).rejects.toMatchObject({
+    await expect(setup.service.sendEmail(request({ to: ['nope'] }))).rejects.toMatchObject({
       code: 'invalid_request',
     });
   });
@@ -340,7 +340,7 @@ describe('EmailService.send', () => {
   it('rejects more than the recipient cap', async () => {
     const setup = makeService();
     const to = Array.from({ length: 51 }, (_, i) => `r${i}@x.com`);
-    await expect(setup.service.send(request({ to }))).rejects.toMatchObject({
+    await expect(setup.service.sendEmail(request({ to }))).rejects.toMatchObject({
       code: 'invalid_request',
     });
   });
@@ -348,14 +348,14 @@ describe('EmailService.send', () => {
   it('requires a text or html body', async () => {
     const setup = makeService();
     await expect(
-      setup.service.send(request({ text: undefined, html: undefined })),
+      setup.service.sendEmail(request({ text: undefined, html: undefined })),
     ).rejects.toMatchObject({ code: 'invalid_request' });
   });
 
   it('rejects an attachment that is not an upload reference (no S3 call, no send)', async () => {
     const setup = makeService();
     await expect(
-      setup.service.send(request({ attachments: [{ uploadId: '../uploads/other' }] })),
+      setup.service.sendEmail(request({ attachments: [{ uploadId: '../uploads/other' }] })),
     ).rejects.toMatchObject({ code: 'invalid_request' });
     expect(setup.ses.calls).toHaveLength(0);
   });
@@ -363,7 +363,7 @@ describe('EmailService.send', () => {
   it('rejects an upload that was never uploaded or has expired (no archive, no send)', async () => {
     const setup = makeService();
     await expect(
-      setup.service.send(request({ attachments: [{ uploadId: uploadId(9) }] })),
+      setup.service.sendEmail(request({ attachments: [{ uploadId: uploadId(9) }] })),
     ).rejects.toThrow(/was not found/);
     expect(setup.objectStore.archivePuts).toHaveLength(0);
     expect(setup.ses.calls).toHaveLength(0);
@@ -374,7 +374,7 @@ describe('EmailService.send', () => {
     const attachments = Array.from({ length: 21 }, (_, i) => ({
       uploadId: setup.uploads.add(i, `f${i}`, 'text/plain', 1),
     }));
-    await expect(setup.service.send(request({ attachments }))).rejects.toThrow(/at most 20/);
+    await expect(setup.service.sendEmail(request({ attachments }))).rejects.toThrow(/at most 20/);
   });
 
   it('copies each upload once to attachments/sent/<id>/<index>, embedding small ones from the upload', async () => {
@@ -382,7 +382,7 @@ describe('EmailService.send', () => {
     const a = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('aaa'));
     const b = setup.uploads.add(2, 'b.pdf', 'application/pdf', Buffer.from('bbbb'));
 
-    await setup.service.send(request({ attachments: [{ uploadId: a }, { uploadId: b }] }));
+    await setup.service.sendEmail(request({ attachments: [{ uploadId: a }, { uploadId: b }] }));
 
     expect(setup.uploads.copies).toEqual([
       { source: `uploads/${a}`, dest: 'attachments/sent/id-1/0' },
@@ -424,11 +424,11 @@ describe('EmailService.send', () => {
   });
 });
 
-describe('EmailService.send — stored body', () => {
+describe('EmailService.sendEmail — stored body', () => {
   it('stores a small body inline on the sent row', async () => {
     const setup = makeService();
 
-    await setup.service.send(request({ text: 'Hello inline', html: '<p>Hello inline</p>' }));
+    await setup.service.sendEmail(request({ text: 'Hello inline', html: '<p>Hello inline</p>' }));
 
     expect(setup.emails.records[0]?.body).toEqual({
       kind: 'inline',
@@ -448,7 +448,7 @@ describe('EmailService.send — stored body', () => {
     };
     const big = 'y'.repeat(MAX_INLINE_BODY_BYTES + 1);
 
-    await setup.service.send(request({ text: big }));
+    await setup.service.sendEmail(request({ text: big }));
 
     expect(bodyStoredBeforeRow).toBe(true);
     expect(setup.emails.records[0]?.body).toEqual({
@@ -463,7 +463,9 @@ describe('EmailService.send — stored body', () => {
 
     // 5 MB: over the embed limit, so it becomes a download link.
     const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
-    await setup.service.send(request({ text: 'See attached.', attachments: [{ uploadId: big }] }));
+    await setup.service.sendEmail(
+      request({ text: 'See attached.', attachments: [{ uploadId: big }] }),
+    );
 
     const body = setup.emails.records[0]?.body;
     expect(body?.kind).toBe('inline');
@@ -471,13 +473,13 @@ describe('EmailService.send — stored body', () => {
   });
 });
 
-describe('EmailService.send — write-before-send failure paths (#29)', () => {
+describe('EmailService.sendEmail — write-before-send failure paths (#29)', () => {
   it('FAILS CLOSED when the MIME archive write fails: no send, no row', async () => {
     const objectStore = new FakeObjectStore();
     objectStore.failKeyPrefix = 'sent/';
     const setup = makeService({ objectStore });
 
-    await expect(setup.service.send(request())).rejects.toThrow('s3 down');
+    await expect(setup.service.sendEmail(request())).rejects.toThrow('s3 down');
     expect(setup.ses.calls).toHaveLength(0);
     expect(setup.emails.records).toHaveLength(0);
     expect(setup.emails.statusUpdates).toHaveLength(0);
@@ -494,7 +496,7 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
     };
 
     await expect(
-      setup.service.send(request({ attachments: [{ uploadId: a }] })),
+      setup.service.sendEmail(request({ attachments: [{ uploadId: a }] })),
     ).rejects.toMatchObject({
       code: 'invalid_request',
       message: expect.stringContaining('was not found'),
@@ -508,9 +510,9 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
     const a = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('aaa'));
     setup.uploads.failCopy = true;
 
-    await expect(setup.service.send(request({ attachments: [{ uploadId: a }] }))).rejects.toThrow(
-      /s3 copy down/,
-    );
+    await expect(
+      setup.service.sendEmail(request({ attachments: [{ uploadId: a }] })),
+    ).rejects.toThrow(/s3 copy down/);
     expect(setup.emails.records).toEqual([]);
     expect(setup.ses.calls).toHaveLength(0);
   });
@@ -520,7 +522,7 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
     setup.bodies.fail = true;
 
     await expect(
-      setup.service.send(request({ text: 'z'.repeat(MAX_INLINE_BODY_BYTES + 1) })),
+      setup.service.sendEmail(request({ text: 'z'.repeat(MAX_INLINE_BODY_BYTES + 1) })),
     ).rejects.toThrow(/s3 body put down/);
 
     expect(setup.emails.records).toEqual([]);
@@ -532,7 +534,7 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
     emails.failPut = true;
     const setup = makeService({ emails });
 
-    await expect(setup.service.send(request())).rejects.toThrow('ddb put down');
+    await expect(setup.service.sendEmail(request())).rejects.toThrow('ddb put down');
     expect(setup.ses.calls).toHaveLength(0);
     // The archive object was written before the row (orphan, harmless + RETAINed).
     expect(setup.objectStore.archivePuts).toHaveLength(1);
@@ -544,7 +546,7 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
     ses.fail = true;
     const setup = makeService({ ses });
 
-    await expect(setup.service.send(request())).rejects.toThrow('ses boom');
+    await expect(setup.service.sendEmail(request())).rejects.toThrow('ses boom');
     // Archived + recorded, then marked send_failed with the reason.
     expect(setup.objectStore.archivePuts).toHaveLength(1);
     expect(setup.emails.statusUpdates).toEqual([
@@ -559,7 +561,7 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
     emails.failUpdate = true;
     const setup = makeService({ emails });
 
-    const result = await setup.service.send(request());
+    const result = await setup.service.sendEmail(request());
 
     // Delivery is the contract: the send succeeds even though the row stays 'sending'.
     expect(result.messageId).toBe('ses-msg-1');
@@ -573,13 +575,15 @@ describe('EmailService.send — write-before-send failure paths (#29)', () => {
   });
 });
 
-describe('EmailService.send — embed or link (#14)', () => {
+describe('EmailService.sendEmail — embed or link (#14)', () => {
   it('embeds a file at exactly the per-file limit; links one byte over', async () => {
     const setup = makeService();
     const exact = setup.uploads.add(1, 'exact.bin', 'application/octet-stream', 3 * MB);
     const over = setup.uploads.add(2, 'over.bin', 'application/octet-stream', 3 * MB + 1);
 
-    await setup.service.send(request({ attachments: [{ uploadId: exact }, { uploadId: over }] }));
+    await setup.service.sendEmail(
+      request({ attachments: [{ uploadId: exact }, { uploadId: over }] }),
+    );
 
     expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual(['exact.bin']);
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['over.bin']);
@@ -592,7 +596,7 @@ describe('EmailService.send — embed or link (#14)', () => {
       setup.uploads.add(n, `f${n}.bin`, 'application/octet-stream', 3 * MB),
     );
 
-    await setup.service.send(request({ attachments: ids.map((uploadId) => ({ uploadId })) }));
+    await setup.service.sendEmail(request({ attachments: ids.map((uploadId) => ({ uploadId })) }));
 
     expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual([
       'f1.bin',
@@ -608,7 +612,7 @@ describe('EmailService.send — embed or link (#14)', () => {
       setup.uploads.add(n, `f${n}.bin`, 'application/octet-stream', size * MB),
     );
 
-    await setup.service.send(request({ attachments: ids.map((uploadId) => ({ uploadId })) }));
+    await setup.service.sendEmail(request({ attachments: ids.map((uploadId) => ({ uploadId })) }));
 
     expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual([
       'f0.bin',
@@ -623,7 +627,7 @@ describe('EmailService.send — embed or link (#14)', () => {
     const setup = makeService();
     const big = setup.uploads.add(1, 'report.pdf', 'application/pdf', 50 * MB);
 
-    await setup.service.send(request({ attachments: [{ uploadId: big }] }));
+    await setup.service.sendEmail(request({ attachments: [{ uploadId: big }] }));
 
     expect(setup.mimeInputs[0]?.attachments).toEqual([]);
     expect(setup.uploads.reads).toEqual([]); // never pulled into the Lambda
@@ -655,7 +659,7 @@ describe('EmailService.send — embed or link (#14)', () => {
     const setup = makeService();
     const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
 
-    await setup.service.send(
+    await setup.service.sendEmail(
       request({
         from: 'Me@Example.com',
         to: ['friend@other.com', 'Team@example.com'],
@@ -676,7 +680,7 @@ describe('EmailService.send — embed or link (#14)', () => {
     const setup = makeService();
     const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
 
-    await setup.service.send(
+    await setup.service.sendEmail(
       request({
         to: ['friend@other.com'],
         bcc: ['me2@example.com'],
@@ -691,7 +695,7 @@ describe('EmailService.send — embed or link (#14)', () => {
     const setup = makeService();
     const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
 
-    await setup.service.send(request({ attachments: [{ uploadId: big }] }));
+    await setup.service.sendEmail(request({ attachments: [{ uploadId: big }] }));
 
     expect(setup.tokens.created[0]).not.toHaveProperty('ownDomainRecipients');
   });
@@ -700,7 +704,7 @@ describe('EmailService.send — embed or link (#14)', () => {
     const setup = makeService();
     const big = setup.uploads.add(1, 'a&b.pdf', 'application/pdf', 5 * MB);
 
-    await setup.service.send(
+    await setup.service.sendEmail(
       request({ text: undefined, html: '<p>hi</p>', attachments: [{ uploadId: big }] }),
     );
 
@@ -714,7 +718,7 @@ describe('EmailService.send — embed or link (#14)', () => {
     const b = setup.uploads.add(2, 'b.txt', 'text/plain', 100); // would pass the 150 total
     const c = setup.uploads.add(3, 'c.txt', 'text/plain', 101); // over the per-file limit
 
-    await setup.service.send(
+    await setup.service.sendEmail(
       request({ attachments: [{ uploadId: a }, { uploadId: b }, { uploadId: c }] }),
     );
 

@@ -32,7 +32,7 @@ import { z } from 'zod';
 import { EmailError } from '../utils/errors.js';
 import { parseListEmailsQuery } from '../utils/list-query.js';
 import type { EmailReadService } from '../services/email-read-service.js';
-import type { AttachmentUploadService } from '../services/attachment-upload-service.js';
+import type { AttachmentUploader } from '../services/attachment-service.js';
 import type { EmailService } from '../services/email-service.js';
 import { detailTrust, frameUntrusted, listTrust } from '../utils/untrusted-frame.js';
 
@@ -43,7 +43,7 @@ export const MCP_SERVER_VERSION = '0.1.0';
 export interface McpServerDeps {
   readonly emailService: EmailService;
   /** Backs `create_attachment_upload` — registered whenever `send_email` is. */
-  readonly uploadService: AttachmentUploadService;
+  readonly attachmentService: AttachmentUploader;
   /** Present + `inboundEnabled` → the read tools are registered over this service. */
   readonly readService?: EmailReadService | undefined;
   /** Gate: the read tools are advertised only when inbound is enabled. Fail-closed. */
@@ -207,13 +207,13 @@ function toolErrorResult(error: unknown, genericMessage: string, logLabel: strin
   return { isError: true, content: [{ type: 'text', text: genericMessage }] };
 }
 
-/** `create_attachment_upload`: a presigned PUT for one attachment, over {@link AttachmentUploadService}. */
+/** `create_attachment_upload`: a presigned PUT for one attachment ({@link AttachmentUploader}). */
 export async function handleCreateUpload(
-  uploadService: AttachmentUploadService,
+  attachmentService: AttachmentUploader,
   args: { filename: string; contentType?: string | undefined; sizeBytes: number },
 ): Promise<CallToolResult> {
   try {
-    const upload = await uploadService.create({
+    const upload = await attachmentService.createAttachmentUpload({
       filename: args.filename,
       ...(args.contentType !== undefined ? { contentType: args.contentType } : {}),
       sizeBytes: args.sizeBytes,
@@ -248,7 +248,7 @@ export async function handleSendEmail(
   request: SendEmailRequest,
 ): Promise<CallToolResult> {
   try {
-    const result = await emailService.send(request);
+    const result = await emailService.sendEmail(request);
     return {
       content: [
         {
@@ -458,7 +458,7 @@ export function buildMcpServer(deps: McpServerDeps): McpServer {
       inputSchema: createUploadInputSchema,
       outputSchema: createUploadOutputSchema,
     },
-    (args) => handleCreateUpload(deps.uploadService, args),
+    (args) => handleCreateUpload(deps.attachmentService, args),
   );
 
   if (deps.inboundEnabled && deps.readService) {

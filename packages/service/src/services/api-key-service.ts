@@ -60,7 +60,7 @@ export class ApiKeyService {
   }
 
   /** Mint a new key. The raw key is in the response exactly once; only its hash is stored. */
-  async create(request: CreateApiKeyServiceRequest): Promise<CreateApiKeyResponse> {
+  async createApiKey(request: CreateApiKeyServiceRequest): Promise<CreateApiKeyResponse> {
     const label = this.normalizeName(request.name);
     const createdAt = this.now();
     for (let attempt = 0; attempt < MAX_CREATE_ATTEMPTS; attempt += 1) {
@@ -82,13 +82,13 @@ export class ApiKeyService {
   }
 
   /** All keys as summaries (newest first), never exposing the secret. */
-  async list(_request: ListApiKeysServiceRequest): Promise<ListApiKeysResponse> {
+  async listApiKeys(_request: ListApiKeysServiceRequest): Promise<ListApiKeysResponse> {
     const result = await this.apiKeysDao.listApiKeys({});
     return { keys: [...result.apiKeys].sort((a, b) => b.createdAt - a.createdAt).map(toSummary) };
   }
 
   /** Revoke a key by id. Idempotent — revoking an unknown/already-revoked id is a no-op. */
-  async revoke(request: RevokeApiKeyServiceRequest): Promise<void> {
+  async revokeApiKey(request: RevokeApiKeyServiceRequest): Promise<void> {
     await this.apiKeysDao.deleteApiKey({ keyId: request.keyId });
   }
 
@@ -97,7 +97,9 @@ export class ApiKeyService {
    * key is malformed, unknown, or its secret does not match. Lookup by the public
    * keyId, then a constant-time secret comparison.
    */
-  async verify(request: VerifyApiKeyServiceRequest): Promise<VerifyApiKeyServiceResponse | null> {
+  async verifyApiKey(
+    request: VerifyApiKeyServiceRequest,
+  ): Promise<VerifyApiKeyServiceResponse | null> {
     const parsed = parseApiKey(request.rawKey);
     if (!parsed) {
       return null;
