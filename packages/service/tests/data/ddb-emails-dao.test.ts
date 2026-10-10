@@ -503,17 +503,63 @@ describe('DdbEmailsDao — list index + paging', () => {
     }
   });
 
-  it('falls back to the table if the index disappears after being trusted', async () => {
-    const doc = new PagedFakeDoc([
-      validationError('The table does not have the specified index: list'),
-      { Items: [inboundItem('sk-1')] },
-    ]);
+  it('falls back to the table if the index disappears, and stops trusting it', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-10-10T00:00:00.000Z'));
+      const doc = new PagedFakeDoc([
+        validationError('The table does not have the specified index: list'),
+        { Items: [inboundItem('sk-1')] },
+        { Items: [] },
+      ]);
+      const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+      const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
+      expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', undefined]);
+      expect(result.emails.map((e) => e.sk)).toEqual(['sk-1']);
+
+      // The trust was reset: the next call (after the recheck window) asks DescribeTable again.
+      doc.indexState = undefined;
+      vi.setSystemTime(new Date('2026-10-10T00:00:31.000Z'));
+      await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
+      expect(doc.describes).toBe(2);
+      expect(doc.queries[2]?.input.IndexName).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not read an ACTIVE index that is still backfilling', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    doc.indexState = { IndexStatus: 'ACTIVE', Backfilling: true };
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
 
-    expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', undefined]);
-    expect(result.emails.map((e) => e.sk)).toEqual(['sk-1']);
+    expect(doc.queries[0]?.input.IndexName).toBeUndefined();
+  });
+
+  it('reads an index that is UPDATING a setting — it is already fully built', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    doc.indexState = { IndexStatus: 'UPDATING' };
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
+
+    expect(doc.queries[0]?.input.IndexName).toBe('list');
+  });
+
+  it('shares one DescribeTable between concurrent first calls', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }, { Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await Promise.all([
+      dao.listEmailSummaries({ direction: 'sent', limit: 5 }),
+      dao.listEmailSummaries({ direction: 'inbound', limit: 5 }),
+    ]);
+
+    expect(doc.describes).toBe(1);
+    expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', 'list']);
   });
 
   it('does not mask any other failure behind the fallback', async () => {
