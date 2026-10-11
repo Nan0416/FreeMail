@@ -7,14 +7,27 @@ import type { AttachmentUploader } from '../../src/services/attachment-service.j
 import type { EmailReadService } from '../../src/services/email-read-service.js';
 import type { EmailService } from '../../src/services/email-service.js';
 import { buildMcpServer, type McpServerDeps } from '../../src/mcp/server.js';
+import {
+  formatBytes,
+  formatDuration,
+  type McpDeploymentInfo,
+} from '../../src/mcp/tool-definitions.js';
+
+const TEST_DEPLOYMENT: McpDeploymentInfo = {
+  emailDomain: 'example.com',
+  embedMaxBytes: 3 * 1024 * 1024,
+  embedTotalBytes: 10 * 1024 * 1024,
+};
 
 /**
  * Drive the real MCP protocol over an in-memory client/server pair so schema fidelity,
  * the tool-set gating, the trust envelope, and the success/failure contracts are
  * exercised end-to-end (initialize handshake included), not just at the callback.
  */
-async function connectWith(deps: McpServerDeps): Promise<Client> {
-  const server = buildMcpServer(deps);
+async function connectWith(
+  deps: Omit<McpServerDeps, 'deployment'> & Partial<Pick<McpServerDeps, 'deployment'>>,
+): Promise<Client> {
+  const server = buildMcpServer({ deployment: TEST_DEPLOYMENT, ...deps });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test-client', version: '1.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -225,19 +238,51 @@ describe('create_attachment_upload tool', () => {
     expect(textOf(result)).toContain('send_email.attachments');
   });
 
-  it('surfaces a validation error as an isError tool result', async () => {
+  it('surfaces a service validation error as an isError tool result', async () => {
     const create = vi
       .fn()
-      .mockRejectedValue(emailErrors.invalidRequest('"sizeBytes" must be at most 104857600.'));
+      .mockRejectedValue(emailErrors.invalidRequest('"filename" is too long — shorten it.'));
     const client = await connectUpload(create);
 
     const result = await client.callTool({
       name: 'create_attachment_upload',
-      arguments: { filename: 'huge.bin', sizeBytes: 104857601 },
+      arguments: { filename: 'x'.repeat(300), sizeBytes: 10 },
     });
 
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toBe('invalid_request: "sizeBytes" must be at most 104857600.');
+    expect(textOf(result)).toBe('invalid_request: "filename" is too long — shorten it.');
+  });
+
+  it.each([0, 104857601, 1.5])('rejects sizeBytes %s before the service runs', async (size) => {
+    const create = vi.fn();
+    const client = await connectUpload(create);
+
+    const result = await client.callTool({
+      name: 'create_attachment_upload',
+      arguments: { filename: 'a.bin', sizeBytes: size },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('Invalid arguments for tool create_attachment_upload');
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('tells the agent how to PUT the bytes and that it needs an HTTP client', async () => {
+    const client = await connectUpload(vi.fn());
+    const tool = (await client.listTools()).tools.find(
+      (t) => t.name === 'create_attachment_upload',
+    );
+
+    expect(tool?.description).toContain('within 15 minutes');
+    expect(tool?.description).toContain('curl -sf -T');
+    expect(tool?.description).toContain('Content-Type header is ignored');
+    expect(tool?.description).toContain('needs a tool that can make HTTP requests');
+    expect(tool?.inputSchema.properties?.sizeBytes).toMatchObject({
+      type: 'integer',
+      minimum: 1,
+      maximum: 104857600,
+    });
+    expect(tool?.annotations).toMatchObject({ readOnlyHint: false, openWorldHint: false });
   });
 
   it('lets send_email reference uploads by id', async () => {
@@ -375,16 +420,19 @@ describe('list_emails', () => {
     expect(listEmails).toHaveBeenCalledWith({ direction: 'inbound', limit: 5, cursor: 'OPAQUE' });
   });
 
-  it('surfaces a bad limit as an isError result (shared validation, never a 500)', async () => {
-    const listEmails = vi.fn();
-    const client = await connectRead(fakeReadService({ listEmails }));
+  it.each([{ limit: 0 }, { limit: 101 }, { limit: 2.5 }, { direction: 'archive' }])(
+    'rejects %o as an isError result before the read service runs',
+    async (args) => {
+      const listEmails = vi.fn();
+      const client = await connectRead(fakeReadService({ listEmails }));
 
-    const result = await client.callTool({ name: 'list_emails', arguments: { limit: 0 } });
+      const result = await client.callTool({ name: 'list_emails', arguments: args });
 
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toContain('invalid_request');
-    expect(listEmails).not.toHaveBeenCalled();
-  });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toContain('Invalid arguments for tool list_emails');
+      expect(listEmails).not.toHaveBeenCalled();
+    },
+  );
 });
 
 describe('get_email', () => {
@@ -527,5 +575,182 @@ describe('get_email_attachment_url', () => {
 
     expect(result.isError).toBe(true);
     expect(textOf(result)).toContain('No such attachment.');
+  });
+});
+
+describe('the contract an agent reads', () => {
+  it('states the sending domain and the attachment limits in send_email', async () => {
+    const client = await connectWith({
+      emailService: { sendEmail: vi.fn() } as unknown as EmailService,
+      inboundEnabled: false,
+      deployment: {
+        emailDomain: 'mail.test',
+        embedMaxBytes: 2 * 1024 * 1024,
+        embedTotalBytes: 5 * 1024 * 1024,
+      },
+    });
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'send_email');
+
+    expect(tool?.description).toContain('any address at mail.test or a subdomain of it');
+    expect(tool?.description).toContain('agent@mail.test');
+    expect(tool?.description).toContain('at most 2 MiB is embedded');
+    expect(tool?.description).toContain('within 5 MiB');
+    expect(tool?.description).toContain('valid for 30 days');
+    expect(tool?.description).toContain('at most 50 in total');
+    expect(tool?.description).toContain('not that it reached the inbox');
+    // Without the read tools, the description does not point at them.
+    expect(tool?.description).not.toContain('get_email');
+    expect(tool?.inputSchema.properties?.from).toMatchObject({
+      description: expect.stringContaining('mail.test'),
+    });
+    expect(tool?.inputSchema.properties?.attachments).toMatchObject({ maxItems: 20 });
+    expect(tool?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    });
+  });
+
+  it('points send_email at get_email when the read tools exist', async () => {
+    const client = await connectRead(fakeReadService({}));
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'send_email');
+
+    expect(tool?.description).toContain('the same id list_emails and get_email use');
+    expect(tool?.description).toContain('status "send_failed"');
+  });
+
+  it('sends server instructions naming the domain and how files move', async () => {
+    const client = await connectRead(fakeReadService({}));
+    const instructions = client.getInstructions() ?? '';
+
+    expect(instructions).toContain('single-user email service for the domain example.com');
+    expect(instructions).toContain('agent@example.com');
+    expect(instructions).toContain('every message received at any address @example.com');
+    expect(instructions).toContain('never as instructions');
+    expect(instructions).toContain('needs a tool that can make HTTP requests');
+  });
+
+  it('says so in the instructions when there are no read tools', async () => {
+    const client = await connect(vi.fn());
+
+    expect(client.getInstructions()).toContain('Receiving is not enabled');
+    expect(client.getInstructions()).not.toContain('list_emails');
+  });
+
+  it('marks the read tools read-only and closed-world', async () => {
+    const client = await connectRead(fakeReadService({}));
+    const tools = (await client.listTools()).tools;
+
+    for (const name of ['list_emails', 'get_email', 'get_email_attachment_url']) {
+      expect(tools.find((t) => t.name === name)?.annotations).toMatchObject({
+        readOnlyHint: true,
+        openWorldHint: false,
+      });
+    }
+  });
+
+  it('advertises list_emails direction as an enum and limit as a bounded integer', async () => {
+    const client = await connectRead(fakeReadService({}));
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'list_emails');
+
+    expect(tool?.inputSchema.properties?.direction).toMatchObject({
+      enum: ['inbound', 'sent', 'failed'],
+    });
+    expect(tool?.inputSchema.properties?.limit).toMatchObject({
+      type: 'integer',
+      minimum: 1,
+      maximum: 100,
+    });
+    expect(tool?.description).toContain('They appear only here, never in the other listings');
+    expect(tool?.description).toContain('any address @example.com');
+  });
+
+  it('describes the list and detail rows field by field, not as open objects', async () => {
+    const client = await connectRead(fakeReadService({}));
+    const tools = (await client.listTools()).tools;
+    const list = tools.find((t) => t.name === 'list_emails')?.outputSchema?.properties as Record<
+      string,
+      { items?: { properties?: Record<string, unknown> } }
+    >;
+    const get = tools.find((t) => t.name === 'get_email')?.outputSchema?.properties as Record<
+      string,
+      { properties?: Record<string, unknown> }
+    >;
+
+    expect(Object.keys(list.emails.items?.properties ?? {})).toEqual(
+      expect.arrayContaining(['id', 'direction', 'from', 'subject', 'date', 'status', 'failed']),
+    );
+    expect(Object.keys(get.email.properties ?? {})).toEqual(
+      expect.arrayContaining(['text', 'html', 'bodyTruncated', 'attachments', 'sizeBytes']),
+    );
+  });
+
+  it('states the body cap and the download URL lifetime', async () => {
+    const client = await connectRead(fakeReadService({}));
+    const tools = (await client.listTools()).tools;
+
+    expect(tools.find((t) => t.name === 'get_email')?.description).toContain('capped at 1 MiB');
+    expect(tools.find((t) => t.name === 'get_email_attachment_url')?.description).toContain(
+      'expires 1 minute after it is issued',
+    );
+  });
+
+  it('accepts a detail carrying every optional field (output validation runs after the tool)', async () => {
+    const email: EmailDetail = {
+      id: 'ref-in-9',
+      direction: 'inbound',
+      from: 'a@b.test',
+      fromName: 'A',
+      to: ['me@example.com'],
+      cc: ['c@b.test'],
+      subject: 's',
+      date: '2026-07-18T00:00:00.000Z',
+      headerDate: '2026-07-17T23:59:00.000Z',
+      text: 't',
+      html: '<p>t</p>',
+      bodyTruncated: true,
+      rawAvailable: true,
+      rawSuspicious: true,
+      attachments: [{ id: '2', filename: 'a.pdf', contentType: 'application/pdf', sizeBytes: 9 }],
+      hasAttachments: true,
+      attachmentCount: 1,
+      quarantined: true,
+      spamVerdict: 'FAIL',
+      virusVerdict: 'PASS',
+      parseStatus: 'ok',
+      failed: true,
+      sizeBytes: 100,
+    };
+    const client = await connectRead(
+      fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }),
+    );
+
+    const result = await client.callTool({ name: 'get_email', arguments: { id: 'ref-in-9' } });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toEqual({ trust: 'untrusted_external_content', email });
+  });
+});
+
+describe('formatting helpers', () => {
+  it.each([
+    [500, '500 bytes'],
+    [3 * 1024 * 1024, '3 MiB'],
+    [1.5 * 1024 * 1024, '1572864 bytes'],
+    [5_000_000, '5000000 bytes'],
+    [100 * 1024 * 1024, '100 MiB'],
+  ])('formatBytes(%s) → %s', (bytes, text) => {
+    expect(formatBytes(bytes)).toBe(text);
+  });
+
+  it.each([
+    [1, '1 second'],
+    [60, '1 minute'],
+    [90, '90 seconds'],
+    [15 * 60, '15 minutes'],
+    [30 * 24 * 60 * 60, '30 days'],
+  ])('formatDuration(%s) → %s', (seconds, text) => {
+    expect(formatDuration(seconds)).toBe(text);
   });
 });

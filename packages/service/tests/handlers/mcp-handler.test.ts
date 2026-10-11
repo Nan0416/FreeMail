@@ -86,7 +86,7 @@ function apiEvent(body: string, options: EventOptions = {}): APIGatewayProxyEven
  * read once at cold start — so a test that needs the read tools must load a fresh module
  * graph. `vi.mock` registrations survive `resetModules`; the module-level app cache does not.
  */
-async function loadHandler(inboundEnabled: boolean) {
+async function loadHandler(inboundEnabled: boolean, env: Record<string, string> = {}) {
   vi.resetModules();
   process.env.EMAILS_TABLE = 'emails-test';
   process.env.DOWNLOAD_TOKENS_TABLE = 'tokens-test';
@@ -94,6 +94,9 @@ async function loadHandler(inboundEnabled: boolean) {
   process.env.EMAIL_DOMAIN = 'example.com';
   process.env.DOWNLOAD_BASE_URL = 'https://api.test';
   process.env.INBOUND_ENABLED = String(inboundEnabled);
+  delete process.env.EMBED_MAX_BYTES;
+  delete process.env.EMBED_TOTAL_BYTES;
+  Object.assign(process.env, env);
   const module = await import('../../src/handlers/mcp.js');
   return (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> =>
     module.handler(event, LAMBDA_CONTEXT);
@@ -119,7 +122,8 @@ interface JsonRpcResponse {
     readonly capabilities?: { readonly tools?: unknown };
     readonly structuredContent?: Record<string, unknown>;
     readonly isError?: boolean;
-    readonly tools?: readonly { readonly name: string }[];
+    readonly tools?: readonly { readonly name: string; readonly description?: string }[];
+    readonly instructions?: string;
   };
 }
 
@@ -302,5 +306,44 @@ describe('mcp handler', () => {
     expect(result.statusCode).toBe(400);
     expect(payloadOf(result)).toMatchObject({ error: 'invalid_request' });
     expect(sendMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('mcp handler — deployment facts reach the tool text', () => {
+  it('states the configured domain and embed limits from the environment', async () => {
+    const handler = await loadHandler(false, {
+      EMAIL_DOMAIN: 'Mail.Example.org.',
+      EMBED_MAX_BYTES: String(2 * 1024 * 1024),
+      EMBED_TOTAL_BYTES: String(6 * 1024 * 1024),
+    });
+
+    const init = resultOf(await handler(apiEvent(initializeBody(), { lambda: AUTHORIZED })));
+    expect(init.instructions).toContain('the domain mail.example.org');
+
+    const list = resultOf(
+      await handler(
+        apiEvent(JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'tools/list', params: {} }), {
+          lambda: AUTHORIZED,
+        }),
+      ),
+    );
+    const send = list.tools?.find((tool) => tool.name === 'send_email');
+    expect(send?.description).toContain('agent@mail.example.org');
+    expect(send?.description).toContain('at most 2 MiB is embedded');
+    expect(send?.description).toContain('within 6 MiB');
+  });
+
+  it('states the default limits when none are configured', async () => {
+    const handler = await loadHandler(false);
+    const list = resultOf(
+      await handler(
+        apiEvent(JSON.stringify({ jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} }), {
+          lambda: AUTHORIZED,
+        }),
+      ),
+    );
+    const send = list.tools?.find((tool) => tool.name === 'send_email');
+    expect(send?.description).toContain('at most 3 MiB is embedded');
+    expect(send?.description).toContain('within 10 MiB');
   });
 });

@@ -29,6 +29,7 @@ import {
   type SendEmailResponse,
 } from '@freemail/shared';
 import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
+import { EmailEntity } from '../data/entities.js';
 import type {
   CreateSentEmailInput,
   EmailsDao,
@@ -39,6 +40,7 @@ import type { OutboundObjectStore } from '../facades/s3-outbound-object-store.js
 import { appendDownloadLinks, type DownloadLink } from '../utils/attachment-links.js';
 import type { UploadStore, UploadedObject } from '../facades/s3-upload-store.js';
 import { downloadUrl, generateDownloadToken } from '../utils/download-token.js';
+import { encodeEmailRef } from '../utils/email-ref.js';
 import { emailErrors } from '../utils/errors.js';
 import { mapBounded } from '../utils/bounded-map.js';
 import { buildRawMime, type RawMimeAttachment, type RawMimeInput } from '../utils/mime.js';
@@ -266,7 +268,8 @@ export class EmailService {
     // not fail the response; a lost update leaves the row at 'sending' (self-describing).
     await this.recordTerminalStatus({ id, sentAt, status: 'sent', sesMessageId: messageId });
 
-    return { id, messageId, sentAt };
+    // The same opaque id the list and read surfaces use, so a caller can open what it just sent.
+    return { id: encodeEmailRef(EmailEntity.sent(sentAt, id)), messageId, sentAt };
   }
 
   /**

@@ -22,6 +22,7 @@ import type { OutboundObjectStore } from '../../src/facades/s3-outbound-object-s
 import type { UploadStore, UploadedObject } from '../../src/facades/s3-upload-store.js';
 import { MAX_INLINE_BODY_BYTES } from '../../src/services/email-body-storage.js';
 import { EmailError } from '../../src/utils/errors.js';
+import { decodeEmailRef, encodeEmailRef } from '../../src/utils/email-ref.js';
 import type { RawMimeInput } from '../../src/utils/mime.js';
 import { EmailService, type EmailServiceDeps } from '../../src/services/email-service.js';
 import type { SendRawParams, SesSender } from '../../src/facades/ses-email-facade.js';
@@ -250,9 +251,14 @@ describe('EmailService.sendEmail', () => {
     );
 
     expect(result).toEqual({
-      id: 'id-1',
+      id: encodeEmailRef({ pk: 'SENT', sk: '2026-07-17T12:00:00.000Z#id-1' }),
       messageId: 'ses-msg-1',
       sentAt: '2026-07-17T12:00:00.000Z',
+    });
+    // The returned id is the read API's handle, so the caller can open what it just sent.
+    expect(decodeEmailRef(result.id)).toEqual({
+      pk: 'SENT',
+      sk: '2026-07-17T12:00:00.000Z#id-1',
     });
     expect(setup.ses.calls).toHaveLength(1);
     expect(setup.ses.calls[0]).toMatchObject({
