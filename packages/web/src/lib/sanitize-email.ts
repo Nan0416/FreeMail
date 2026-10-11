@@ -5,8 +5,9 @@ import DOMPurify from 'dompurify';
  * reader stacks (the iframe `sandbox` and the app CSP are the other two):
  *
  *  1. **DOMPurify** strips scripts, event handlers, dangerous URI schemes
- *     (`javascript:`/`data:`/…), dangerous CSS, and unsafe tags, and forces safe link
- *     attributes.
+ *     (`javascript:`/`data:`/…), dangerous CSS, and unsafe tags, forces safe link
+ *     attributes, and drops every link and image URL that would resolve against the app
+ *     page (see {@link STAND_IN_BASE}).
  *  2. **A per-email `<meta>` CSP** injected into the built document independently locks
  *     the opaque-origin doc: `default-src 'none'` so nothing loads, and `img-src` is
  *     `'none'` by default (blocking tracking pixels / beacons) → `https:` only when the
@@ -26,6 +27,73 @@ import DOMPurify from 'dompurify';
  * schemes). Requiring a scheme stripped all table/image layout attributes.
  */
 const ALLOWED_URI_REGEXP = /^(?:(?:https?|mailto|tel):|[^a-z]|[a-z+.-]+(?:[^a-z+.\-:]|$))/i;
+
+/**
+ * Stand-in base for resolving an email's URLs. A `srcdoc` document's base URL is its
+ * parent's — here the app page itself — and the app CSP's `base-uri 'none'` forbids
+ * overriding it, so any URL without its own origin (`/settings`, `unsubscribe`, `?q=1`,
+ * a scheme-less `www.example.com`, even `https:foo`) would open a page on the app's origin.
+ * Resolved against this base instead — `https:` like the app, so `https:foo` resolves the
+ * same way — such a URL lands on {@link STAND_IN_ORIGIN} and is dropped. A URL that
+ * survives is written back absolute, so the browser cannot resolve it any differently.
+ */
+const STAND_IN_BASE = 'https://email-base.invalid/';
+const STAND_IN_ORIGIN = new URL(STAND_IN_BASE).origin;
+
+/** Schemes a surviving link may navigate to. */
+const LINK_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:', 'mailto:', 'tel:']);
+
+/** Schemes a surviving image source may load from (when images are allowed). */
+const RESOURCE_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:']);
+
+/** `value` resolved against {@link STAND_IN_BASE}, or `undefined` if it does not parse. */
+function resolveEmailUrl(value: string): URL | undefined {
+  try {
+    return new URL(value, STAND_IN_BASE);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether a {@link resolveEmailUrl} result may be written back: absolute (a protocol-relative
+ * `//host/path` names its own host, so it counts) with one of `protocols`. A URL with `<` or
+ * `>` is refused too: DOMPurify's own markup-in-attribute check ran on the raw value, and
+ * the URL parser strips the tab or newline that could have hidden `</style` from it.
+ */
+function isAbsoluteUrl(url: URL, protocols: ReadonlySet<string>): boolean {
+  return url.origin !== STAND_IN_ORIGIN && protocols.has(url.protocol) && !/[<>]/.test(url.href);
+}
+
+/**
+ * Make one `<a>` / `<area>` safe to click from the reader's iframe. An absolute link is
+ * written back resolved and opens in a fresh, non-opener tab. A `#fragment` link targets
+ * the iframe's own `about:srcdoc` URL, so it scrolls the email instead of opening the app
+ * page with that fragment. Any other link would open a page on the app's origin, so it
+ * loses its `href` and renders as plain text.
+ */
+function rewriteLink(node: Element): void {
+  const href = node.getAttribute('href');
+  if (href === null) {
+    return;
+  }
+  const url = resolveEmailUrl(href);
+  if (url !== undefined && isAbsoluteUrl(url, LINK_PROTOCOLS)) {
+    node.setAttribute('href', url.href);
+    node.setAttribute('target', '_blank');
+    node.setAttribute('rel', 'noopener noreferrer');
+    return;
+  }
+  if (url !== undefined && href.trim().startsWith('#')) {
+    // An empty fragment (`href="#"`) still needs its `#`: plain `about:srcdoc` would
+    // navigate the iframe away from the email instead of scrolling it.
+    node.setAttribute('href', `about:srcdoc${url.hash || '#'}`);
+    node.setAttribute('target', '_self');
+    return;
+  }
+  node.removeAttribute('href');
+  node.removeAttribute('target');
+}
 
 /**
  * Tags removed outright — active content, embedding, form/phishing surface, and CSS/SVG
@@ -70,7 +138,10 @@ const FORBIDDEN_ATTRS = ['ping', 'formaction', 'srcset'];
 /** Declarations that make a `style` value dangerous (legacy script-in-CSS + remote CSS import). */
 const DANGEROUS_CSS = /expression\s*\(|javascript:|vbscript:|behavior\s*:|-moz-binding|@import/i;
 
-/** Single-URL resource loaders. Kept only for `https?:` when images are allowed, else stripped. */
+/**
+ * Single-URL resource loaders. Kept only for absolute `https?:` when images are allowed,
+ * else stripped.
+ */
 const RESOURCE_ATTRS = ['src', 'background', 'poster'];
 
 /**
@@ -87,21 +158,23 @@ function installHooks(): void {
   }
   hooksInstalled = true;
 
-  // Force every surviving link to open in a fresh, non-opener tab.
   DOMPurify.addHook('afterSanitizeAttributes', (node) => {
-    if (node.nodeName === 'A') {
-      node.setAttribute('target', '_blank');
-      node.setAttribute('rel', 'noopener noreferrer');
+    if (node.nodeName === 'A' || node.nodeName === 'AREA') {
+      rewriteLink(node);
     }
     // Block remote resources by default; even when images are allowed, keep ONLY an
-    // `https?:` src (strip `data:`/`cid:`/other schemes DOMPurify treats as safe on img).
-    // Belt for the per-email CSP `img-src 'none' | https:`.
+    // absolute `https?:` src (strip `data:`/`cid:`/other schemes DOMPurify treats as safe
+    // on img, and any URL that would load from the app's origin). Belt for the per-email
+    // CSP `img-src 'none' | https:`.
     for (const attr of RESOURCE_ATTRS) {
-      if (!node.hasAttribute(attr)) {
+      const value = node.getAttribute(attr);
+      if (value === null) {
         continue;
       }
-      const value = node.getAttribute(attr) ?? '';
-      if (!currentAllowImages || !/^\s*https?:/i.test(value)) {
+      const url = currentAllowImages ? resolveEmailUrl(value) : undefined;
+      if (url !== undefined && isAbsoluteUrl(url, RESOURCE_PROTOCOLS)) {
+        node.setAttribute(attr, url.href);
+      } else {
         node.removeAttribute(attr);
       }
     }
@@ -151,7 +224,7 @@ const IFRAME_RESET_CSS =
   'color:#2a2a31;background:#fff;' +
   "font-family:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif;" +
   'font-size:14px;line-height:1.6;overflow-wrap:break-word;}' +
-  'a{color:#4752c4;}img{max-width:100%;height:auto;}' +
+  'a[href]{color:#4752c4;}img{max-width:100%;height:auto;}' +
   'table{max-width:100%;}' +
   'blockquote{margin:0 0 0 .25rem;padding-left:.75rem;border-left:2px solid #e4e4e7;color:#63636e;}' +
   'pre{white-space:pre-wrap;}' +
