@@ -32,11 +32,17 @@ describe('readServiceConfig', () => {
       emailDomain: 'example.com',
       downloadBaseUrl: 'https://api.example.com',
       sesConfigurationSet: 'cfg',
+      sesRegion: 'us-east-1',
     });
   });
 
   it('treats the SES configuration set as optional', () => {
     expect(readServiceConfig(COMPLETE).sesConfigurationSet).toBeUndefined();
+  });
+
+  it("takes the SES region from Lambda's AWS_REGION, defaulting to us-east-1", () => {
+    expect(readServiceConfig({ ...COMPLETE, AWS_REGION: 'eu-west-1' }).sesRegion).toBe('eu-west-1');
+    expect(readServiceConfig(COMPLETE).sesRegion).toBe('us-east-1');
   });
 
   it('reads the optional attachment embed limits as byte counts', () => {

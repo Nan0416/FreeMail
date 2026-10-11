@@ -32,6 +32,8 @@ export interface ComposeInit {
   readonly bcc?: string;
   readonly subject?: string;
   readonly html?: string;
+  /** For a reply: the id of the message answered (threads the send). */
+  readonly inReplyTo?: string;
 }
 
 export interface ComposeWindowProps {
@@ -120,6 +122,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     bcc,
     subject,
     html,
+    ...(props.init.inReplyTo ? { inReplyTo: props.init.inReplyTo } : {}),
     updatedAt: new Date().toISOString(),
   });
   const latest = useRef(snapshot);
@@ -280,6 +283,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
         html: bodyHtml,
         text: bodyText,
         ...(attachments.length ? { attachments } : {}),
+        ...(props.init.inReplyTo ? { inReplyTo: props.init.inReplyTo } : {}),
       };
       await auth.client.sendEmail(request);
       setLastSender({ address: request.from, name: fromName.trim() });

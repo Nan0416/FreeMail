@@ -643,3 +643,24 @@ describe('DdbEmailsDao — list index + paging', () => {
     expect(doc.queries).toHaveLength(1);
   });
 });
+
+describe('DdbEmailsDao — threading fields', () => {
+  it('writes an inbound message id, references, and reply-to', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.createInboundEmail(
+      inboundRecord({
+        messageIdHeader: '<m@x>',
+        references: ['<r@x>'],
+        replyTo: ['desk@example.com'],
+      }),
+    );
+
+    expect(doc.commands[0]?.input?.Item).toMatchObject({
+      messageIdHeader: '<m@x>',
+      references: ['<r@x>'],
+      replyTo: ['desk@example.com'],
+    });
+  });
+});

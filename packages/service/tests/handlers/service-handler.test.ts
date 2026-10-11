@@ -292,6 +292,37 @@ describe('rest handler — send email is dual-scheme', () => {
   );
 });
 
+describe('rest handler — send passes reply fields through', () => {
+  it('forwards inReplyTo and replyTo to the email service', async () => {
+    const res = await invoke('POST /emails', {
+      lambda: lambdaContext('access'),
+      body: {
+        from: 'me@example.com',
+        to: ['x@y.com'],
+        text: 'hi',
+        inReplyTo: 'HANDLE',
+        replyTo: ['desk@example.com'],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sendMock).toHaveBeenLastCalledWith({
+      from: 'me@example.com',
+      to: ['x@y.com'],
+      text: 'hi',
+      inReplyTo: 'HANDLE',
+      replyTo: ['desk@example.com'],
+    });
+  });
+
+  it('rejects a non-array replyTo as a 400', async () => {
+    const res = await invoke('POST /emails', {
+      lambda: lambdaContext('access'),
+      body: { from: 'me@example.com', to: ['x@y.com'], text: 'hi', replyTo: 'desk@example.com' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+});
+
 describe('rest handler — key management reaches the API-key service', () => {
   it('creates a key: POST /keys → 201, createApiKey called with the name', async () => {
     keysMocks.create

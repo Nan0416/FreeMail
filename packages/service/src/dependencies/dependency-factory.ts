@@ -106,6 +106,7 @@ export class DependencyFactory {
         ...embedLimits(this.config),
         downloadBaseUrl: this.config.downloadBaseUrl,
         emailDomain: this.config.emailDomain,
+        sesRegion: this.config.sesRegion,
       }),
       emailReadService: new EmailReadService({
         emailsDao,

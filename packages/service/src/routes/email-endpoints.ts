@@ -181,6 +181,8 @@ function parseSendEmailBody(body: Record<string, unknown>): SendEmailRequest {
   const cc = optionalStringArray(body, 'cc');
   const bcc = optionalStringArray(body, 'bcc');
   const attachments = optionalAttachments(body);
+  const inReplyTo = optionalString(body, 'inReplyTo');
+  const replyTo = optionalStringArray(body, 'replyTo');
   return {
     from,
     ...(fromName !== undefined ? { fromName } : {}),
@@ -191,6 +193,8 @@ function parseSendEmailBody(body: Record<string, unknown>): SendEmailRequest {
     ...(cc !== undefined ? { cc } : {}),
     ...(bcc !== undefined ? { bcc } : {}),
     ...(attachments !== undefined ? { attachments } : {}),
+    ...(inReplyTo !== undefined ? { inReplyTo } : {}),
+    ...(replyTo !== undefined ? { replyTo } : {}),
   };
 }
 

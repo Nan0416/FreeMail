@@ -9,6 +9,8 @@ export interface ComposePrefill {
   readonly cc: string;
   readonly subject: string;
   readonly html: string;
+  /** For a reply: the id of the message answered, so the send threads it. Absent on forward. */
+  readonly inReplyTo?: string;
 }
 
 function escapeHtml(value: string): string {
@@ -73,8 +75,10 @@ export function replySender(email: EmailDetail, lastSender: string): string {
 }
 
 /**
- * Prefill a compose window for reply / reply-all / forward. The API sends each message
- * standalone (it cannot set `In-Reply-To`), so this is a new message with a quoted body.
+ * Prefill a compose window for reply / reply-all / forward. A reply carries the original's id
+ * as `inReplyTo`, so the API threads it (`In-Reply-To` / `References`) into the same
+ * conversation; a forward starts a new one. A received message's `Reply-To`, when it has one,
+ * is where the sender asked replies to go, so it replaces `From` as the primary recipient.
  */
 export function buildPrefill(
   email: EmailDetail,
@@ -104,7 +108,12 @@ export function buildPrefill(
   }
 
   // Replying to our own sent message continues to its recipients rather than ourselves.
-  const primary = email.direction === 'sent' ? [...email.to] : [email.from];
+  const primary =
+    email.direction === 'sent'
+      ? [...email.to]
+      : email.replyTo && email.replyTo.length > 0
+        ? [...email.replyTo]
+        : [email.from];
   const others =
     mode === 'replyAll'
       ? [...(email.direction === 'sent' ? [] : email.to), ...email.cc].filter(
@@ -117,5 +126,6 @@ export function buildPrefill(
     cc: others.join(', '),
     subject: withPrefix(email.subject, 'Re'),
     html: `<p></p><p>On ${when}, ${sender} wrote:</p>${quoted}`,
+    inReplyTo: email.id,
   };
 }

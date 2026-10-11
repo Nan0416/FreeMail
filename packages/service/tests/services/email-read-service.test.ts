@@ -340,6 +340,19 @@ describe('EmailReadService.getEmail', () => {
     expect(detail.html).toContain('This is what I sent');
   });
 
+  it("surfaces a message's Reply-To, and omits it when there is none", async () => {
+    const repo = new FakeDao();
+    const withReplyTo = repo.put(
+      INBOUND_PARTITION,
+      inboundRow({ sk: '2026-07-17T10:00:00.000Z#r1', id: 'r1', replyTo: ['desk@x.com'] }),
+    );
+    const without = repo.put(INBOUND_PARTITION, inboundRow());
+    const reader = service(repo, new FakePresigner(), new FakeRawMime(), fakeParse({}).fn);
+
+    expect((await reader.getEmail({ handle: withReplyTo })).replyTo).toEqual(['desk@x.com']);
+    expect((await reader.getEmail({ handle: without })).replyTo).toBeUndefined();
+  });
+
   it('inbound exposable → materializes body; attachments exposed WITHOUT the S3 key', async () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();

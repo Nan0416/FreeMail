@@ -122,7 +122,12 @@ export async function handleSendEmail(
       content: [
         {
           type: 'text',
-          text: `Sent email ${result.id} (SES message ${result.messageId}) at ${result.sentAt}.`,
+          text:
+            `Sent email ${result.id} (SES message ${result.messageId}) at ${result.sentAt}.` +
+            (result.threaded === false
+              ? ' It is NOT threaded: the original has no usable Message-ID, so it starts a new ' +
+                'conversation with the same subject.'
+              : ''),
         },
       ],
       structuredContent: { ...result },

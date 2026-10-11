@@ -33,6 +33,8 @@ export interface ServiceConfig {
   readonly downloadBaseUrl: string;
   /** SES configuration set for suppression + bounce/complaint tracking. Optional. */
   readonly sesConfigurationSet: string | undefined;
+  /** The region SES sends from — Lambda's own (`AWS_REGION`); it names SES's Message-ID host. */
+  readonly sesRegion: string;
   /** Embed an attachment at most this size (bytes); undefined → the default. */
   readonly embedMaxBytes: number | undefined;
   /** Cap on one message's embedded attachments (bytes); undefined → the default. */
@@ -49,6 +51,8 @@ const ENV_SCHEMA = z.object({
   EMAIL_DOMAIN: envString(),
   DOWNLOAD_BASE_URL: envString(),
   SES_CONFIGURATION_SET: envString().optional(),
+  // Set by Lambda itself, never by CDK; us-east-1 (FreeMail's default region) when absent.
+  AWS_REGION: envString().optional(),
   EMBED_MAX_BYTES: envPositiveInt().optional(),
   EMBED_TOTAL_BYTES: envPositiveInt().optional(),
 });
@@ -82,6 +86,7 @@ export function readServiceConfig(env: NodeJS.ProcessEnv = process.env): Service
     emailDomain: parsed.EMAIL_DOMAIN,
     downloadBaseUrl: parsed.DOWNLOAD_BASE_URL,
     sesConfigurationSet: parsed.SES_CONFIGURATION_SET,
+    sesRegion: parsed.AWS_REGION ?? 'us-east-1',
     embedMaxBytes: parsed.EMBED_MAX_BYTES,
     embedTotalBytes: parsed.EMBED_TOTAL_BYTES,
   };

@@ -67,6 +67,18 @@ describe('buildPrefill', () => {
     expect(p.html).toContain('&lt;a href=&quot;https://evil.example&quot;&gt;Al&lt;/a&gt;');
   });
 
+  it('threads a reply to the original, but not a forward', () => {
+    expect(buildPrefill(INBOUND, 'reply', '').inReplyTo).toBe('h1');
+    expect(buildPrefill(INBOUND, 'replyAll', '').inReplyTo).toBe('h1');
+    expect(buildPrefill(INBOUND, 'forward', '').inReplyTo).toBeUndefined();
+  });
+
+  it("replies to the sender's Reply-To when there is one", () => {
+    const p = buildPrefill({ ...INBOUND, replyTo: ['desk@x.com'] }, 'replyAll', 'me@mine.dev');
+    expect(p.to).toBe('desk@x.com');
+    expect(p.cc).toBe('bob@x.com, carol@x.com');
+  });
+
   it('continues a sent message to its recipients', () => {
     const sent: EmailDetail = { ...INBOUND, direction: 'sent', from: 'me@mine.dev', cc: [] };
     const p = buildPrefill(sent, 'reply', '');

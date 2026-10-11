@@ -8,6 +8,7 @@ import type {
 } from '../../src/data/download-tokens-dao.js';
 import type {
   EmailsDao,
+  GetEmailInput,
   CreateInboundEmailOutput,
   CreateSentEmailInput,
   CreateSentEmailOutput,
@@ -79,8 +80,12 @@ class FakeEmails implements EmailsDao {
   listEmailSummaries(): Promise<ListEmailSummariesOutput> {
     return Promise.resolve({ emails: [] });
   }
-  getEmail(): Promise<GetEmailOutput | null> {
-    return Promise.resolve(null);
+  /** Stored rows getEmail can find, by `pk|sk`. */
+  readonly stored = new Map<string, GetEmailOutput>();
+  readonly gets: GetEmailInput[] = [];
+  getEmail(input: GetEmailInput): Promise<GetEmailOutput | null> {
+    this.gets.push(input);
+    return Promise.resolve(this.stored.get(`${input.pk}|${input.sk}`) ?? null);
   }
 }
 
@@ -730,5 +735,223 @@ describe('EmailService.sendEmail — embed or link (#14)', () => {
 
     expect(setup.mimeInputs[0]?.attachments.map((x) => x.filename)).toEqual(['a.txt']);
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['b.txt', 'c.txt']);
+  });
+});
+
+describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
+  const INBOUND_SK = '2026-07-16T09:00:00.000Z#ses-in-1';
+  const SENT_SK = '2026-07-16T08:00:00.000Z#sent-0';
+
+  function inboundParent(over: Partial<GetEmailOutput> = {}): GetEmailOutput {
+    return {
+      direction: 'inbound',
+      pk: 'INBOUND',
+      sk: INBOUND_SK,
+      id: 'ses-in-1',
+      sesMessageId: 'ses-in-1',
+      from: 'friend@other.com',
+      to: ['me@example.com'],
+      cc: [],
+      subject: 'Lunch?',
+      receivedAt: '2026-07-16T09:00:00.000Z',
+      hasAttachments: false,
+      attachmentCount: 0,
+      attachments: [],
+      spamVerdict: 'PASS',
+      virusVerdict: 'PASS',
+      parseStatus: 'ok',
+      quarantined: false,
+      rawS3Key: 'inbound/ses-in-1',
+      sizeBytes: 10,
+      messageIdHeader: '<parent@mail.other.com>',
+      references: ['<root@mail.other.com>'],
+      ...over,
+    } as GetEmailOutput;
+  }
+
+  function withParent(row: GetEmailOutput, over: Partial<EmailServiceDeps> = {}) {
+    const emails = new FakeEmails();
+    emails.stored.set(`${row.pk}|${row.sk}`, row);
+    return { ...makeService({ emailsDao: emails, ...over }), emails };
+  }
+
+  it('threads a reply to a received message and defaults the subject', async () => {
+    const setup = withParent(inboundParent());
+
+    const result = await setup.service.sendEmail(
+      request({
+        subject: undefined,
+        inReplyTo: encodeEmailRef({ pk: 'INBOUND', sk: INBOUND_SK }),
+      }),
+    );
+
+    expect(result.threaded).toBe(true);
+    expect(setup.emails.gets).toEqual([{ pk: 'INBOUND', sk: INBOUND_SK }]);
+    expect(setup.mimeInputs[0]).toMatchObject({
+      subject: 'Re: Lunch?',
+      inReplyTo: '<parent@mail.other.com>',
+      references: ['<root@mail.other.com>', '<parent@mail.other.com>'],
+    });
+    // The chain is kept on the sent row, so a reply to this reply stays in the thread.
+    expect(setup.emails.records[0]).toMatchObject({
+      subject: 'Re: Lunch?',
+      references: ['<root@mail.other.com>', '<parent@mail.other.com>'],
+    });
+  });
+
+  it('keeps an explicit subject', async () => {
+    const setup = withParent(inboundParent());
+
+    await setup.service.sendEmail(
+      request({
+        subject: 'New topic',
+        inReplyTo: encodeEmailRef({ pk: 'INBOUND', sk: INBOUND_SK }),
+      }),
+    );
+
+    expect(setup.mimeInputs[0].subject).toBe('New topic');
+  });
+
+  it("threads a follow-up to our own sent message on SES's Message-ID", async () => {
+    const sent: GetEmailOutput = {
+      direction: 'sent',
+      pk: 'SENT',
+      sk: SENT_SK,
+      id: 'sent-0',
+      from: 'me@example.com',
+      to: ['friend@other.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Re: Lunch?',
+      sentAt: '2026-07-16T08:00:00.000Z',
+      sesMessageId: '0100abc-000000',
+      attachmentCount: 0,
+      sizeBytes: 10,
+      status: 'sent',
+      references: ['<root@mail.other.com>', '<parent@mail.other.com>'],
+    };
+    const setup = withParent(sent, { sesRegion: 'us-east-1' });
+
+    await setup.service.sendEmail(
+      request({ subject: undefined, inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }),
+    );
+
+    expect(setup.mimeInputs[0]).toMatchObject({
+      subject: 'Re: Lunch?',
+      inReplyTo: '<0100abc-000000@email.amazonses.com>',
+      references: [
+        '<root@mail.other.com>',
+        '<parent@mail.other.com>',
+        '<0100abc-000000@email.amazonses.com>',
+      ],
+    });
+  });
+
+  it('sends a reply to a received message without a usable Message-ID, unthreaded', async () => {
+    const setup = withParent(inboundParent({ messageIdHeader: undefined }));
+
+    const result = await setup.service.sendEmail(
+      request({
+        subject: undefined,
+        inReplyTo: encodeEmailRef({ pk: 'INBOUND', sk: INBOUND_SK }),
+      }),
+    );
+
+    expect(result.threaded).toBe(false);
+    expect(setup.ses.calls).toHaveLength(1);
+    expect(setup.mimeInputs[0].subject).toBe('Re: Lunch?');
+    expect(setup.mimeInputs[0].inReplyTo).toBeUndefined();
+    expect(setup.mimeInputs[0].references).toBeUndefined();
+    expect(setup.emails.records[0].references).toBeUndefined();
+  });
+
+  it('sends a reply to a sent message SES never accepted, unthreaded', async () => {
+    const sent = {
+      direction: 'sent',
+      pk: 'SENT',
+      sk: SENT_SK,
+      id: 'sent-0',
+      from: 'me@example.com',
+      to: [],
+      cc: [],
+      bcc: [],
+      subject: 'x',
+      sentAt: '2026-07-16T08:00:00.000Z',
+      attachmentCount: 0,
+      sizeBytes: 1,
+      status: 'send_failed',
+    } as GetEmailOutput;
+    const setup = withParent(sent);
+
+    const result = await setup.service.sendEmail(
+      request({ inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }),
+    );
+
+    expect(result.threaded).toBe(false);
+    expect(setup.mimeInputs[0].inReplyTo).toBeUndefined();
+  });
+
+  it.each([
+    ['garbage', 'not-a-handle'],
+    ['an unknown message', encodeEmailRef({ pk: 'INBOUND', sk: '2020-01-01T00:00:00.000Z#nope' })],
+    ['an empty string', ''],
+  ])('refuses %s as inReplyTo with invalid_request', async (_label, handle) => {
+    const setup = makeService();
+
+    await expect(setup.service.sendEmail(request({ inReplyTo: handle }))).rejects.toMatchObject({
+      code: 'invalid_request',
+    });
+    expect(setup.ses.calls).toHaveLength(0);
+  });
+
+  it('refuses inReplyTo where the mailbox cannot be read, without touching the table', async () => {
+    const setup = withParent(inboundParent(), { canReadMailbox: false });
+
+    await expect(
+      setup.service.sendEmail(
+        request({ inReplyTo: encodeEmailRef({ pk: 'INBOUND', sk: INBOUND_SK }) }),
+      ),
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: expect.stringContaining('receiving'),
+    });
+    expect(setup.emails.gets).toEqual([]);
+  });
+
+  it('sets Reply-To and records it', async () => {
+    const setup = makeService();
+
+    await setup.service.sendEmail(request({ replyTo: [' desk@example.com '] }));
+
+    expect(setup.mimeInputs[0].replyTo).toEqual(['desk@example.com']);
+    expect(setup.emails.records[0].replyTo).toEqual(['desk@example.com']);
+  });
+
+  it.each([
+    ['an invalid address', ['not-an-address']],
+    ['too many addresses', Array.from({ length: 11 }, (_v, i) => `r${i}@example.com`)],
+  ])('rejects %s in replyTo', async (_label, replyTo) => {
+    const setup = makeService();
+
+    await expect(setup.service.sendEmail(request({ replyTo }))).rejects.toMatchObject({
+      code: 'invalid_request',
+    });
+  });
+
+  it('records neither when not replying', async () => {
+    const setup = makeService();
+
+    await setup.service.sendEmail(request());
+
+    expect(setup.mimeInputs[0].inReplyTo).toBeUndefined();
+    expect(setup.mimeInputs[0].replyTo).toBeUndefined();
+    expect(setup.emails.records[0].references).toBeUndefined();
+    expect(setup.emails.records[0].replyTo).toBeUndefined();
+  });
+
+  it('reports threaded only when inReplyTo was given', async () => {
+    const setup = makeService();
+
+    expect((await setup.service.sendEmail(request())).threaded).toBeUndefined();
   });
 });
