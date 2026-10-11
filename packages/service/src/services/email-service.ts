@@ -28,6 +28,7 @@ import {
   normalizeDomain,
   type SendEmailRequest,
   type SendEmailResponse,
+  type StoredAttachmentRef,
 } from '@freemail/shared';
 import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
 import { EmailEntity } from '../data/entities.js';
@@ -93,9 +94,15 @@ export interface EmailServiceDeps {
   readonly generateToken?: () => string;
 }
 
-/** A finished upload, as S3 reports it, in request order — the input to embed-vs-link routing. */
+/**
+ * One attachment to send, in request order — a finished upload (as S3 reports it) or a stored
+ * attachment being forwarded (as its message's row records it): the input to embed-vs-link.
+ */
 interface ResolvedAttachment {
-  readonly uploadId: string;
+  /** Where its bytes are now: `uploads/<id>`, or the forwarded file's own key. */
+  readonly sourceKey: string;
+  /** The error to give should the source vanish before it is copied. */
+  readonly missing: string;
   readonly filename: string;
   readonly contentType: string;
   readonly sizeBytes: number;
@@ -192,25 +199,20 @@ export class EmailService {
     // Copy every upload to its permanent key first — the one copy the reader, a download link,
     // and the row's descriptor all point at. Write-before-send: a failure here throws (no send).
     await mapBounded(attachments, S3_CONCURRENCY, async (attachment, index) => {
-      const copied = await this.uploads.copy(
-        uploadKey(attachment.uploadId),
-        sentAttachmentKey(id, index),
-      );
+      const copied = await this.uploads.copy(attachment.sourceKey, sentAttachmentKey(id, index));
       if (!copied) {
-        throw uploadNotFound(attachment.uploadId);
+        throw emailErrors.invalidRequest(attachment.missing);
       }
     });
-    // Embedded bytes come from the upload itself: an MCP role without the read tools can read
-    // its own uploads, but not the sent attachments.
+    // Embedded bytes come from the source itself: an MCP role without the read tools can read
+    // its own uploads, but not the sent attachments (and it can't forward stored files at all).
     const embed: RawMimeAttachment[] = await mapBounded(
       attachments.filter((attachment) => attachment.embed),
       S3_CONCURRENCY,
       async (attachment) => ({
         filename: attachment.filename,
         contentType: attachment.contentType,
-        contentBase64: (await this.uploads.getBytes(uploadKey(attachment.uploadId))).toString(
-          'base64',
-        ),
+        contentBase64: (await this.uploads.getBytes(attachment.sourceKey)).toString('base64'),
       }),
     );
     const links = await this.mintDownloadLinks(attachments, id, nowDate, {
@@ -471,10 +473,11 @@ export class EmailService {
   }
 
   /**
-   * Resolve each attachment reference to what was really uploaded (a HEAD — never the client's
-   * word) and decide embed vs link, first fit in request order: a file is embedded when it is at
-   * most `embedMaxBytes` and still fits the message's remaining `embedTotalBytes` — so a small
-   * file after a linked one can still be embedded.
+   * Resolve each attachment reference to the file it names — an upload by what S3 says was
+   * really uploaded (a HEAD — never the client's word), a forwarded attachment by what its
+   * message's row recorded — and decide embed vs link, first fit in request order: a file is
+   * embedded when it is at most `embedMaxBytes` and still fits the message's remaining
+   * `embedTotalBytes` — so a small file after a linked one can still be embedded.
    */
   private async resolveAttachments(
     refs: SendEmailServiceRequest['attachments'],
@@ -487,38 +490,81 @@ export class EmailService {
         `A message may have at most ${MAX_ATTACHMENTS} attachments.`,
       );
     }
-    const uploadIds = refs.map((ref, index) => {
-      const uploadId = (ref as { uploadId?: unknown } | undefined)?.uploadId;
-      if (!isValidUploadId(uploadId)) {
-        throw emailErrors.invalidRequest(
-          `"attachments[${index}].uploadId" must be the id of an attachment upload.`,
-        );
-      }
-      return uploadId;
-    });
-    const uploads = await mapBounded(uploadIds, S3_CONCURRENCY, async (uploadId) => {
-      const uploaded = await this.uploads.head(uploadKey(uploadId));
-      if (uploaded === null) {
-        throw uploadNotFound(uploadId);
-      }
-      if (uploaded.sizeBytes > MAX_UPLOAD_BYTES) {
-        throw emailErrors.invalidRequest(`Attachment "${uploaded.filename}" is too large.`);
-      }
-      return uploaded;
-    });
+    const sources = refs.map((ref, index) => attachmentSource(ref, index));
+    const files = await mapBounded(sources, S3_CONCURRENCY, (source) =>
+      source.kind === 'upload' ? this.resolveUpload(source.uploadId) : this.resolveStored(source),
+    );
     const resolved: ResolvedAttachment[] = [];
     let embeddedBytes = 0;
-    for (let index = 0; index < uploads.length; index += 1) {
-      const uploaded = uploads[index] as UploadedObject;
+    for (const file of files) {
       const embed =
-        uploaded.sizeBytes <= this.embedMaxBytes &&
-        embeddedBytes + uploaded.sizeBytes <= this.embedTotalBytes;
+        file.sizeBytes <= this.embedMaxBytes &&
+        embeddedBytes + file.sizeBytes <= this.embedTotalBytes;
       if (embed) {
-        embeddedBytes += uploaded.sizeBytes;
+        embeddedBytes += file.sizeBytes;
       }
-      resolved.push({ uploadId: uploadIds[index] as string, ...uploaded, embed });
+      resolved.push({ ...file, embed });
     }
     return resolved;
+  }
+
+  /** A finished upload, as S3 reports it. */
+  private async resolveUpload(uploadId: string): Promise<Omit<ResolvedAttachment, 'embed'>> {
+    const missing = uploadNotFound(uploadId);
+    const uploaded: UploadedObject | null = await this.uploads.head(uploadKey(uploadId));
+    if (uploaded === null) {
+      throw emailErrors.invalidRequest(missing);
+    }
+    if (uploaded.sizeBytes > MAX_UPLOAD_BYTES) {
+      throw emailErrors.invalidRequest(`Attachment "${uploaded.filename}" is too large.`);
+    }
+    return {
+      sourceKey: uploadKey(uploadId),
+      missing,
+      filename: uploaded.filename,
+      contentType: uploaded.contentType,
+      sizeBytes: uploaded.sizeBytes,
+    };
+  }
+
+  /**
+   * An attachment of a message already in the mailbox, by its row's descriptor — only the
+   * descriptors a message actually has are addressable, exactly as for a download: a received
+   * message's only when its content was exposable (virus PASS, parsed).
+   */
+  private async resolveStored(
+    source: StoredAttachmentRef & { readonly index: number },
+  ): Promise<Omit<ResolvedAttachment, 'embed'>> {
+    const where = `"attachments[${source.index}]"`;
+    if (!this.canReadMailbox) {
+      throw emailErrors.invalidRequest(
+        `${where}: forwarding a stored attachment needs receiving enabled on this deployment.`,
+      );
+    }
+    let row;
+    try {
+      row = await this.emailsDao.getEmail(decodeEmailRef(source.emailId));
+    } catch (error) {
+      if (error instanceof EmailError) {
+        throw emailErrors.invalidRequest(`${where}: "emailId" is not a message id from the mailbox.`);
+      }
+      throw error;
+    }
+    const descriptor = row
+      ? (row.direction === 'inbound' ? row.attachments : (row.attachments ?? [])).find(
+          (candidate) => candidate.id === source.attachmentId,
+        )
+      : undefined;
+    if (descriptor === undefined) {
+      throw emailErrors.invalidRequest(`${where}: that message has no such attachment.`);
+    }
+    return {
+      sourceKey: descriptor.s3Key,
+      missing: `${where}: "${descriptor.filename}" is no longer stored, so it cannot be forwarded.`,
+      filename: descriptor.filename,
+      contentType: descriptor.contentType,
+      sizeBytes: descriptor.sizeBytes,
+    };
   }
 }
 
@@ -537,9 +583,40 @@ interface ReplyThread {
 const S3_CONCURRENCY = 5;
 
 /** An upload that isn't there: never uploaded, or swept since. The client can upload again. */
-function uploadNotFound(uploadId: string): Error {
-  return emailErrors.invalidRequest(
-    `Attachment upload "${uploadId}" was not found — it may never have been uploaded, or it expired. Upload it again.`,
+function uploadNotFound(uploadId: string): string {
+  return `Attachment upload "${uploadId}" was not found — it may never have been uploaded, or it expired. Upload it again.`;
+}
+
+/** One attachment reference, checked for shape: an upload, or a stored message's attachment. */
+type AttachmentSource =
+  | { readonly kind: 'upload'; readonly uploadId: string }
+  | (StoredAttachmentRef & { readonly kind: 'stored'; readonly index: number });
+
+function attachmentSource(ref: unknown, index: number): AttachmentSource {
+  const record = (typeof ref === 'object' && ref !== null ? ref : {}) as Record<string, unknown>;
+  if ('uploadId' in record) {
+    if (!isValidUploadId(record.uploadId)) {
+      throw emailErrors.invalidRequest(
+        `"attachments[${index}].uploadId" must be the id of an attachment upload.`,
+      );
+    }
+    return { kind: 'upload', uploadId: record.uploadId };
+  }
+  if (
+    typeof record.emailId === 'string' &&
+    record.emailId.length > 0 &&
+    typeof record.attachmentId === 'string' &&
+    record.attachmentId.length > 0
+  ) {
+    return {
+      kind: 'stored',
+      index,
+      emailId: record.emailId,
+      attachmentId: record.attachmentId,
+    };
+  }
+  throw emailErrors.invalidRequest(
+    `"attachments[${index}]" must be { "uploadId" } or { "emailId", "attachmentId" }.`,
   );
 }
 
