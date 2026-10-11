@@ -210,7 +210,12 @@ const emailListItemSchema = outputSchemaFor<EmailListItem>()(
 
 const attachmentInfoSchema = outputSchemaFor<EmailAttachmentInfo>()(
   z.object({
-    id: z.string().describe('Attachment id. Pass with the message id to get_email_attachment_url.'),
+    id: z
+      .string()
+      .describe(
+        'Attachment id. Pass with the message id to get_email_attachment_url, or as ' +
+          '{ emailId, attachmentId } in send_email.attachments to forward it.',
+      ),
     filename: z.string(),
     contentType: z.string(),
     sizeBytes: z.number().int(),
@@ -262,7 +267,9 @@ const emailDetailSchema = outputSchemaFor<EmailDetail>()(
     attachments: z
       .array(attachmentInfoSchema)
       .readonly()
-      .describe('The attachments that can be downloaded. Empty for Errors-folder messages.'),
+      .describe(
+        'The attachments that can be downloaded (or forwarded). Empty for Errors-folder messages.',
+      ),
     hasAttachments: z.boolean(),
     attachmentCount: z.number().int(),
     quarantined: quarantinedSchema,
@@ -571,14 +578,17 @@ export function listEmailsTool(deployment: McpDeploymentInfo) {
         .max(MAX_LIST_FILTER_CHARS)
         .optional()
         .describe(
-          'Case-insensitive text to find in the sender (address or name), any to/cc address, ' +
+          'Case-insensitive text to find in the sender (address, or name on received mail), ' +
+            'any to/cc address, ' +
             'the subject, or the preview.',
         ),
       from: z
         .string()
         .max(MAX_LIST_FILTER_CHARS)
         .optional()
-        .describe("Case-insensitive text in the sender's address or display name."),
+        .describe(
+          "Case-insensitive text in the sender's address (or display name, on received mail).",
+        ),
       to: z
         .string()
         .max(MAX_LIST_FILTER_CHARS)
@@ -731,7 +741,11 @@ export function serverInstructions(deployment: McpDeploymentInfo, inboundEnabled
   lines.push(
     '- File bytes never go through tool arguments. They move by HTTP PUT or GET to short-lived ' +
       'presigned URLs, so attaching or downloading a file needs a tool that can make HTTP ' +
-      'requests (a shell with curl, for example).',
+      'requests (a shell with curl, for example).' +
+      (inboundEnabled
+        ? ' Forwarding a file already on a message needs none: send_email copies it ' +
+          'server-side from { emailId, attachmentId }.'
+        : ''),
   );
   return lines.join('\n');
 }

@@ -7,9 +7,10 @@
  * Validation is deliberately here (not in the handler): the sender-domain check
  * and payload caps must hold for every caller, REST or MCP.
  *
- * Attachments arrive as references to finished uploads (`uploads/<uploadId>`, see
- * {@link AttachmentService}) — never as bytes in the request. Each is copied once to its
- * permanent key, `attachments/sent/<id>/<index>`. Small ones are also embedded in the MIME
+ * Attachments arrive as references — to finished uploads (`uploads/<uploadId>`, see
+ * {@link AttachmentService}), or to files already on a message in the mailbox, forwarded as is —
+ * never as bytes in the request. Each is copied once to its permanent key,
+ * `attachments/sent/<id>/<index>`. Small ones are also embedded in the MIME
  * (first fit, in request order, while the message's embedded total stays within budget); the
  * rest get a download token and a `GET /d/{token}` link appended to the body (#14). The same
  * routing applies to REST and MCP callers because both send through this one service.
@@ -36,6 +37,7 @@ import { EmailEntity } from '../data/entities.js';
 import type {
   CreateSentEmailInput,
   EmailsDao,
+  GetEmailOutput,
   UpdateSentEmailStatusInput,
 } from '../data/emails-dao.js';
 import type { MailBodyStore } from '../facades/s3-mail-body-store.js';
@@ -45,6 +47,7 @@ import type { UploadStore, UploadedObject } from '../facades/s3-upload-store.js'
 import { downloadUrl, generateDownloadToken } from '../utils/download-token.js';
 import { decodeEmailRef, encodeEmailRef } from '../utils/email-ref.js';
 import { EmailError, emailErrors } from '../utils/errors.js';
+import { decideExposure } from '../utils/verdicts.js';
 import { mapBounded } from '../utils/bounded-map.js';
 import { buildRawMime, type RawMimeAttachment, type RawMimeInput } from '../utils/mime.js';
 import type { SesSender } from '../facades/ses-email-facade.js';
@@ -67,7 +70,7 @@ export interface EmailServiceDeps {
   readonly tokensDao: DownloadTokensDao;
   /**
    * Reads finished attachment uploads (`uploads/<id>`) — HEAD, and a small one's bytes to embed —
-   * and copies them to their permanent key.
+   * and copies them, and any forwarded stored attachment, to their permanent key.
    */
   readonly uploads: UploadStore;
   /** Embed an attachment at most this size (bytes); larger ones are linked. Deploy-configurable. */
@@ -105,6 +108,8 @@ interface ResolvedAttachment {
   readonly sourceKey: string;
   /** The error to give should the source vanish before it is copied. */
   readonly missing: string;
+  /** A stored file being forwarded (not an upload). */
+  readonly forwarded: boolean;
   readonly filename: string;
   readonly contentType: string;
   readonly sizeBytes: number;
@@ -324,15 +329,24 @@ export class EmailService {
         throw emailErrors.invalidRequest(attachment.missing);
       }
     });
-    // Embedded bytes come from the source itself: an MCP role without the read tools can read
-    // its own uploads, but not the sent attachments (and it can't forward stored files at all).
+    // An upload's embedded bytes come from the upload itself: an MCP role without the read
+    // tools can read its own uploads, but not the sent attachments. A forwarded file's come from
+    // the copy just made — forwarding needs the read grants, and the copy can't vanish.
     const embed: RawMimeAttachment[] = await mapBounded(
-      attachments.filter((attachment) => attachment.embed),
+      attachments
+        .map((attachment, index) => ({ attachment, index }))
+        .filter((entry) => entry.attachment.embed),
       S3_CONCURRENCY,
-      async (attachment) => ({
-        filename: attachment.filename,
-        contentType: attachment.contentType,
-        contentBase64: (await this.uploads.getBytes(attachment.sourceKey)).toString('base64'),
+      async (entry) => ({
+        filename: entry.attachment.filename,
+        contentType: entry.attachment.contentType,
+        contentBase64: (
+          await this.uploads.getBytes(
+            entry.attachment.forwarded
+              ? sentAttachmentKey(id, entry.index)
+              : entry.attachment.sourceKey,
+          )
+        ).toString('base64'),
       }),
     );
     const links = await this.mintDownloadLinks(attachments, id, nowDate, {
@@ -611,8 +625,12 @@ export class EmailService {
       );
     }
     const sources = refs.map((ref, index) => attachmentSource(ref, index));
+    // Several files forwarded from one message read its row once.
+    const rows = new Map<string, Promise<GetEmailOutput | null>>();
     const files = await mapBounded(sources, S3_CONCURRENCY, (source) =>
-      source.kind === 'upload' ? this.resolveUpload(source.uploadId) : this.resolveStored(source),
+      source.kind === 'upload'
+        ? this.resolveUpload(source.uploadId)
+        : this.resolveStored(source, rows),
     );
     const resolved: ResolvedAttachment[] = [];
     let embeddedBytes = 0;
@@ -641,6 +659,7 @@ export class EmailService {
     return {
       sourceKey: uploadKey(uploadId),
       missing,
+      forwarded: false,
       filename: uploaded.filename,
       contentType: uploaded.contentType,
       sizeBytes: uploaded.sizeBytes,
@@ -650,10 +669,13 @@ export class EmailService {
   /**
    * An attachment of a message already in the mailbox, by its row's descriptor — only the
    * descriptors a message actually has are addressable, exactly as for a download: a received
-   * message's only when its content was exposable (virus PASS, parsed).
+   * message's only when its content was exposable (virus PASS, parsed), re-checked here. A
+   * received message flagged as spam is refused too: forwarding sends its file out from this
+   * domain in one call, which a hostile message's text could ask an agent to do.
    */
   private async resolveStored(
     source: StoredAttachmentRef & { readonly index: number },
+    rows: Map<string, Promise<GetEmailOutput | null>>,
   ): Promise<Omit<ResolvedAttachment, 'embed'>> {
     const where = `"attachments[${source.index}]"`;
     if (!this.canReadMailbox) {
@@ -661,9 +683,15 @@ export class EmailService {
         `${where}: forwarding a stored attachment needs receiving enabled on this deployment.`,
       );
     }
-    let row;
+    let row: GetEmailOutput | null;
     try {
-      row = await this.emailsDao.getEmail(decodeEmailRef(source.emailId));
+      const ref = decodeEmailRef(source.emailId);
+      let lookup = rows.get(source.emailId);
+      if (lookup === undefined) {
+        lookup = this.emailsDao.getEmail(ref);
+        rows.set(source.emailId, lookup);
+      }
+      row = await lookup;
     } catch (error) {
       if (error instanceof EmailError) {
         throw emailErrors.invalidRequest(
@@ -672,15 +700,32 @@ export class EmailService {
       }
       throw error;
     }
-    const descriptor = row
-      ? (row.direction === 'inbound' ? row.attachments : (row.attachments ?? [])).find(
-          (candidate) => candidate.id === source.attachmentId,
-        )
-      : undefined;
+    if (row === null) {
+      throw emailErrors.invalidRequest(`${where}: "emailId" names no message in the mailbox.`);
+    }
+    if (row.direction === 'inbound') {
+      const exposure = decideExposure(
+        { spamVerdict: row.spamVerdict, virusVerdict: row.virusVerdict },
+        row.parseStatus,
+      );
+      if (!exposure.exposeContent) {
+        throw emailErrors.invalidRequest(`${where}: that message has no attachments to forward.`);
+      }
+      if (row.quarantined) {
+        throw emailErrors.invalidRequest(
+          `${where}: that message was flagged as spam, so its attachments are not forwarded. ` +
+            'Download the file and attach it as an upload if you trust it.',
+        );
+      }
+    }
+    const descriptor = (
+      row.direction === 'inbound' ? row.attachments : (row.attachments ?? [])
+    ).find((candidate) => candidate.id === source.attachmentId);
     if (descriptor === undefined) {
       throw emailErrors.invalidRequest(`${where}: that message has no such attachment.`);
     }
     return {
+      forwarded: true,
       sourceKey: descriptor.s3Key,
       missing: `${where}: "${descriptor.filename}" is no longer stored, so it cannot be forwarded.`,
       filename: descriptor.filename,

@@ -590,6 +590,13 @@ describe('DdbEmailsDao — list index + paging', () => {
       const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
       expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', undefined]);
       expect(result.emails.map((e) => e.sk)).toEqual(['sk-1']);
+      // From the table, only the list fields are read — never full items with their bodies.
+      const fallback = doc.queries[1]!.input;
+      expect(Object.values(fallback.ExpressionAttributeNames ?? {})).toEqual(
+        expect.arrayContaining(['pk', 'sk', 'from', 'to', 'subject', 'status']),
+      );
+      expect(Object.values(fallback.ExpressionAttributeNames ?? {})).not.toContain('body');
+      expect(fallback.ProjectionExpression).toMatch(/^#l0, #l1, /);
 
       // The trust was reset: the next call (after the recheck window) asks DescribeTable again.
       doc.indexState = undefined;
@@ -831,5 +838,33 @@ describe('DdbEmailsDao — send idempotency records', () => {
 
     doc.failWith = 'ConditionalCheckFailedException';
     await expect(dao.deleteIdempotencyRecord({ key: 'k-1' })).resolves.toEqual({});
+  });
+});
+
+describe('DdbEmailsDao.listEmailSummaries — range edges', () => {
+  it('reads nothing for an empty range', async () => {
+    const doc = new PagedFakeDoc([]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({
+      direction: 'sent',
+      limit: 5,
+      minSk: 'B',
+      maxSk: 'A',
+    });
+
+    expect(result.emails).toEqual([]);
+    expect(doc.queries).toHaveLength(0);
+  });
+
+  it('reads nothing for a cursor exactly at the floor, and resumes from one at the ceiling', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5, afterSk: 'B', minSk: 'B' });
+    expect(doc.queries).toHaveLength(0);
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5, afterSk: 'M', maxSk: 'M' });
+    expect(doc.queries[0]?.input.ExclusiveStartKey).toEqual({ pk: 'SENT', sk: 'M' });
   });
 });

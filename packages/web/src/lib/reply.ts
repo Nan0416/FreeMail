@@ -131,7 +131,8 @@ export function buildPrefill(
       cc: '',
       subject: withPrefix(email.subject, 'Fwd'),
       html: `<p></p>${header}${quoted}`,
-      ...(email.attachments.length > 0
+      // The server refuses to forward the files of mail flagged as spam: don't offer them.
+      ...(email.attachments.length > 0 && !email.quarantined
         ? {
             forwardAttachments: email.attachments.map((attachment) => ({
               emailId: email.id,

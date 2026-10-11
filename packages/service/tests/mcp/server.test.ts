@@ -1004,3 +1004,46 @@ describe('send_email idempotency', () => {
     expect(send).not.toHaveBeenCalled();
   });
 });
+
+describe('list_emails empty pages', () => {
+  it('says more remains when a filtered page matched nothing but has a cursor', async () => {
+    const client = await connectRead(
+      fakeReadService({ listEmails: vi.fn().mockResolvedValue({ emails: [], nextCursor: 'C' }) }),
+    );
+
+    const result = await client.callTool({ name: 'list_emails', arguments: { query: 'x' } });
+
+    expect(textOf(result)).toContain('more remains to search — pass nextCursor');
+    expect(textOf(result)).not.toBe('No emails.');
+  });
+
+  it('says "No emails." only at the real end', async () => {
+    const client = await connectRead(
+      fakeReadService({ listEmails: vi.fn().mockResolvedValue({ emails: [] }) }),
+    );
+
+    expect(textOf(await client.callTool({ name: 'list_emails', arguments: {} }))).toBe(
+      'No emails.',
+    );
+  });
+});
+
+describe('send_email forwarding without inbound', () => {
+  it('rejects a stored reference at call time when there are no read tools', async () => {
+    const send = vi.fn();
+    const client = await connect(send);
+
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: {
+        from: 'me@example.com',
+        to: ['a@b.com'],
+        text: 'fyi',
+        attachments: [{ emailId: 'H', attachmentId: '2' }],
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+  });
+});

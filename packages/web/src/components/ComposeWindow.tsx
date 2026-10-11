@@ -488,7 +488,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
                 </span>
                 <button
                   type="button"
-                  aria-label={`Remove ${attachment.filename}`}
+                  aria-label={`Remove forwarded ${attachment.filename}`}
                   disabled={busy}
                   onClick={() => setForwarded((prev) => prev.filter((item) => item !== attachment))}
                   className="grid size-4 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
