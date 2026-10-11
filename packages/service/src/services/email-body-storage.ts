@@ -19,7 +19,9 @@ export const MAX_INLINE_BODY_BYTES = 256 * 1024;
 /**
  * A row with an inline body must stay at or under this many bytes in total. DynamoDB caps an
  * item at 400 KB; the gap leaves room for later updates to the row (a sent row's status +
- * `sesMessageId` / `error`). A hostile inbound envelope alone can reach ~130 KB (multi-byte
+ * `sesMessageId` / `error`, and its delivery reports — at most `MAX_DELIVERY_EVENTS`, each a
+ * few hundred bytes for an ordinary recipient list; a report that would not fit is dropped,
+ * its status change kept). A hostile inbound envelope alone can reach ~130 KB (multi-byte
  * addresses at their caps, 25 attachment descriptors), so the rest of the row is measured
  * rather than assumed.
  */

@@ -22,6 +22,10 @@ function synth(
     sesIdentityMode: 'create',
     region: 'us-east-1',
     sesIdentityMode,
+    emailsTable: new Table(stack, 'Emails', {
+      partitionKey: { name: 'pk', type: AttributeType.STRING },
+      sortKey: { name: 'sk', type: AttributeType.STRING },
+    }),
   });
   return Template.fromStack(stack);
 }
@@ -40,6 +44,7 @@ function synthWithInbound(emailDomain = 'mail.example.com', zoneName = 'example.
     hostedZone,
     emailDomain,
     region: 'us-east-1',
+    emailsTable,
     inbound: { mailBucket, emailsTable, quarantineBucket: new Bucket(stack, 'QuarantineBucket') },
   });
   linkOwnDownloads(stack, ses);
@@ -61,6 +66,7 @@ function synthCreateWithInbound(emailDomain = 'mail.example.com', zoneName = 'ex
     emailDomain,
     region: 'us-east-1',
     sesIdentityMode: 'create',
+    emailsTable,
     inbound: { mailBucket, emailsTable, quarantineBucket: new Bucket(stack, 'QuarantineBucket') },
   });
   linkOwnDownloads(stack, ses);
@@ -141,6 +147,44 @@ describe('SesConstruct', () => {
     });
   });
 
+  it('records delivery reports on the sent row: a tracker that may only UpdateItem', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::SES::ConfigurationSetEventDestination', {
+      EventDestination: Match.objectLike({
+        MatchingEventTypes: Match.arrayWith(['delivery', 'bounce', 'complaint']),
+      }),
+    });
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Description: Match.stringLikeRegexp('SES delivery reports'),
+      Environment: { Variables: { EMAILS_TABLE: Match.anyValue() } },
+    });
+    const policies = Object.values(template.findResources('AWS::IAM::Policy')).filter((policy) =>
+      JSON.stringify(policy).includes('DeliveryTracker'),
+    );
+    const actions = policies.flatMap((policy) =>
+      (
+        policy as { Properties: { PolicyDocument: { Statement: { Action: string | string[] }[] } } }
+      ).Properties.PolicyDocument.Statement.flatMap((statement) => statement.Action),
+    );
+    // On the table: UpdateItem only. (Its other grant is SendMessage to its own DLQ.)
+    expect(actions.filter((action) => action.startsWith('dynamodb:'))).toEqual([
+      'dynamodb:UpdateItem',
+    ]);
+    // A report that still fails after the retries is kept, not lost.
+    template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
+      MaximumRetryAttempts: 2,
+      DestinationConfig: { OnFailure: { Destination: Match.anyValue() } },
+    });
+  });
+
+  it("keeps deliveries out of the audit log (they'd copy the Sent folder into it)", () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::SNS::Subscription', {
+      FilterPolicyScope: 'MessageBody',
+      FilterPolicy: { eventType: [{ 'anything-but': ['Delivery'] }] },
+    });
+  });
+
   it('publishes bounce and complaint events to an SNS topic', () => {
     const template = synth();
     template.resourceCountIs('AWS::SNS::Topic', 1);
@@ -154,16 +198,17 @@ describe('SesConstruct', () => {
     });
   });
 
-  it('logs bounce/complaint events via an SNS-subscribed Lambda audit consumer', () => {
+  it('logs delivery reports via an SNS-subscribed Lambda audit consumer, and records them', () => {
     const template = synth();
-    template.resourceCountIs('AWS::Lambda::Function', 1);
+    // The audit logger and the delivery tracker.
+    template.resourceCountIs('AWS::Lambda::Function', 2);
     template.hasResourceProperties('AWS::Lambda::Function', {
       Runtime: 'nodejs22.x',
       LoggingConfig: { LogGroup: Match.anyValue() },
     });
-    template.resourceCountIs('AWS::Logs::LogGroup', 1);
+    template.resourceCountIs('AWS::Logs::LogGroup', 2);
     template.hasResourceProperties('AWS::Logs::LogGroup', { RetentionInDays: 90 });
-    template.resourceCountIs('AWS::SNS::Subscription', 1);
+    template.resourceCountIs('AWS::SNS::Subscription', 2);
     template.hasResourceProperties('AWS::SNS::Subscription', {
       Protocol: 'lambda',
       TopicArn: Match.anyValue(),

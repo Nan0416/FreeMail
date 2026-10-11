@@ -1249,3 +1249,37 @@ describe('EmailReadService.listEmails — search filters', () => {
     ]);
   });
 });
+
+describe('EmailReadService — delivery reports', () => {
+  it("shows a sent message's delivery events once each, in arrival order", async () => {
+    const repo = new FakeDao();
+    const delivered = {
+      type: 'delivered' as const,
+      at: '2026-07-17T10:00:03.000Z',
+      recipients: ['a@x.com'],
+    };
+    const bounced = {
+      type: 'bounced' as const,
+      at: '2026-07-17T10:00:04.000Z',
+      recipients: ['b@x.com'],
+      detail: 'Permanent/General',
+    };
+    const handle = repo.put(SENT_PARTITION, {
+      ...sentRow(),
+      status: 'bounced',
+      deliveryEvents: [delivered, bounced, delivered],
+    } as GetEmailOutput);
+
+    const detail = await service(
+      repo,
+      new FakePresigner(),
+      new FakeRawMime(),
+      fakeParse({}).fn,
+    ).getEmail({
+      handle,
+    });
+
+    expect(detail.status).toBe('bounced');
+    expect(detail.deliveryEvents).toEqual([delivered, bounced]);
+  });
+});

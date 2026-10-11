@@ -80,7 +80,13 @@ describe('Lambda bundles', () => {
   it('builds every FreeMail handler', () => {
     expect(
       [...bundles.keys()].map((logicalId) => logicalId.replace(/[0-9A-F]{8}$/, '')).sort(),
-    ).toEqual(['ApiAuthorizerHandler', 'ApiMcpHandler', 'ApiRestHandler', 'SesInboundParserFn']);
+    ).toEqual([
+      'ApiAuthorizerHandler',
+      'ApiMcpHandler',
+      'ApiRestHandler',
+      'SesDeliveryTrackerFn',
+      'SesInboundParserFn',
+    ]);
   });
 
   it('bundles the AWS SDK (and everything else) instead of loading the Lambda runtime’s copy', () => {

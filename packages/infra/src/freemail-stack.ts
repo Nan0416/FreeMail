@@ -35,6 +35,7 @@ export class FreeMailStack extends Stack {
       hostedZone: dns.hostedZone,
       emailDomain: props.config.emailDomain,
       region: props.config.region,
+      emailsTable: data.emailsTable,
       sesIdentityMode: props.config.sesIdentity.mode,
       // SES owns inbound too: pass the mail stores only when inbound is enabled, and
       // the construct instantiates the receipt pipeline as a child. The confirmInboundMx

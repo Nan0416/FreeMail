@@ -19,6 +19,11 @@ export interface SendRawParams {
   readonly bcc: readonly string[];
   /** The assembled raw MIME message. */
   readonly raw: Uint8Array;
+  /**
+   * SES message tags (name → value; letters, digits, `_`, `-`). SES copies them into every
+   * delivery report it publishes, which is how a report finds its message's row.
+   */
+  readonly tags?: Readonly<Record<string, string>>;
 }
 
 export interface SesSender {
@@ -45,6 +50,14 @@ export class SesV2Sender implements SesSender {
           BccAddresses: [...params.bcc],
         },
         Content: { Raw: { Data: params.raw } },
+        ...(params.tags
+          ? {
+              EmailTags: Object.entries(params.tags).map(([name, value]) => ({
+                Name: name,
+                Value: value,
+              })),
+            }
+          : {}),
         ...(this.configurationSetName ? { ConfigurationSetName: this.configurationSetName } : {}),
       }),
     );

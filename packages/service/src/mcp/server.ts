@@ -246,7 +246,7 @@ function listRow(email: EmailListItem): string {
   } else if (email.direction === 'inbound' && email.quarantined) {
     flags = ' [quarantined]';
   } else if (email.direction === 'sent' && email.status && email.status !== 'sent') {
-    // Surface a not-yet-delivered send (`sending`/`send_failed`) so a failed send is visible.
+    // Surface any status but plain `sent`: sending (unknown outcome), delivered, bounced, failed.
     flags = ` [${email.status}]`;
   }
   return `- [${email.direction}] ${email.date} ${who} — ${email.subject || '(no subject)'} (id: ${email.id})${flags}`;
@@ -259,6 +259,12 @@ function renderDetailText(email: EmailDetail, nonce: () => string): string {
     const lines = [`Sent email ${email.id}`];
     if (email.status) {
       lines.push(`Status: ${email.status}`);
+    }
+    for (const event of email.deliveryEvents ?? []) {
+      const who = event.recipients.length ? ` ${event.recipients.join(', ')}` : '';
+      lines.push(
+        `Delivery: ${event.type}${who} at ${event.at}${event.detail ? ` (${event.detail})` : ''}`,
+      );
     }
     lines.push(`To: ${email.to.join(', ') || '(none)'}`);
     if (email.cc.length) {

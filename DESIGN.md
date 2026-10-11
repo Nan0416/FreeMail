@@ -41,7 +41,7 @@ TypeScript · npm workspaces monorepo · Node.js (Lambda) · React (SPA) · AWS 
 ## Sending ✅
 The SES domain identity is normally **created** by FreeMail together with its DKIM/SPF/MAIL-FROM/DMARC records; `sesIdentity.mode: "import"` adopts a domain that is **already** set up for SES, creating neither (both would fail the deploy as "already exists"). Import mode keeps FreeMail's configuration set, because the sender names it on every call rather than relying on the identity's default association — so suppression and bounce/complaint handling are unaffected.
 
-`SES SendRawEmail` — send from **any address under the domain**. Requires **SES production access** (sandbox exit) per AWS account — a documented required manual step. Bounces/complaints via SNS → suppression + logging (reputation).
+`SES SendRawEmail` — send from **any address under the domain**. Requires **SES production access** (sandbox exit) per AWS account — a documented required manual step. Bounces/complaints via SNS → suppression + logging (reputation). **Delivery tracking:** every send carries SES message tags (row id + send time), and a tracker Lambda on the same topic records each report — delivered, bounced, complained, delayed, rejected — on the sent message's row, moving its status forward only (`sent` → `delivered` → `bounced`).
 
 ## Inbound (optional) ✅
 - **Off by default.** Enabled via deploy config (`enableInbound`) with an explicit **MX-override warning** (inbound points the domain's MX at SES → **recommend a dedicated subdomain** so it doesn't clobber existing mail).

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { getAuthorizerConfig } from '../../src/handlers/authorizer-config.js';
 import { getInboundConfig } from '../../src/handlers/inbound-config.js';
 import { getMcpConfig } from '../../src/handlers/mcp-config.js';
+import { getSesEventsConfig } from '../../src/handlers/ses-events-config.js';
 
 const MCP_ENV: NodeJS.ProcessEnv = {
   EMAILS_TABLE: 'emails',
@@ -75,5 +76,12 @@ describe('config validation names every missing variable at once', () => {
 
   it('names the component so the failing Lambda is obvious in the logs', () => {
     expect(() => getInboundConfig({})).toThrow(/FreeMail inbound handler is misconfigured/);
+  });
+});
+
+describe('the SES events handler config', () => {
+  it('needs only the emails table', () => {
+    expect(getSesEventsConfig({ EMAILS_TABLE: 'emails' })).toEqual({ emailsTable: 'emails' });
+    expect(() => getSesEventsConfig({})).toThrow(/EMAILS_TABLE/);
   });
 });

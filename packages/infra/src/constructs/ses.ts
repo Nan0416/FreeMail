@@ -1,6 +1,9 @@
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import type { Table } from 'aws-cdk-lib/aws-dynamodb';
-import { Code, Function as LambdaFunction, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { Architecture, Code, Function as LambdaFunction, Runtime } from 'aws-cdk-lib/aws-lambda';
+import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { CfnRecordSet, type IHostedZone } from 'aws-cdk-lib/aws-route53';
 import type { Bucket } from 'aws-cdk-lib/aws-s3';
@@ -12,11 +15,24 @@ import {
   Identity,
   SuppressionReasons,
 } from 'aws-cdk-lib/aws-ses';
-import { Topic } from 'aws-cdk-lib/aws-sns';
+import { SqsDestination } from 'aws-cdk-lib/aws-lambda-destinations';
+import { FilterOrPolicy, SubscriptionFilter, Topic } from 'aws-cdk-lib/aws-sns';
+import { Queue } from 'aws-cdk-lib/aws-sqs';
 import { LambdaSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
 import type { SesIdentityMode } from '@freemail/shared/config';
+import { SELF_CONTAINED_BUNDLING } from './bundling.js';
 import { InboundConstruct } from './inbound.js';
+
+const HANDLERS_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  '..',
+  '..',
+  '..',
+  'service',
+  'src',
+  'handlers',
+);
 
 export interface SesConstructProps {
   /** The Route53 zone that owns the email domain — all auth records are written here. */
@@ -31,6 +47,8 @@ export interface SesConstructProps {
   readonly sesIdentityMode: SesIdentityMode;
   /** Deploy region — the custom MAIL FROM MX target (feedback-smtp.<region>.amazonses.com) is region-specific. */
   readonly region: string;
+  /** Sent messages' rows: the delivery tracker appends SES's reports to them. */
+  readonly emailsTable: Table;
   /**
    * The mail stores the inbound pipeline needs, present ONLY when inbound email is
    * enabled (the stack passes this iff `config.inbound.enabled`). When present, SES
@@ -78,7 +96,8 @@ function txt(value: string): string {
  * SES sending for the email domain, with the full set of deliverability records
  * (DKIM, SPF, custom MAIL FROM, DMARC) written into the Route53 zone, plus a
  * configuration set that auto-suppresses bounced/complained addresses and fans
- * every bounce/complaint out to SNS, where an audit Lambda logs them to CloudWatch.
+ * every delivery report (delivered, bounced, complained, delayed, rejected) out to SNS, where
+ * the delivery tracker records it on the sent message's row and an audit Lambda logs it.
  *
  * The identity is a plain `Identity.domain` (not `publicHostedZone`) so it works
  * whether `emailDomain` is the zone apex or a subdomain, and so every DNS record
@@ -102,6 +121,8 @@ export class SesConstruct extends Construct {
   readonly bounceComplaintTopic: Topic;
   /** Logs every bounce/complaint SNS notification to CloudWatch for audit. */
   readonly bounceComplaintLogger: LambdaFunction;
+  /** Records each delivery report (delivered, bounced, complained, …) on its sent message's row. */
+  readonly deliveryTracker: NodejsFunction;
   /** The inbound receipt pipeline — present only when inbound email is enabled. */
   readonly inbound?: InboundConstruct;
   /**
@@ -128,6 +149,7 @@ export class SesConstruct extends Construct {
     this.configurationSet.addEventDestination('BounceComplaintSns', {
       destination: EventDestination.snsTopic(this.bounceComplaintTopic),
       events: [
+        EmailSendingEvent.DELIVERY,
         EmailSendingEvent.BOUNCE,
         EmailSendingEvent.COMPLAINT,
         EmailSendingEvent.REJECT,
@@ -135,6 +157,7 @@ export class SesConstruct extends Construct {
       ],
     });
     this.bounceComplaintLogger = this.addBounceComplaintLogger();
+    this.deliveryTracker = this.addDeliveryTracker(props.emailsTable);
 
     // Import mode: the identity exists and is verified, and its DKIM/SPF/MAIL-FROM/DMARC
     // records are already in the zone. Creating either here would fail the deploy, so we
@@ -193,7 +216,7 @@ export class SesConstruct extends Construct {
       handler: 'index.handler',
       timeout: Duration.seconds(10),
       logGroup,
-      description: 'Logs SES bounce/complaint notifications to CloudWatch for audit.',
+      description: 'Logs SES bounce/complaint/delay/reject reports to CloudWatch for audit.',
       code: Code.fromInline(
         [
           'exports.handler = async (event) => {',
@@ -204,8 +227,52 @@ export class SesConstruct extends Construct {
         ].join('\n'),
       ),
     });
-    this.bounceComplaintTopic.addSubscription(new LambdaSubscription(logger));
+    // Not deliveries: one per sent message, with its subject and recipients, would turn the
+    // audit log into a copy of the Sent folder. The tracker records those on the row.
+    this.bounceComplaintTopic.addSubscription(
+      new LambdaSubscription(logger, {
+        filterPolicyWithMessageBody: {
+          eventType: FilterOrPolicy.filter(
+            SubscriptionFilter.stringFilter({ denylist: ['Delivery'] }),
+          ),
+        },
+      }),
+    );
     return logger;
+  }
+
+  /**
+   * The consumer that makes delivery visible: each SES report on the topic is appended to the
+   * sent message's row (found by the tags every send carries), and moves its status on to
+   * delivered or bounced. Update-only on the emails table — it never creates or reads a row.
+   */
+  private addDeliveryTracker(emailsTable: Table): NodejsFunction {
+    const tracker = new NodejsFunction(this, 'DeliveryTrackerFn', {
+      entry: join(HANDLERS_DIR, 'ses-events.ts'),
+      handler: 'handler',
+      runtime: Runtime.NODEJS_22_X,
+      architecture: Architecture.ARM_64,
+      memorySize: 256,
+      timeout: Duration.seconds(10),
+      description: 'FreeMail SES delivery reports → sent messages (delivered/bounced/complained).',
+      environment: { EMAILS_TABLE: emailsTable.tableName },
+      bundling: SELF_CONTAINED_BUNDLING,
+      logGroup: new LogGroup(this, 'DeliveryTrackerLogs', {
+        retention: RetentionDays.THREE_MONTHS,
+        removalPolicy: RemovalPolicy.DESTROY,
+      }),
+    });
+    emailsTable.grant(tracker, 'dynamodb:UpdateItem');
+    // SNS invokes asynchronously: retry a storage failure, then keep the report for inspection.
+    tracker.configureAsyncInvoke({
+      retryAttempts: 2,
+      maxEventAge: Duration.hours(6),
+      onFailure: new SqsDestination(
+        new Queue(this, 'DeliveryTrackerDlq', { retentionPeriod: Duration.days(14) }),
+      ),
+    });
+    this.bounceComplaintTopic.addSubscription(new LambdaSubscription(tracker));
+    return tracker;
   }
 
   private writeAuthRecords(
