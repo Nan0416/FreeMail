@@ -328,9 +328,12 @@ export type RawEmailDownloadResponse = AttachmentDownloadResponse;
  * page of one listing — the cursor does not carry them.
  */
 export interface EmailListFilters {
-  /** Matches the sender (address or name), any to/cc address, the subject, or the preview. */
+  /**
+   * Matches the sender (address, or display name on received mail — sent mail stores none), any
+   * to/cc address, the subject, or the preview.
+   */
   readonly query?: string;
-  /** Matches the sender's address or display name. */
+  /** Matches the sender's address, or display name on received mail. */
   readonly from?: string;
   /** Matches any to or cc address. */
   readonly to?: string;

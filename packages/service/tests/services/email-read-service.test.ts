@@ -23,7 +23,7 @@ import type {
 import type { MailBodyContent, MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
 import type { ParsedInbound } from '../../src/utils/inbound-parse.js';
 import { EmailError } from '../../src/utils/errors.js';
-import { encodeEmailRef } from '../../src/utils/email-ref.js';
+import { decodeEmailRef, encodeEmailRef } from '../../src/utils/email-ref.js';
 import {
   EmailReadService,
   type ParseInbound,
@@ -1159,6 +1159,74 @@ describe('EmailReadService.listEmails — search filters', () => {
     });
     expect(second.emails.map((e) => e.subject)).toEqual(['match 1200']);
     expect(second.nextCursor).toBeUndefined();
+  });
+
+  it('merges filtered matches from both folders newest-first, with a date range, to the end', async () => {
+    const inbound = inboundRows(600, 7);
+    const sent = Array.from({ length: 600 }, (_v, i) => {
+      const iso = new Date(Date.UTC(2026, 9, 1, 0, 0, 600 - i, 500)).toISOString();
+      return {
+        direction: 'sent',
+        pk: 'SENT',
+        sk: `${iso}#s${i}`,
+        id: `s${i}`,
+        from: 'me@mydomain.com',
+        to: ['x@y.com'],
+        cc: [],
+        bcc: [],
+        subject: i % 11 === 0 ? `match s${i}` : `other s${i}`,
+        sentAt: iso,
+        attachmentCount: 0,
+        sizeBytes: 1,
+      } as GetEmailOutput;
+    });
+    const repo = new FakeDao();
+    repo.listEmailSummaries = (input) => {
+      const rows = input.direction === 'sent' ? sent : inbound;
+      return Promise.resolve({
+        emails: rows
+          .filter(
+            (row) =>
+              (input.afterSk === undefined || row.sk < input.afterSk) &&
+              (input.minSk === undefined || row.sk >= input.minSk) &&
+              (input.maxSk === undefined || row.sk <= input.maxSk),
+          )
+          .slice(0, input.limit) as unknown as EmailSummary[],
+      });
+    };
+    const reader = service(repo, new FakePresigner(), new FakeRawMime());
+    const filters = {
+      subject: 'match',
+      after: '2026-10-01T00:01:00.000Z',
+      before: '2026-10-01T00:08:00.000Z',
+    };
+    const expected = [...sent, ...inbound]
+      .filter(
+        (row) =>
+          row.subject.startsWith('match') && row.sk >= filters.after && row.sk <= filters.before,
+      )
+      .map((row) => row.sk)
+      .sort()
+      .reverse();
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 50; page += 1) {
+      const result = await reader.listEmails({
+        limit: 7,
+        filters,
+        ...(cursor ? { cursor } : {}),
+      });
+      seen.push(...result.emails.map((email) => decodeEmailRef(email.id).sk));
+      cursor = result.nextCursor;
+      if (!cursor) {
+        break;
+      }
+    }
+
+    expect(cursor).toBeUndefined();
+    expect(expected.length).toBeGreaterThan(20);
+    expect(seen).toEqual(expected);
   });
 
   it('passes a date range to the query, without scanning, when there is no text filter', async () => {

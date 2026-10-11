@@ -550,14 +550,17 @@ export function listEmailsTool(deployment: McpDeploymentInfo) {
         .max(MAX_LIST_FILTER_CHARS)
         .optional()
         .describe(
-          'Case-insensitive text to find in the sender (address or name), any to/cc address, ' +
+          'Case-insensitive text to find in the sender (address, or name on received mail), ' +
+            'any to/cc address, ' +
             'the subject, or the preview.',
         ),
       from: z
         .string()
         .max(MAX_LIST_FILTER_CHARS)
         .optional()
-        .describe("Case-insensitive text in the sender's address or display name."),
+        .describe(
+          "Case-insensitive text in the sender's address (or display name, on received mail).",
+        ),
       to: z
         .string()
         .max(MAX_LIST_FILTER_CHARS)
