@@ -52,6 +52,10 @@ describe('buildPrefill', () => {
     ]);
     expect(buildPrefill(withFiles, 'reply', '').forwardAttachments).toBeUndefined();
     expect(buildPrefill(INBOUND, 'forward', '').forwardAttachments).toBeUndefined();
+    // Mail flagged as spam: the server won't forward its files, so they aren't offered.
+    expect(
+      buildPrefill({ ...withFiles, quarantined: true }, 'forward', '').forwardAttachments,
+    ).toBeUndefined();
   });
 
   it('forwards with no recipients and a forwarded-message header', () => {

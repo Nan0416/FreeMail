@@ -242,6 +242,8 @@ Attachment bytes never travel through the API. Sending a file is two steps:
 1. **Create an upload** — `POST /attachments/uploads` with `{ "filename", "contentType", "sizeBytes" }` (the web app does this for you; agents use the MCP tool `create_attachment_upload`). The response carries an `uploadId` and a presigned `uploadUrl`.
 2. **PUT the file to `uploadUrl`** — straight to S3, with no credentials beyond the URL itself. The URL is valid for **15 minutes** and only for exactly the declared size. Then reference the file in the send: `"attachments": [{ "uploadId": "…" }]`.
 
+To forward a file that is already on a message in the mailbox, skip both steps: reference it as `{ "emailId": "…", "attachmentId": "…" }` (the message id and the attachment's id from `GET /emails/{id}`), and the server copies it. Files of mail flagged as spam, or in the Errors folder, cannot be forwarded.
+
 When the message is sent, each upload is copied to permanent storage and then:
 
 - **Small files are embedded** in the outgoing MIME — each file up to **3 MB**, and up to **10 MB embedded per message** in total. Files are considered in order; one that would push the embedded total past 10 MB is linked instead, and a smaller one after it can still be embedded.

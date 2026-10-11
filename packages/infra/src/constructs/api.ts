@@ -201,8 +201,8 @@ export class ApiConstruct extends Construct {
     // Sent raw MIME archive (#29): the send route writes it; the read routes presign it as the
     // .eml download and re-parse it only for a legacy row with no stored body.
     props.mailBucket.grantReadWrite(this.restHandler, 'sent/*');
-    // Sent attachments (embedded or linked): the send route copies each upload here; the
-    // attachment route and GET /d/{token} presign them.
+    // Sent attachments (embedded or linked): the send route copies each upload — or a forwarded
+    // stored attachment — here; the attachment route and GET /d/{token} presign them.
     props.mailBucket.grantReadWrite(this.restHandler, 'attachments/sent/*');
     // Stored bodies: the send route writes a large sent body; the read route loads any
     // stored body (inbound bodies are written by the parser).
@@ -262,7 +262,9 @@ export class ApiConstruct extends Construct {
     // the emails table (list/get), stored bodies, the inbound raw MIME + extracted-attachment
     // prefixes and the sent raw MIME archive (#29) (legacy body re-parse + presigns), and the
     // sent attachments (plus legacy linked ones under attachments/outbound/*) for
-    // get_email_attachment_url.
+    // get_email_attachment_url. send_email depends on these too, with inbound on: replies look
+    // up the original (the table), and forwarding copies + embeds from all three attachments/*
+    // prefixes — don't narrow them without checking the send path.
     // Added only when inbound is enabled (fail-closed, gates get_email too).
     if (props.inboundEnabled) {
       props.emailsTable.grantReadData(this.mcpHandler);

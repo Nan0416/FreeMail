@@ -4,8 +4,8 @@ import type { ForwardedAttachment } from './reply.js';
 /**
  * Drafts live in THIS browser only. The API has no drafts endpoint, so a draft is a
  * convenience copy in `localStorage`: it never reaches the server until it is sent, does
- * not follow you to another device, and attachments are not kept (a `File` cannot be
- * persisted). Every storage access is guarded — a private window or blocked site data
+ * not follow you to another device, and attached files are not kept (a `File` cannot be
+ * persisted) — though a forward's references to the original's attachments are. Every storage access is guarded — a private window or blocked site data
  * makes storage throw, and the app must still work, just without drafts.
  */
 export interface Draft {

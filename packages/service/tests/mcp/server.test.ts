@@ -984,3 +984,23 @@ describe('list_emails empty pages', () => {
     );
   });
 });
+
+describe('send_email forwarding without inbound', () => {
+  it('rejects a stored reference at call time when there are no read tools', async () => {
+    const send = vi.fn();
+    const client = await connect(send);
+
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: {
+        from: 'me@example.com',
+        to: ['a@b.com'],
+        text: 'fyi',
+        attachments: [{ emailId: 'H', attachmentId: '2' }],
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+  });
+});
