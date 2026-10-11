@@ -170,11 +170,12 @@ const sentStatusSchema = z
   .enum(['sending', 'sent', 'delivered', 'bounced', 'send_failed'])
   .optional()
   .describe(
-    'Sent mail only. "sending": recorded, but SES\'s answer was not (still sending, or the ' +
-      'outcome is unknown — it may have gone out). "sent": SES accepted it for delivery. ' +
+    'Sent mail only. "sending": outcome not recorded — still sending, or SES may already have ' +
+      'delivered it; do not resend without checking. "sent": SES accepted it for delivery. ' +
       '"delivered": a receiving mail server accepted it for at least one recipient (each ' +
       "recipient's outcome is in deliveryEvents). " +
-      '"bounced": it bounced for at least one recipient (see deliveryEvents). "send_failed": SES refused it; it was not sent.',
+      '"bounced": it bounced for at least one recipient (see deliveryEvents). ' +
+      '"send_failed": SES refused it; it was not sent.',
   );
 
 const deliveryEventSchema = outputSchemaFor<DeliveryEvent>()(
