@@ -19,6 +19,8 @@ import {
   DOWNLOAD_TOKEN_TTL_SECONDS,
   MAX_ATTACHMENTS,
   MAX_EMAIL_PAGE_SIZE,
+  MAX_LIST_FILTER_CHARS,
+  LIST_FILTER_SCAN_ROWS,
   MAX_READ_BODY_BYTES,
   MAX_RECIPIENTS,
   MAX_REPLY_TO_ADDRESSES,
@@ -495,8 +497,14 @@ export function listEmailsTool(deployment: McpDeploymentInfo) {
         'listings, and carry failed: true with no snippet or body; none of their attachments can ' +
         "be downloaded (attachmentCount still counts the original's).",
       '',
-      'To page, pass nextCursor back as cursor with the same direction; no nextCursor means ' +
-        'there is nothing more.',
+      'Search: query, from, to, and subject are case-insensitive substrings (query matches the ' +
+        'sender, any to/cc address, the subject, or the preview); after and before bound the ' +
+        'date. All given filters must match. With a text filter, each page examines at most ' +
+        `${LIST_FILTER_SCAN_ROWS} messages per folder, so it can hold fewer rows than limit, ` +
+        'even none, while nextCursor is still present: keep paging until it is absent.',
+      '',
+      'To page, pass nextCursor back as cursor with the same direction and filters; no ' +
+        'nextCursor means there is nothing more.',
       '',
       UNTRUSTED_NOTE,
     ].join('\n'),
@@ -518,7 +526,46 @@ export function listEmailsTool(deployment: McpDeploymentInfo) {
       cursor: z
         .string()
         .optional()
-        .describe("The previous response's nextCursor, to get the next page."),
+        .describe(
+          "The previous response's nextCursor, to get the next page (send the same filters).",
+        ),
+      query: z
+        .string()
+        .max(MAX_LIST_FILTER_CHARS)
+        .optional()
+        .describe(
+          'Case-insensitive text to find in the sender (address, or name on received mail), ' +
+            'any to/cc address, ' +
+            'the subject, or the preview.',
+        ),
+      from: z
+        .string()
+        .max(MAX_LIST_FILTER_CHARS)
+        .optional()
+        .describe(
+          "Case-insensitive text in the sender's address (or display name, on received mail).",
+        ),
+      to: z
+        .string()
+        .max(MAX_LIST_FILTER_CHARS)
+        .optional()
+        .describe('Case-insensitive text in any to or cc address.'),
+      subject: z
+        .string()
+        .max(MAX_LIST_FILTER_CHARS)
+        .optional()
+        .describe('Case-insensitive text in the subject.'),
+      after: z
+        .string()
+        .optional()
+        .describe(
+          'Only messages at or after this time: a date (2026-10-01, midnight UTC) or an ' +
+            'ISO-8601 time with a zone (2026-10-01T09:00:00Z).',
+        ),
+      before: z
+        .string()
+        .optional()
+        .describe('Only messages before this time, in the same format as after.'),
     },
     outputSchema: outputShapeFor<ListEmailsResponse & { readonly trust: ListTrust }>()({
       trust: z

@@ -308,6 +308,39 @@ export interface AttachmentDownloadResponse {
  */
 export type RawEmailDownloadResponse = AttachmentDownloadResponse;
 
+/**
+ * Search filters for the mailbox list (`GET /emails`, the `list_emails` tool). Text filters are
+ * case-insensitive substrings; all given filters must match. Pass the same filters with every
+ * page of one listing — the cursor does not carry them.
+ */
+export interface EmailListFilters {
+  /**
+   * Matches the sender (address, or display name on received mail — sent mail stores none), any
+   * to/cc address, the subject, or the preview.
+   */
+  readonly query?: string;
+  /** Matches the sender's address, or display name on received mail. */
+  readonly from?: string;
+  /** Matches any to or cc address. */
+  readonly to?: string;
+  /** Matches the subject. */
+  readonly subject?: string;
+  /** Only messages at or after this time (ISO-8601 UTC, normalized). */
+  readonly after?: string;
+  /** Only messages before this time (ISO-8601 UTC, normalized). */
+  readonly before?: string;
+}
+
+/** Max characters of one text filter. */
+export const MAX_LIST_FILTER_CHARS = 200;
+
+/**
+ * Max rows one list page examines per folder when text filters are set. A page can then hold
+ * fewer rows than its limit — even none — while more remain: the caller keeps paging until
+ * `nextCursor` is absent.
+ */
+export const LIST_FILTER_SCAN_ROWS = 1000;
+
 /** Default page size for `GET /emails` when `?limit=` is omitted. */
 export const DEFAULT_EMAIL_PAGE_SIZE = 25;
 

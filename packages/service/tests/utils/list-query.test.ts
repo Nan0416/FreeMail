@@ -50,3 +50,59 @@ describe('parseListEmailsQuery', () => {
     }
   });
 });
+
+describe('parseListEmailsQuery — search filters', () => {
+  it('omits filters when none are set, or all are blank', () => {
+    expect(parseListEmailsQuery({}).filters).toBeUndefined();
+    expect(parseListEmailsQuery({ query: '  ', from: '' }).filters).toBeUndefined();
+  });
+
+  it('trims the text filters', () => {
+    expect(parseListEmailsQuery({ query: ' invoice ', to: 'bob@' }).filters).toEqual({
+      query: 'invoice',
+      to: 'bob@',
+    });
+  });
+
+  it('rejects a text filter over the length cap', () => {
+    expect(() => parseListEmailsQuery({ subject: 'x'.repeat(201) })).toThrow(/at most 200/);
+  });
+
+  it.each([
+    ['2026-10-01', '2026-10-01T00:00:00.000Z'],
+    ['2026-10-01T09:30Z', '2026-10-01T09:30:00.000Z'],
+    ['2026-10-01T09:30:15.5Z', '2026-10-01T09:30:15.500Z'],
+    ['2026-10-01T09:30:00+02:00', '2026-10-01T07:30:00.000Z'],
+  ])('normalizes after=%s to UTC', (raw, iso) => {
+    expect(parseListEmailsQuery({ after: raw }).filters).toEqual({ after: iso });
+  });
+
+  it('accepts and truncates sub-millisecond fractions', () => {
+    expect(parseListEmailsQuery({ after: '2026-10-01T09:30:15.123456+00:00' }).filters).toEqual({
+      after: '2026-10-01T09:30:15.123Z',
+    });
+  });
+
+  it.each([
+    'yesterday',
+    '2026-10-01T09:30',
+    '2026-13-01',
+    '10/01/2026',
+    '2026-10-01 09:00Z',
+    '2026-02-30',
+    '2026-04-31',
+    '2026-02-29',
+    '9999-12-31T23:00-05:00',
+  ])('rejects before=%s', (raw) => {
+    expect(() => parseListEmailsQuery({ before: raw })).toThrow(EmailError);
+  });
+
+  it('rejects an empty range', () => {
+    expect(() => parseListEmailsQuery({ after: '2026-10-02', before: '2026-10-01' })).toThrow(
+      /earlier than/,
+    );
+    expect(() => parseListEmailsQuery({ after: '2026-10-01', before: '2026-10-01' })).toThrow(
+      /earlier than/,
+    );
+  });
+});

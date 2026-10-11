@@ -5,6 +5,7 @@ import {
   type CreateInboundEmailOutput,
   type CreateSentEmailOutput,
   type EmailsDao,
+  type EmailSummary,
   FAILED_PARTITION,
   INBOUND_PARTITION,
   SENT_PARTITION,
@@ -22,7 +23,7 @@ import type {
 import type { MailBodyContent, MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
 import type { ParsedInbound } from '../../src/utils/inbound-parse.js';
 import { EmailError } from '../../src/utils/errors.js';
-import { encodeEmailRef } from '../../src/utils/email-ref.js';
+import { decodeEmailRef, encodeEmailRef } from '../../src/utils/email-ref.js';
 import {
   EmailReadService,
   type ParseInbound,
@@ -1072,5 +1073,179 @@ describe('EmailReadService.listEmails', () => {
     expect(page.emails[0].status).toBe('send_failed');
     // Legacy row (no status attribute) omits the field rather than inventing one.
     expect(page.emails[1].status).toBeUndefined();
+  });
+});
+
+describe('EmailReadService.listEmails — search filters', () => {
+  /** `n` inbound rows, newest first, one second apart; every `every`-th one's subject says "match". */
+  function inboundRows(n: number, every: number): GetEmailOutput[] {
+    return Array.from({ length: n }, (_v, i) => {
+      const iso = new Date(Date.UTC(2026, 9, 1, 0, 0, n - i)).toISOString();
+      return inboundRow({
+        sk: `${iso}#r${i}`,
+        id: `r${i}`,
+        receivedAt: iso,
+        subject: i % every === 0 ? `match ${i}` : `other ${i}`,
+      });
+    });
+  }
+
+  /** A DAO whose list honours limit/afterSk/minSk/maxSk like DynamoDB, and records each call. */
+  function scanningDao(rows: GetEmailOutput[]): {
+    repo: FakeDao;
+    calls: ListEmailSummariesInput[];
+  } {
+    const repo = new FakeDao();
+    const calls: ListEmailSummariesInput[] = [];
+    repo.listEmailSummaries = (input) => {
+      calls.push(input);
+      const inRange = (direction: string) =>
+        direction === 'inbound'
+          ? rows.filter(
+              (row) =>
+                (input.afterSk === undefined || row.sk < input.afterSk) &&
+                (input.minSk === undefined || row.sk >= input.minSk) &&
+                (input.maxSk === undefined || row.sk <= input.maxSk),
+            )
+          : [];
+      return Promise.resolve({
+        emails: inRange(input.direction).slice(0, input.limit) as unknown as EmailSummary[],
+      });
+    };
+    return { repo, calls };
+  }
+
+  it('returns only matching rows, scanning in batches', async () => {
+    const dao = scanningDao(inboundRows(500, 50));
+    const reader = service(dao.repo, new FakePresigner(), new FakeRawMime());
+
+    const page = await reader.listEmails({
+      direction: 'inbound',
+      limit: 5,
+      filters: { subject: 'MATCH' },
+    });
+
+    expect(page.emails.map((e) => e.subject)).toEqual([
+      'match 0',
+      'match 50',
+      'match 100',
+      'match 150',
+      'match 200',
+    ]);
+    expect(page.nextCursor).toBeDefined();
+    // Stopped at the 5th match (row 200), in batches of 200 rows.
+    expect(dao.calls.map((c) => c.limit)).toEqual([200, 200]);
+  });
+
+  it('stops at the scan budget with a short page and a cursor that skips what it read', async () => {
+    const dao = scanningDao(inboundRows(1500, 1200));
+    const reader = service(dao.repo, new FakePresigner(), new FakeRawMime());
+
+    const first = await reader.listEmails({
+      direction: 'inbound',
+      limit: 5,
+      filters: { subject: 'match' },
+    });
+    // Row 0 matches; rows 1–999 don't; the budget (1000 rows) ends the page.
+    expect(first.emails.map((e) => e.subject)).toEqual(['match 0']);
+    expect(dao.calls.reduce((sum, c) => sum + c.limit, 0)).toBe(1000);
+    expect(first.nextCursor).toBeDefined();
+
+    const second = await reader.listEmails({
+      direction: 'inbound',
+      limit: 5,
+      cursor: first.nextCursor!,
+      filters: { subject: 'match' },
+    });
+    expect(second.emails.map((e) => e.subject)).toEqual(['match 1200']);
+    expect(second.nextCursor).toBeUndefined();
+  });
+
+  it('merges filtered matches from both folders newest-first, with a date range, to the end', async () => {
+    const inbound = inboundRows(600, 7);
+    const sent = Array.from({ length: 600 }, (_v, i) => {
+      const iso = new Date(Date.UTC(2026, 9, 1, 0, 0, 600 - i, 500)).toISOString();
+      return {
+        direction: 'sent',
+        pk: 'SENT',
+        sk: `${iso}#s${i}`,
+        id: `s${i}`,
+        from: 'me@mydomain.com',
+        to: ['x@y.com'],
+        cc: [],
+        bcc: [],
+        subject: i % 11 === 0 ? `match s${i}` : `other s${i}`,
+        sentAt: iso,
+        attachmentCount: 0,
+        sizeBytes: 1,
+      } as GetEmailOutput;
+    });
+    const repo = new FakeDao();
+    repo.listEmailSummaries = (input) => {
+      const rows = input.direction === 'sent' ? sent : inbound;
+      return Promise.resolve({
+        emails: rows
+          .filter(
+            (row) =>
+              (input.afterSk === undefined || row.sk < input.afterSk) &&
+              (input.minSk === undefined || row.sk >= input.minSk) &&
+              (input.maxSk === undefined || row.sk <= input.maxSk),
+          )
+          .slice(0, input.limit) as unknown as EmailSummary[],
+      });
+    };
+    const reader = service(repo, new FakePresigner(), new FakeRawMime());
+    const filters = {
+      subject: 'match',
+      after: '2026-10-01T00:01:00.000Z',
+      before: '2026-10-01T00:08:00.000Z',
+    };
+    const expected = [...sent, ...inbound]
+      .filter(
+        (row) =>
+          row.subject.startsWith('match') && row.sk >= filters.after && row.sk <= filters.before,
+      )
+      .map((row) => row.sk)
+      .sort()
+      .reverse();
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 50; page += 1) {
+      const result = await reader.listEmails({
+        limit: 7,
+        filters,
+        ...(cursor ? { cursor } : {}),
+      });
+      seen.push(...result.emails.map((email) => decodeEmailRef(email.id).sk));
+      cursor = result.nextCursor;
+      if (!cursor) {
+        break;
+      }
+    }
+
+    expect(cursor).toBeUndefined();
+    expect(expected.length).toBeGreaterThan(20);
+    expect(seen).toEqual(expected);
+  });
+
+  it('passes a date range to the query, without scanning, when there is no text filter', async () => {
+    const dao = scanningDao(inboundRows(10, 1));
+    const reader = service(dao.repo, new FakePresigner(), new FakeRawMime());
+
+    await reader.listEmails({
+      direction: 'inbound',
+      limit: 25,
+      filters: { after: '2026-10-01T00:00:03.000Z', before: '2026-10-01T00:00:06.000Z' },
+    });
+
+    expect(dao.calls).toEqual([
+      {
+        direction: 'inbound',
+        limit: 25,
+        minSk: '2026-10-01T00:00:03.000Z',
+        maxSk: '2026-10-01T00:00:06.000Z',
+      },
+    ]);
   });
 });

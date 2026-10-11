@@ -856,3 +856,67 @@ describe('get_email text shows Reply-To', () => {
     expect(text.indexOf('Reply-To:')).toBeGreaterThan(text.indexOf('<<<UNTRUSTED-EMAIL'));
   });
 });
+
+describe('list_emails search', () => {
+  it('advertises the filters and how short pages work', async () => {
+    const client = await connectRead(fakeReadService({}));
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'list_emails');
+
+    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(
+      expect.arrayContaining(['query', 'from', 'to', 'subject', 'after', 'before']),
+    );
+    expect(tool?.inputSchema.properties?.query).toMatchObject({ maxLength: 200 });
+    expect(tool?.description).toContain('examines at most 1000 messages per folder');
+    expect(tool?.description).toContain('keep paging until it is absent');
+  });
+
+  it('passes the filters to the read service, normalized', async () => {
+    const listEmails = vi.fn().mockResolvedValue({ emails: [] });
+    const client = await connectRead(fakeReadService({ listEmails }));
+
+    await client.callTool({
+      name: 'list_emails',
+      arguments: { direction: 'inbound', query: ' invoice ', after: '2026-10-01' },
+    });
+
+    expect(listEmails).toHaveBeenCalledWith({
+      direction: 'inbound',
+      limit: 25,
+      filters: { query: 'invoice', after: '2026-10-01T00:00:00.000Z' },
+    });
+  });
+
+  it('surfaces a bad date as an isError result', async () => {
+    const listEmails = vi.fn();
+    const client = await connectRead(fakeReadService({ listEmails }));
+
+    const result = await client.callTool({ name: 'list_emails', arguments: { before: 'soon' } });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('"before" must be a date');
+    expect(listEmails).not.toHaveBeenCalled();
+  });
+});
+
+describe('list_emails empty pages', () => {
+  it('says more remains when a filtered page matched nothing but has a cursor', async () => {
+    const client = await connectRead(
+      fakeReadService({ listEmails: vi.fn().mockResolvedValue({ emails: [], nextCursor: 'C' }) }),
+    );
+
+    const result = await client.callTool({ name: 'list_emails', arguments: { query: 'x' } });
+
+    expect(textOf(result)).toContain('more remains to search — pass nextCursor');
+    expect(textOf(result)).not.toBe('No emails.');
+  });
+
+  it('says "No emails." only at the real end', async () => {
+    const client = await connectRead(
+      fakeReadService({ listEmails: vi.fn().mockResolvedValue({ emails: [] }) }),
+    );
+
+    expect(textOf(await client.callTool({ name: 'list_emails', arguments: {} }))).toBe(
+      'No emails.',
+    );
+  });
+});

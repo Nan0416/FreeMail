@@ -29,7 +29,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
 import { EmailError } from '../utils/errors.js';
-import { parseListEmailsQuery } from '../utils/list-query.js';
+import { parseListEmailsQuery, type RawListEmailsInput } from '../utils/list-query.js';
 import type { EmailReadService } from '../services/email-read-service.js';
 import type { AttachmentUploader } from '../services/attachment-service.js';
 import type { EmailService } from '../services/email-service.js';
@@ -145,7 +145,7 @@ export async function handleSendEmail(
 export async function handleListEmails(
   readService: EmailReadService,
   nonce: () => string,
-  args: { direction?: string | undefined; limit?: number | undefined; cursor?: string | undefined },
+  args: RawListEmailsInput,
 ): Promise<CallToolResult> {
   try {
     const query = parseListEmailsQuery(args);
@@ -219,7 +219,11 @@ export async function handleGetEmailAttachmentUrl(
 /** Human-readable text for a list page; inbound rows are wrapped in the untrusted frame. */
 function renderListText(page: ListEmailsResponse, nonce: () => string): string {
   if (page.emails.length === 0) {
-    return 'No emails.';
+    // With a text filter, a page can examine its whole budget and match nothing while more
+    // remains — so an empty page is only the end when there is no cursor.
+    return page.nextCursor
+      ? 'No matches in this stretch of the mailbox, but more remains to search — pass nextCursor.'
+      : 'No emails.';
   }
   const header = `${page.emails.length} email(s)${page.nextCursor ? ' (more available — pass nextCursor)' : ''}.`;
   const rows = page.emails.map(listRow).join('\n');

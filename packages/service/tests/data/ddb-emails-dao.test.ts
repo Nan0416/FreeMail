@@ -588,6 +588,13 @@ describe('DdbEmailsDao — list index + paging', () => {
       const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
       expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', undefined]);
       expect(result.emails.map((e) => e.sk)).toEqual(['sk-1']);
+      // From the table, only the list fields are read — never full items with their bodies.
+      const fallback = doc.queries[1]!.input;
+      expect(Object.values(fallback.ExpressionAttributeNames ?? {})).toEqual(
+        expect.arrayContaining(['pk', 'sk', 'from', 'to', 'subject', 'status']),
+      );
+      expect(Object.values(fallback.ExpressionAttributeNames ?? {})).not.toContain('body');
+      expect(fallback.ProjectionExpression).toMatch(/^#l0, #l1, /);
 
       // The trust was reset: the next call (after the recheck window) asks DescribeTable again.
       doc.indexState = undefined;
@@ -686,5 +693,90 @@ describe('DdbEmailsDao — sent Message-ID', () => {
     expect(input.UpdateExpression).toContain('#msgid = :msgid');
     expect(input.ExpressionAttributeNames?.['#msgid']).toBe('messageIdHeader');
     expect(input.ExpressionAttributeValues?.[':msgid']).toBe('<s1@email.amazonses.com>');
+  });
+});
+
+describe('DdbEmailsDao.listEmailSummaries — date range', () => {
+  it('bounds the sort key on both sides', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({
+      direction: 'inbound',
+      limit: 5,
+      minSk: '2026-10-01T00:00:00.000Z',
+      maxSk: '2026-10-02T00:00:00.000Z',
+    });
+
+    const input = doc.queries[0].input;
+    expect(input.KeyConditionExpression).toBe('pk = :pk AND sk BETWEEN :lo AND :hi');
+    expect(input.ExpressionAttributeValues).toEqual({
+      ':pk': 'INBOUND',
+      ':lo': '2026-10-01T00:00:00.000Z',
+      ':hi': '2026-10-02T00:00:00.000Z',
+    });
+  });
+
+  it('bounds one side when only one is given', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }, { Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5, minSk: 'A' });
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5, maxSk: 'B' });
+
+    expect(doc.queries[0].input.KeyConditionExpression).toBe('pk = :pk AND sk >= :lo');
+    expect(doc.queries[1].input.KeyConditionExpression).toBe('pk = :pk AND sk <= :hi');
+  });
+
+  it('starts from the ceiling when a cursor lies above it (filters changed between pages)', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5, afterSk: 'Z#1', maxSk: 'M' });
+
+    expect(doc.queries[0].input.ExclusiveStartKey).toBeUndefined();
+  });
+
+  it('reads nothing when the cursor is at or below the floor', async () => {
+    const doc = new PagedFakeDoc([]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({
+      direction: 'sent',
+      limit: 5,
+      afterSk: 'A',
+      minSk: 'B',
+    });
+
+    expect(result.emails).toEqual([]);
+    expect(doc.queries).toHaveLength(0);
+  });
+});
+
+describe('DdbEmailsDao.listEmailSummaries — range edges', () => {
+  it('reads nothing for an empty range', async () => {
+    const doc = new PagedFakeDoc([]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    const result = await dao.listEmailSummaries({
+      direction: 'sent',
+      limit: 5,
+      minSk: 'B',
+      maxSk: 'A',
+    });
+
+    expect(result.emails).toEqual([]);
+    expect(doc.queries).toHaveLength(0);
+  });
+
+  it('reads nothing for a cursor exactly at the floor, and resumes from one at the ceiling', async () => {
+    const doc = new PagedFakeDoc([{ Items: [] }]);
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5, afterSk: 'B', minSk: 'B' });
+    expect(doc.queries).toHaveLength(0);
+
+    await dao.listEmailSummaries({ direction: 'sent', limit: 5, afterSk: 'M', maxSk: 'M' });
+    expect(doc.queries[0]?.input.ExclusiveStartKey).toEqual({ pk: 'SENT', sk: 'M' });
   });
 });

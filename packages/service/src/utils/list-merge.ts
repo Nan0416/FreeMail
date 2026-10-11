@@ -14,6 +14,14 @@
  * dominated the page) is simply re-fetched next page — never skipped, never duplicated.
  * The partition (`pk`) is derived server-side from the direction, so a crafted cursor can
  * carry only sk strings — it can never retarget the query at an arbitrary partition.
+ *
+ * Filtered listings (#search) add one wrinkle: a partition's query may stop short — it examined
+ * its scan budget without filling the page — while unexamined rows remain below its frontier.
+ * Those rows may be newer than another partition's matches, so a page emits only rows at or
+ * above the lowest point EVERY unfinished partition has examined (the highest frontier), and a
+ * partition that matched nothing resumes from its frontier, so each page makes progress. For an
+ * unfiltered query (a full page, or the end of the partition) the cut never removes anything:
+ * the page's top `limit` rows all sit above every full partition's last row.
  */
 import type { EmailListFilter } from '@freemail/shared';
 import type { EmailSummary } from '../data/emails-dao.js';
@@ -22,11 +30,41 @@ import { emailErrors } from './errors.js';
 /** A listable partition: `sent`, `inbound`, or `failed` (the Errors folder). */
 type Direction = EmailListFilter;
 
-/** Fetch one partition newest-first, at most `limit` rows strictly older than `afterSk`. */
+/** One partition's contribution to a page. */
+export interface MergeQueryResult {
+  /** Matching rows, newest-first, at most `limit`, all strictly older than `afterSk`. */
+  readonly rows: readonly EmailSummary[];
+  /** True when the partition has nothing older than what was examined. */
+  readonly exhausted: boolean;
+  /** The oldest sort key examined, matching or not: every row above it has been seen. */
+  readonly scannedToSk?: string;
+}
+
+/** Fetch one partition newest-first, strictly older than `afterSk`. */
 export type MergeQuery = (
   direction: Direction,
   opts: { readonly limit: number; readonly afterSk?: string },
-) => Promise<readonly EmailSummary[]>;
+) => Promise<MergeQueryResult>;
+
+/**
+ * Adapt a plain page query (at most `limit` rows, fewer only at the partition's end) to a
+ * {@link MergeQuery}: a short page is the end, and the last row is how far it read.
+ */
+export function pageQuery(
+  query: (
+    direction: Direction,
+    opts: { readonly limit: number; readonly afterSk?: string },
+  ) => Promise<readonly EmailSummary[]>,
+): MergeQuery {
+  return async (direction, opts) => {
+    const rows = await query(direction, opts);
+    return {
+      rows,
+      exhausted: rows.length < opts.limit,
+      ...(rows.length > 0 ? { scannedToSk: rows[rows.length - 1].sk } : {}),
+    };
+  };
+}
 
 export interface ListEmailsParams {
   readonly query: MergeQuery;
@@ -100,14 +138,32 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
   const decoded = params.cursor ? decodeListCursor(params.cursor) : { v: 1 as const };
   const directions: Direction[] = params.direction ? [params.direction] : ['sent', 'inbound'];
 
-  const fetched = {} as Record<Direction, readonly EmailSummary[]>;
+  // The folders are independent: ask them at once.
+  const results = await Promise.all(
+    directions.map((dir) => params.query(dir, { limit: params.limit, afterSk: decoded[dir] })),
+  );
+  const fetched = {} as Record<Direction, MergeQueryResult>;
+  directions.forEach((dir, index) => {
+    fetched[dir] = results[index] as MergeQueryResult;
+  });
+
+  // Rows below an unfinished partition's frontier could be out of order with rows it hasn't
+  // examined yet: emit only at or above the highest such frontier.
+  let floor: string | undefined;
   for (const dir of directions) {
-    fetched[dir] = await params.query(dir, { limit: params.limit, afterSk: decoded[dir] });
+    const frontier = fetched[dir].exhausted ? undefined : fetched[dir].scannedToSk;
+    if (frontier !== undefined && (floor === undefined || frontier > floor)) {
+      floor = frontier;
+    }
   }
 
   // Remember which listed partition each row was fetched from: a row's own `direction` can't
   // say (an Errors-folder row is a `direction: 'inbound'` message fetched as `failed`).
-  const pool = directions.flatMap((dir) => fetched[dir].map((row) => ({ dir, row })));
+  const pool = directions.flatMap((dir) =>
+    fetched[dir].rows
+      .filter((row) => floor === undefined || row.sk >= floor)
+      .map((row) => ({ dir, row })),
+  );
   pool.sort((a, b) => bySkDescending(a.row, b.row));
   const page = pool.slice(0, params.limit);
   const rows = page.map((entry) => entry.row);
@@ -115,9 +171,18 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
   const positions: Partial<Record<Direction, string>> = {};
   let anyMore = false;
   for (const dir of directions) {
+    const result = fetched[dir];
     const emitted = page.filter((entry) => entry.dir === dir).map((entry) => entry.row);
-    // The page is sk-descending, so the LAST emitted row from a direction is its lowest sk.
-    const lastEmittedSk = emitted.length > 0 ? emitted[emitted.length - 1].sk : decoded[dir];
+    // When every fetched row made the page, resume below everything examined (for a plain
+    // page that is its last row; for a filtered scan it skips the non-matching rows after the
+    // last match). Otherwise resume after the last row emitted — the page is sk-descending, so
+    // that is its lowest — or, if none was, where it started, re-fetching what lost the merge.
+    const lastEmittedSk =
+      emitted.length === result.rows.length
+        ? (result.scannedToSk ?? emitted[emitted.length - 1]?.sk ?? decoded[dir])
+        : emitted.length > 0
+          ? emitted[emitted.length - 1].sk
+          : decoded[dir];
     // ALWAYS carry this direction's continuation position — even if it drained this page.
     // Omitting it would make the next page restart the direction from the newest row
     // (re-emitting everything → dupes / non-termination). A drained direction simply
@@ -127,8 +192,8 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
     if (lastEmittedSk !== undefined) {
       positions[dir] = lastEmittedSk;
     }
-    // More remains if we hit the fetch limit, or some fetched rows lost the merge this page.
-    if (fetched[dir].length === params.limit || fetched[dir].length > emitted.length) {
+    // More remains unless the partition is done and every fetched row made the page.
+    if (!result.exhausted || result.rows.length > emitted.length) {
       anyMore = true;
     }
   }

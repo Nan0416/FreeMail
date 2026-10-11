@@ -14,7 +14,9 @@
 import {
   DEFAULT_EMAIL_PAGE_SIZE,
   MAX_EMAIL_PAGE_SIZE,
+  MAX_LIST_FILTER_CHARS,
   type EmailListFilter,
+  type EmailListFilters,
 } from '@freemail/shared';
 import { emailErrors } from './errors.js';
 import type { ListEmailsServiceRequest } from '../services/email-read-service.js';
@@ -24,18 +26,94 @@ export interface RawListEmailsInput {
   readonly direction?: string | undefined;
   readonly limit?: string | number | undefined;
   readonly cursor?: string | undefined;
+  readonly query?: string | undefined;
+  readonly from?: string | undefined;
+  readonly to?: string | undefined;
+  readonly subject?: string | undefined;
+  readonly after?: string | undefined;
+  readonly before?: string | undefined;
 }
 
 /** Validate + normalize raw inputs into a {@link ListEmailsServiceRequest}. */
 export function parseListEmailsQuery(input: RawListEmailsInput): ListEmailsServiceRequest {
   const limit = parseLimit(input.limit);
   const direction = parseDirection(input.direction);
+  const filters = parseFilters(input);
   // Cursor is opaque — validated when the read service decodes it. Empty string is treated as absent.
   return {
     limit,
     ...(direction ? { direction } : {}),
     ...(input.cursor ? { cursor: input.cursor } : {}),
+    ...(filters ? { filters } : {}),
   };
+}
+
+/** The text and date filters, trimmed and normalized; undefined when none is set. */
+function parseFilters(input: RawListEmailsInput): EmailListFilters | undefined {
+  const query = parseText(input.query, 'query');
+  const from = parseText(input.from, 'from');
+  const to = parseText(input.to, 'to');
+  const subject = parseText(input.subject, 'subject');
+  const after = parseTime(input.after, 'after');
+  const before = parseTime(input.before, 'before');
+  if (after !== undefined && before !== undefined && after >= before) {
+    throw emailErrors.invalidRequest('"after" must be earlier than "before".');
+  }
+  const filters: EmailListFilters = {
+    ...(query !== undefined ? { query } : {}),
+    ...(from !== undefined ? { from } : {}),
+    ...(to !== undefined ? { to } : {}),
+    ...(subject !== undefined ? { subject } : {}),
+    ...(after !== undefined ? { after } : {}),
+    ...(before !== undefined ? { before } : {}),
+  };
+  return Object.keys(filters).length > 0 ? filters : undefined;
+}
+
+/** A text filter: trimmed, empty → absent, at most {@link MAX_LIST_FILTER_CHARS}. */
+function parseText(raw: string | undefined, name: string): string | undefined {
+  const value = raw?.trim();
+  if (value === undefined || value === '') {
+    return undefined;
+  }
+  if (value.length > MAX_LIST_FILTER_CHARS) {
+    throw emailErrors.invalidRequest(
+      `"${name}" may be at most ${MAX_LIST_FILTER_CHARS} characters.`,
+    );
+  }
+  return value;
+}
+
+/**
+ * A date (`2026-10-01`, UTC midnight) or ISO-8601 date-time with a zone, normalized to UTC.
+ * Fractions beyond milliseconds (Python's `isoformat()` writes microseconds) are accepted and
+ * truncated.
+ */
+const TIME_RE = /^(\d{4})-(\d{2})-(\d{2})(T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2}))?$/;
+
+/** A normalized time the sort key can compare: a four-digit year (not `+010000-…`). */
+const NORMALIZED_RE = /^\d{4}-/;
+
+function parseTime(raw: string | undefined, name: string): string | undefined {
+  const value = raw?.trim();
+  if (value === undefined || value === '') {
+    return undefined;
+  }
+  const match = TIME_RE.exec(value);
+  // Drop sub-millisecond digits: Date.parse's handling of them is not specified.
+  const ms = match ? Date.parse(value.replace(/(\.\d{3})\d+/, '$1')) : Number.NaN;
+  // Date.parse rolls an impossible day over (2026-02-30 → March 2): check the calendar date.
+  const realDate =
+    match !== null &&
+    isCalendarDate(Number(match[1]), Number(match[2]), Number(match[3])) &&
+    !Number.isNaN(ms) &&
+    NORMALIZED_RE.test(new Date(ms).toISOString());
+  if (!realDate) {
+    throw emailErrors.invalidRequest(
+      `"${name}" must be a date (2026-10-01) or an ISO-8601 time with a zone (2026-10-01T09:00:00Z).`,
+    );
+  }
+  return new Date(ms).toISOString();
 }
 
 function parseDirection(raw: string | undefined): EmailListFilter | undefined {
@@ -58,4 +136,12 @@ function parseLimit(raw: string | number | undefined): number {
     throw emailErrors.invalidRequest('"limit" must be a positive integer.');
   }
   return Math.min(value, MAX_EMAIL_PAGE_SIZE);
+}
+
+/** True when year-month-day names a real day (no Feb 30, no month 13). */
+function isCalendarDate(year: number, month: number, day: number): boolean {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
 }

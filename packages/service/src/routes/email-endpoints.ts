@@ -157,6 +157,12 @@ function parseListQuery(req: Request): ListEmailsServiceRequest {
     direction: singleQueryValue(req, 'direction'),
     limit: singleQueryValue(req, 'limit'),
     cursor: singleQueryValue(req, 'cursor'),
+    query: singleQueryValue(req, 'q'),
+    from: singleQueryValue(req, 'from'),
+    to: singleQueryValue(req, 'to'),
+    subject: singleQueryValue(req, 'subject'),
+    after: singleQueryValue(req, 'after'),
+    before: singleQueryValue(req, 'before'),
   });
 }
 
