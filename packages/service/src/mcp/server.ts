@@ -219,7 +219,11 @@ export async function handleGetEmailAttachmentUrl(
 /** Human-readable text for a list page; inbound rows are wrapped in the untrusted frame. */
 function renderListText(page: ListEmailsResponse, nonce: () => string): string {
   if (page.emails.length === 0) {
-    return 'No emails.';
+    // With a text filter, a page can examine its whole budget and match nothing while more
+    // remains — so an empty page is only the end when there is no cursor.
+    return page.nextCursor
+      ? 'No matches in this stretch of the mailbox, but more remains to search — pass nextCursor.'
+      : 'No emails.';
   }
   const header = `${page.emails.length} email(s)${page.nextCursor ? ' (more available — pass nextCursor)' : ''}.`;
   const rows = page.emails.map(listRow).join('\n');

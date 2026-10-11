@@ -84,16 +84,31 @@ function parseText(raw: string | undefined, name: string): string | undefined {
   return value;
 }
 
-/** A date (`2026-10-01`, UTC midnight) or ISO-8601 date-time with a zone, normalized to UTC. */
-const TIME_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2}))?$/;
+/**
+ * A date (`2026-10-01`, UTC midnight) or ISO-8601 date-time with a zone, normalized to UTC.
+ * Fractions beyond milliseconds (Python's `isoformat()` writes microseconds) are accepted and
+ * truncated.
+ */
+const TIME_RE = /^(\d{4})-(\d{2})-(\d{2})(T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2}))?$/;
+
+/** A normalized time the sort key can compare: a four-digit year (not `+010000-…`). */
+const NORMALIZED_RE = /^\d{4}-/;
 
 function parseTime(raw: string | undefined, name: string): string | undefined {
   const value = raw?.trim();
   if (value === undefined || value === '') {
     return undefined;
   }
-  const ms = TIME_RE.test(value) ? Date.parse(value) : Number.NaN;
-  if (Number.isNaN(ms)) {
+  const match = TIME_RE.exec(value);
+  // Drop sub-millisecond digits: Date.parse's handling of them is not specified.
+  const ms = match ? Date.parse(value.replace(/(\.\d{3})\d+/, '$1')) : Number.NaN;
+  // Date.parse rolls an impossible day over (2026-02-30 → March 2): check the calendar date.
+  const realDate =
+    match !== null &&
+    isCalendarDate(Number(match[1]), Number(match[2]), Number(match[3])) &&
+    !Number.isNaN(ms) &&
+    NORMALIZED_RE.test(new Date(ms).toISOString());
+  if (!realDate) {
     throw emailErrors.invalidRequest(
       `"${name}" must be a date (2026-10-01) or an ISO-8601 time with a zone (2026-10-01T09:00:00Z).`,
     );
@@ -121,4 +136,12 @@ function parseLimit(raw: string | number | undefined): number {
     throw emailErrors.invalidRequest('"limit" must be a positive integer.');
   }
   return Math.min(value, MAX_EMAIL_PAGE_SIZE);
+}
+
+/** True when year-month-day names a real day (no Feb 30, no month 13). */
+function isCalendarDate(year: number, month: number, day: number): boolean {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
 }

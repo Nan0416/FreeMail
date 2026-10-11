@@ -897,3 +897,26 @@ describe('list_emails search', () => {
     expect(listEmails).not.toHaveBeenCalled();
   });
 });
+
+describe('list_emails empty pages', () => {
+  it('says more remains when a filtered page matched nothing but has a cursor', async () => {
+    const client = await connectRead(
+      fakeReadService({ listEmails: vi.fn().mockResolvedValue({ emails: [], nextCursor: 'C' }) }),
+    );
+
+    const result = await client.callTool({ name: 'list_emails', arguments: { query: 'x' } });
+
+    expect(textOf(result)).toContain('more remains to search — pass nextCursor');
+    expect(textOf(result)).not.toBe('No emails.');
+  });
+
+  it('says "No emails." only at the real end', async () => {
+    const client = await connectRead(
+      fakeReadService({ listEmails: vi.fn().mockResolvedValue({ emails: [] }) }),
+    );
+
+    expect(textOf(await client.callTool({ name: 'list_emails', arguments: {} }))).toBe(
+      'No emails.',
+    );
+  });
+});

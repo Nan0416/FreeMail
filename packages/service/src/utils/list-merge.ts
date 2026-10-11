@@ -138,10 +138,14 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
   const decoded = params.cursor ? decodeListCursor(params.cursor) : { v: 1 as const };
   const directions: Direction[] = params.direction ? [params.direction] : ['sent', 'inbound'];
 
+  // The folders are independent: ask them at once.
+  const results = await Promise.all(
+    directions.map((dir) => params.query(dir, { limit: params.limit, afterSk: decoded[dir] })),
+  );
   const fetched = {} as Record<Direction, MergeQueryResult>;
-  for (const dir of directions) {
-    fetched[dir] = await params.query(dir, { limit: params.limit, afterSk: decoded[dir] });
-  }
+  directions.forEach((dir, index) => {
+    fetched[dir] = results[index] as MergeQueryResult;
+  });
 
   // Rows below an unfinished partition's frontier could be out of order with rows it hasn't
   // examined yet: emit only at or above the highest such frontier.

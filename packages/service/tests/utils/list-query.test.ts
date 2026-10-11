@@ -77,12 +77,25 @@ describe('parseListEmailsQuery — search filters', () => {
     expect(parseListEmailsQuery({ after: raw }).filters).toEqual({ after: iso });
   });
 
-  it.each(['yesterday', '2026-10-01T09:30', '2026-13-01', '10/01/2026', '2026-10-01 09:00Z'])(
-    'rejects before=%s',
-    (raw) => {
-      expect(() => parseListEmailsQuery({ before: raw })).toThrow(EmailError);
-    },
-  );
+  it('accepts and truncates sub-millisecond fractions', () => {
+    expect(parseListEmailsQuery({ after: '2026-10-01T09:30:15.123456+00:00' }).filters).toEqual({
+      after: '2026-10-01T09:30:15.123Z',
+    });
+  });
+
+  it.each([
+    'yesterday',
+    '2026-10-01T09:30',
+    '2026-13-01',
+    '10/01/2026',
+    '2026-10-01 09:00Z',
+    '2026-02-30',
+    '2026-04-31',
+    '2026-02-29',
+    '9999-12-31T23:00-05:00',
+  ])('rejects before=%s', (raw) => {
+    expect(() => parseListEmailsQuery({ before: raw })).toThrow(EmailError);
+  });
 
   it('rejects an empty range', () => {
     expect(() => parseListEmailsQuery({ after: '2026-10-02', before: '2026-10-01' })).toThrow(
