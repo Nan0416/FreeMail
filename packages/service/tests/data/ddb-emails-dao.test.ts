@@ -664,3 +664,27 @@ describe('DdbEmailsDao — threading fields', () => {
     });
   });
 });
+
+describe('DdbEmailsDao — sent Message-ID', () => {
+  it('sets the Message-ID with the sent transition', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.updateSentEmailStatus({
+      id: 'e1',
+      sentAt: '2026-07-17T10:00:00.000Z',
+      status: 'sent',
+      sesMessageId: 's1',
+      messageIdHeader: '<s1@email.amazonses.com>',
+    });
+
+    const input = doc.commands[0]?.input as {
+      UpdateExpression?: string;
+      ExpressionAttributeNames?: Record<string, string>;
+      ExpressionAttributeValues?: Record<string, unknown>;
+    };
+    expect(input.UpdateExpression).toContain('#msgid = :msgid');
+    expect(input.ExpressionAttributeNames?.['#msgid']).toBe('messageIdHeader');
+    expect(input.ExpressionAttributeValues?.[':msgid']).toBe('<s1@email.amazonses.com>');
+  });
+});

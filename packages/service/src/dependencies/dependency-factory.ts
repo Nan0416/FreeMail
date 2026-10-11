@@ -107,6 +107,8 @@ export class DependencyFactory {
         downloadBaseUrl: this.config.downloadBaseUrl,
         emailDomain: this.config.emailDomain,
         sesRegion: this.config.sesRegion,
+        // The REST role always reads the emails table (it serves the mailbox).
+        canReadMailbox: true,
       }),
       emailReadService: new EmailReadService({
         emailsDao,

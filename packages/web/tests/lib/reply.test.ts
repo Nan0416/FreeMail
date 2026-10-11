@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EmailDetail } from '@freemail/shared';
-import { buildPrefill, quotedText, replySender } from '../../src/lib/reply.js';
+import { buildPrefill, quotedText, replySender, replyToElsewhere } from '../../src/lib/reply.js';
 
 const INBOUND: EmailDetail = {
   id: 'h1',
@@ -104,5 +104,22 @@ describe('replySender', () => {
       'me@mine.dev',
     );
     expect(replySender({ ...INBOUND, to: ['x@other.com'], cc: [] }, '')).toBe('x@other.com');
+  });
+});
+
+describe('replyToElsewhere', () => {
+  it("flags a received message whose Reply-To leaves the sender's domain", () => {
+    expect(replyToElsewhere({ ...INBOUND, replyTo: ['pay@evil.test'] })).toBe(true);
+  });
+
+  it("does not flag a Reply-To on the sender's own domain, or none", () => {
+    expect(replyToElsewhere({ ...INBOUND, replyTo: ['desk@X.com'] })).toBe(false);
+    expect(replyToElsewhere(INBOUND)).toBe(false);
+  });
+
+  it('never flags our own sent mail', () => {
+    expect(replyToElsewhere({ ...INBOUND, direction: 'sent', replyTo: ['a@other.test'] })).toBe(
+      false,
+    );
   });
 });

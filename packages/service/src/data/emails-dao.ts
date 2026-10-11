@@ -92,10 +92,14 @@ export interface CreateSentEmailInput {
   readonly replyTo?: readonly string[];
   /**
    * The `References` chain the message carried — set on a reply, ending with the id of the
-   * message it answered — so a reply to THIS message continues the same thread. Its own
-   * `Message-ID` is not stored: SES assigns it, derived from {@link sesMessageId}.
+   * message it answered — so a reply to THIS message continues the same thread.
    */
   readonly references?: readonly string[];
+  /**
+   * The `Message-ID` SES gave the message (it replaces the composer's), set with the `sent`
+   * transition. Absent before SES accepts it, and on rows from before it was recorded.
+   */
+  readonly messageIdHeader?: string;
 }
 
 /** Nothing to report: the conditional put either landed or threw. */
@@ -118,6 +122,8 @@ export interface UpdateSentEmailStatusInput {
   readonly status: Extract<SentStatus, 'sent' | 'send_failed'>;
   /** Set on `sent`. */
   readonly sesMessageId?: string;
+  /** Set on `sent`: the `Message-ID` SES gave the message. */
+  readonly messageIdHeader?: string;
   /** Set on `send_failed` — a short reason. */
   readonly error?: string;
 }

@@ -500,6 +500,28 @@ describe('parseInbound threading headers', () => {
     expect(parsed.references).toEqual(['<ok@x.com>']);
   });
 
+  it('drops a Message-ID that decodes to a header injection', async () => {
+    const parsed = await parseInbound(
+      mime(withHeaders(['Message-ID: =?utf-8?q?<a@x.com>=0D=0ABcc:_victim@evil.test?='])),
+      new FakeSink(),
+      looseLimits(),
+    );
+
+    expect(parsed.messageIdHeader).toBeUndefined();
+  });
+
+  it('keeps at most 10 Reply-To addresses', async () => {
+    const many = Array.from({ length: 15 }, (_v, i) => `r${i}@x.com`).join(', ');
+    const parsed = await parseInbound(
+      mime(withHeaders([`Reply-To: ${many}`])),
+      new FakeSink(),
+      looseLimits(),
+    );
+
+    expect(parsed.replyTo).toHaveLength(10);
+    expect(parsed.replyTo[0]).toBe('r0@x.com');
+  });
+
   it('reports none when the headers are absent', async () => {
     const parsed = await parseInbound(mime(withHeaders([])), new FakeSink(), looseLimits());
 

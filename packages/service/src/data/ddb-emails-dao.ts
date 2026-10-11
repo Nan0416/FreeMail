@@ -149,6 +149,11 @@ export class DdbEmailsDao implements EmailsDao {
       values[':mid'] = input.sesMessageId;
       sets.push('#mid = :mid');
     }
+    if (input.messageIdHeader !== undefined) {
+      names['#msgid'] = 'messageIdHeader';
+      values[':msgid'] = input.messageIdHeader;
+      sets.push('#msgid = :msgid');
+    }
     if (input.error !== undefined) {
       names['#error'] = 'error';
       values[':error'] = input.error;

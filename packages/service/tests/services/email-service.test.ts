@@ -217,6 +217,8 @@ function makeService(overrides: Partial<EmailServiceDeps> = {}): {
     tokensDao: tokens,
     downloadBaseUrl: DOWNLOAD_BASE_URL,
     emailDomain: 'example.com',
+    sesRegion: 'us-east-1',
+    canReadMailbox: true,
     buildMime: (input) => {
       mimeInputs.push(input);
       return Promise.resolve(Buffer.from('RAW-MIME'));
@@ -278,7 +280,13 @@ describe('EmailService.sendEmail', () => {
     expect(setup.objectStore.archivePuts[0].bytes).toBe(setup.ses.calls[0].raw);
     // The row was written 'sending' with rawS3Key + no SES id, then transitioned to 'sent'.
     expect(setup.emails.statusUpdates).toEqual([
-      { id: 'id-1', sentAt: NOW_ISO, status: 'sent', sesMessageId: 'ses-msg-1' },
+      {
+        id: 'id-1',
+        sentAt: NOW_ISO,
+        status: 'sent',
+        sesMessageId: 'ses-msg-1',
+        messageIdHeader: '<ses-msg-1@email.amazonses.com>',
+      },
     ]);
     // Final row state after the in-place status update.
     expect(setup.emails.records[0]).toMatchObject({
@@ -936,6 +944,57 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
     await expect(setup.service.sendEmail(request({ replyTo }))).rejects.toMatchObject({
       code: 'invalid_request',
     });
+  });
+
+  it('records the Message-ID SES gave the message when it is accepted', async () => {
+    const setup = makeService();
+
+    await setup.service.sendEmail(request());
+
+    expect(setup.emails.statusUpdates.at(-1)).toMatchObject({
+      status: 'sent',
+      sesMessageId: 'ses-msg-1',
+      messageIdHeader: '<ses-msg-1@email.amazonses.com>',
+    });
+  });
+
+  it("prefers a sent message's recorded Message-ID over deriving it", async () => {
+    const sent = {
+      direction: 'sent',
+      pk: 'SENT',
+      sk: SENT_SK,
+      id: 'sent-0',
+      from: 'me@example.com',
+      to: ['friend@other.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Hello',
+      sentAt: '2026-07-16T08:00:00.000Z',
+      sesMessageId: '0100abc-000000',
+      messageIdHeader: '<0100abc-000000@eu-west-1.amazonses.com>',
+      attachmentCount: 0,
+      sizeBytes: 10,
+      status: 'sent',
+    } as GetEmailOutput;
+    const setup = withParent(sent, { sesRegion: 'us-east-1' });
+
+    await setup.service.sendEmail(
+      request({ inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }),
+    );
+
+    expect(setup.mimeInputs[0].inReplyTo).toBe('<0100abc-000000@eu-west-1.amazonses.com>');
+  });
+
+  it('threads a reply to an Errors-folder message on its recorded Message-ID', async () => {
+    const failed = inboundParent({ pk: 'FAILED', failed: true } as Partial<GetEmailOutput>);
+    const setup = withParent(failed);
+
+    const result = await setup.service.sendEmail(
+      request({ inReplyTo: encodeEmailRef({ pk: 'FAILED', sk: INBOUND_SK }) }),
+    );
+
+    expect(result.threaded).toBe(true);
+    expect(setup.mimeInputs[0].inReplyTo).toBe('<parent@mail.other.com>');
   });
 
   it('records neither when not replying', async () => {

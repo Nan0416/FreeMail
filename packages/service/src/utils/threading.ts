@@ -3,17 +3,24 @@
  * a reply land in the same conversation in the recipient's mail client.
  *
  * The values come from two places. A received message's own `Message-ID` and `References` are
- * read at ingest — attacker-controlled, so they are kept only when each id is a well-formed
- * `<…>` token of printable ASCII (no whitespace, no CR/LF, no angle brackets inside) and they
- * are capped in length and count before they can ever reach an outgoing header. A message we
+ * read at ingest — attacker-controlled, so an id is kept only when it has RFC 5322's `msg-id`
+ * shape, `<id-left@id-right>` built from atext and dots (no whitespace, no CR/LF, no quotes,
+ * parentheses, or angle brackets), and the chain is capped in length and count before it can
+ * ever reach an outgoing header. A message we
  * sent has no stored `Message-ID` of ours: SES replaces whatever the composer wrote with
  * `<sesMessageId@email.amazonses.com>` (`<id@<region>.amazonses.com>` outside us-east-1), which
  * is what recipients — and their replies' `In-Reply-To` — see, so it is derived from the SES
  * message id.
  */
 
-/** One `msg-id`: `<`, 1–250 printable ASCII characters other than `<` and `>`, `>`. */
-const MESSAGE_ID_RE = /^<[!-;=?-~]{1,250}>$/;
+/** RFC 5322 `atext`, plus `.` (dot-atom). */
+const ATOM = "[A-Za-z0-9!#$%&'*+\\-/=?^_`{|}~.]";
+
+/**
+ * One `msg-id`: `<id-left@id-right>`, each side dot-atom text (id-right may also be a `[…]`
+ * literal), at most 250 characters between the brackets.
+ */
+const MESSAGE_ID_RE = new RegExp(`^<(?=.{3,250}>$)${ATOM}+@(?:${ATOM}+|\\[${ATOM}+\\])>$`);
 
 /**
  * Max ids kept in a `References` chain. A long thread keeps its first id (the root) and the
@@ -23,21 +30,23 @@ export const MAX_REFERENCES = 20;
 
 /** The id when `value` is one well-formed `msg-id`, else undefined. */
 export function sanitizeMessageId(value: unknown): string | undefined {
-  const candidate = Array.isArray(value) ? value[0] : value;
-  if (typeof candidate !== 'string') {
+  if (typeof value !== 'string') {
     return undefined;
   }
-  const trimmed = candidate.trim();
+  const trimmed = value.trim();
   return MESSAGE_ID_RE.test(trimmed) ? trimmed : undefined;
 }
 
 /**
  * The well-formed ids of a `References` header — as mailparser gives it (a string or a list of
  * strings, each possibly holding several ids) — in order, de-duplicated, trimmed to
- * {@link MAX_REFERENCES}. Malformed tokens are dropped, not repaired.
+ * {@link MAX_REFERENCES}. mailparser has already split the header on whitespace and wrapped
+ * each token in `<>`, so a token without the `id-left@id-right` shape (a comment, a stray
+ * word) is dropped here. Linear in the header's size, which the parser caps.
  */
 export function sanitizeReferences(value: unknown): string[] {
   const parts = Array.isArray(value) ? value : [value];
+  const seen = new Set<string>();
   const ids: string[] = [];
   for (const part of parts) {
     if (typeof part !== 'string') {
@@ -45,7 +54,8 @@ export function sanitizeReferences(value: unknown): string[] {
     }
     for (const token of part.split(/\s+/)) {
       const id = sanitizeMessageId(token);
-      if (id !== undefined && !ids.includes(id)) {
+      if (id !== undefined && !seen.has(id)) {
+        seen.add(id);
         ids.push(id);
       }
     }

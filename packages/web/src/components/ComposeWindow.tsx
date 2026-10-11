@@ -278,7 +278,9 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
         ...(recipients.to.length ? { to: recipients.to } : {}),
         ...(recipients.cc.length ? { cc: recipients.cc } : {}),
         ...(recipients.bcc.length ? { bcc: recipients.bcc } : {}),
-        ...(subject.trim() ? { subject } : {}),
+        // A reply always sends its subject, so one cleared on purpose is not refilled with
+        // "Re: …" by the server.
+        ...(subject.trim() || props.init.inReplyTo ? { subject } : {}),
         // Both parts: HTML for capable clients, plain text as the alternative.
         html: bodyHtml,
         text: bodyText,

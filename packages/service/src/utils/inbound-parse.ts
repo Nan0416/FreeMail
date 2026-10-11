@@ -26,7 +26,7 @@
  * S3 source stream) rejects, so the async invocation retries.
  */
 import type { Readable, Transform } from 'node:stream';
-import { MAX_READ_BODY_BYTES } from '@freemail/shared';
+import { MAX_READ_BODY_BYTES, MAX_REPLY_TO_ADDRESSES } from '@freemail/shared';
 import { Joiner, Splitter, type ErrorWithCode } from '@zone-eu/mailsplit';
 import { MailParser, type AddressObject } from 'mailparser';
 import type { InboundAttachmentDescriptor, InboundParseStatus } from '../data/emails-dao.js';
@@ -76,7 +76,7 @@ export interface ParsedInbound {
   readonly messageIdHeader?: string;
   /** The well-formed ids of `References`, capped — carried into a reply's own chain. */
   readonly references: readonly string[];
-  /** `Reply-To` addresses, sanitized + count-capped — where the sender wants replies. */
+  /** `Reply-To` addresses, sanitized, at most {@link MAX_REPLY_TO_ADDRESSES} — where the sender wants replies. */
   readonly replyTo: readonly string[];
   readonly verdicts: Verdicts;
   /**
@@ -308,7 +308,7 @@ export function parseInbound(
       references = sanitizeReferences(headers.get('references'));
       replyTo = normalizeAddressList(
         headers.get('reply-to') as AddressObject | AddressObject[] | undefined,
-      );
+      ).slice(0, MAX_REPLY_TO_ADDRESSES);
     });
 
     parser.on('data', (data) => {

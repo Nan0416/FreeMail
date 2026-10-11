@@ -60,6 +60,18 @@ function domainOf(address: string): string {
 }
 
 /**
+ * True when a received message asks for replies at a domain other than its sender's — the
+ * shape of a reply-redirect scam. Reply follows `Reply-To`, so the reader flags it.
+ */
+export function replyToElsewhere(email: EmailDetail): boolean {
+  if (email.direction !== 'inbound' || !email.replyTo) {
+    return false;
+  }
+  const senderDomain = domainOf(email.from);
+  return email.replyTo.some((address) => domainOf(address) !== senderDomain);
+}
+
+/**
  * Which of our addresses an inbound message reached, so the reply goes out from it.
  * Preference: a recipient on the same domain as the last address we sent from, then the
  * last sender itself, then the first recipient.

@@ -21,6 +21,7 @@ import {
   MAX_EMAIL_PAGE_SIZE,
   MAX_READ_BODY_BYTES,
   MAX_RECIPIENTS,
+  MAX_REPLY_TO_ADDRESSES,
   MAX_UPLOAD_BYTES,
   DEFAULT_EMAIL_PAGE_SIZE,
   UPLOAD_URL_TTL_SECONDS,
@@ -171,7 +172,10 @@ const emailDetailSchema = outputSchemaFor<EmailDetail>()(
     bcc: addressListSchema.optional().describe('Sent mail only.'),
     replyTo: addressListSchema
       .optional()
-      .describe('Reply-To addresses, if set. On received mail, where the sender wants replies.'),
+      .describe(
+        'Reply-To addresses, if set. On received mail, where the sender wants replies — set by ' +
+          'the sender and not verified.',
+      ),
     subject: z.string(),
     date: z.string().describe('Received or sent time, ISO-8601 UTC.'),
     status: sentStatusSchema.optional().describe('Sent mail only.'),
@@ -242,8 +246,10 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
               'If the original has no usable Message-ID (for example it arrived before FreeMail ' +
               'recorded them), the reply is still sent but unthreaded, and the result says ' +
               'threaded: false. ' +
-              'Recipients are not filled in: to reply to a received message, send to its ' +
-              'replyTo addresses if it has any, otherwise to its from address.',
+              'The id send_email returns works too, for a follow-up. Recipients are not filled ' +
+              'in: to reply to a received message, send to its replyTo addresses if it has any ' +
+              '(set by the sender and not verified, like from), otherwise to its from address; ' +
+              'to follow up on a sent message, send to its to addresses.',
           ]
         : []),
       '- replyTo: addresses that replies to this message should go to, if not from.',
@@ -288,9 +294,12 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
       html: z.string().optional().describe('HTML body. At least one of text or html is required.'),
       replyTo: z
         .array(z.string())
-        .max(10)
+        .max(MAX_REPLY_TO_ADDRESSES)
         .optional()
-        .describe('Reply-To addresses (bare), at most 10: where replies should go, if not from.'),
+        .describe(
+          `Reply-To addresses (bare), at most ${MAX_REPLY_TO_ADDRESSES}: where replies should go, ` +
+            'if not from.',
+        ),
       ...(inboundEnabled
         ? {
             inReplyTo: z

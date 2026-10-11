@@ -22,6 +22,7 @@ import {
   MAX_RAW_MESSAGE_BYTES,
   MAX_UPLOAD_BYTES,
   MAX_RECIPIENTS,
+  MAX_REPLY_TO_ADDRESSES,
   isSubdomainOrEqual,
   isValidEmailAddress,
   normalizeDomain,
@@ -75,12 +76,13 @@ export interface EmailServiceDeps {
   /** The domain every `from` must be under (the configured send domain). */
   readonly emailDomain: string;
   /** The region SES sends from — it names the host of the Message-ID SES gives a sent message. */
-  readonly sesRegion?: string;
+  readonly sesRegion: string;
   /**
    * Whether this service may read the mailbox to look up the message a reply answers. False on
-   * an MCP server without inbound, whose role has no read grant on the emails table.
+   * an MCP server without inbound, whose role has no read grant on the emails table. Required,
+   * so a new caller decides rather than inheriting a grant it may not have.
    */
-  readonly canReadMailbox?: boolean;
+  readonly canReadMailbox: boolean;
   /** MIME builder; injectable so service tests don't depend on the MIME library. */
   readonly buildMime?: (input: RawMimeInput) => Promise<Buffer>;
   /** Clock, injectable for tests. */
@@ -130,8 +132,8 @@ export class EmailService {
     this.embedTotalBytes = deps.embedTotalBytes ?? DEFAULT_EMBED_TOTAL_BYTES;
     this.downloadBaseUrl = deps.downloadBaseUrl;
     this.emailDomain = normalizeDomain(deps.emailDomain);
-    this.sesRegion = deps.sesRegion ?? 'us-east-1';
-    this.canReadMailbox = deps.canReadMailbox ?? true;
+    this.sesRegion = deps.sesRegion;
+    this.canReadMailbox = deps.canReadMailbox;
     this.buildMime = deps.buildMime ?? buildRawMime;
     this.now = deps.now ?? (() => new Date());
     this.generateId = deps.generateId ?? (() => crypto.randomUUID());
@@ -158,8 +160,10 @@ export class EmailService {
       }
     }
     const replyTo = normalizeRecipients(request.replyTo);
-    if (replyTo.length > MAX_REPLY_TO) {
-      throw emailErrors.invalidRequest(`"replyTo" may list at most ${MAX_REPLY_TO} addresses.`);
+    if (replyTo.length > MAX_REPLY_TO_ADDRESSES) {
+      throw emailErrors.invalidRequest(
+        `"replyTo" may list at most ${MAX_REPLY_TO_ADDRESSES} addresses.`,
+      );
     }
     for (const address of replyTo) {
       if (!isValidEmailAddress(address)) {
@@ -298,7 +302,15 @@ export class EmailService {
 
     // Delivered: mark sent (+ the SES id). Best-effort — the mail is already out, so this must
     // not fail the response; a lost update leaves the row at 'sending' (self-describing).
-    await this.recordTerminalStatus({ id, sentAt, status: 'sent', sesMessageId: messageId });
+    // Record the Message-ID SES gave it too, so a later reply threads on exactly what the
+    // recipients saw even if this deployment's region changes.
+    await this.recordTerminalStatus({
+      id,
+      sentAt,
+      status: 'sent',
+      sesMessageId: messageId,
+      messageIdHeader: sesMessageIdHeader(messageId, this.sesRegion),
+    });
 
     // The same opaque id the list and read surfaces use, so a caller can open what it just sent.
     return {
@@ -424,12 +436,13 @@ export class EmailService {
     if (row === null) {
       throw emailErrors.invalidRequest('"inReplyTo" names no message in the mailbox.');
     }
+    // Received mail: its own header. Sent mail: the id recorded when SES accepted it, or — on a
+    // row from before that was recorded — derived from the SES id the same way.
     const messageId =
-      row.direction === 'inbound'
-        ? row.messageIdHeader
-        : row.sesMessageId !== undefined
-          ? sesMessageIdHeader(row.sesMessageId, this.sesRegion)
-          : undefined;
+      row.messageIdHeader ??
+      (row.direction === 'sent' && row.sesMessageId !== undefined
+        ? sesMessageIdHeader(row.sesMessageId, this.sesRegion)
+        : undefined);
     if (messageId === undefined) {
       return { subject: row.subject };
     }
@@ -519,9 +532,6 @@ interface ReplyThread {
     readonly references: readonly string[];
   };
 }
-
-/** Max `Reply-To` addresses on one message. */
-const MAX_REPLY_TO = 10;
 
 /** How many uploads a send HEADs, copies, or reads at once. */
 const S3_CONCURRENCY = 5;

@@ -94,6 +94,9 @@ export const UPLOAD_URL_TTL_SECONDS = 15 * 60;
 /** Max number of attachments on one message. */
 export const MAX_ATTACHMENTS = 20;
 
+/** Max `Reply-To` addresses on a sent message, and kept from a received one. */
+export const MAX_REPLY_TO_ADDRESSES = 10;
+
 /** Max recipients across to + cc + bcc — SES's per-message destination limit. */
 export const MAX_RECIPIENTS = 50;
 

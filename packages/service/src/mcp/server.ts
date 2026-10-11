@@ -126,7 +126,7 @@ export async function handleSendEmail(
             `Sent email ${result.id} (SES message ${result.messageId}) at ${result.sentAt}.` +
             (result.threaded === false
               ? ' It is NOT threaded: the original has no usable Message-ID, so it starts a new ' +
-                'conversation with the same subject.'
+                'conversation.'
               : ''),
         },
       ],
@@ -257,6 +257,9 @@ function renderDetailText(email: EmailDetail, nonce: () => string): string {
     if (email.cc.length) {
       lines.push(`Cc: ${email.cc.join(', ')}`);
     }
+    if (email.replyTo?.length) {
+      lines.push(`Reply-To: ${email.replyTo.join(', ')}`);
+    }
     lines.push(`Subject: ${email.subject || '(no subject)'}`, `Date: ${email.date}`, '');
     if (email.text !== undefined) {
       lines.push(email.text);
@@ -284,6 +287,9 @@ function inboundDetailInner(email: EmailDetail): string {
   lines.push(`To: ${email.to.join(', ') || '(none)'}`);
   if (email.cc.length) {
     lines.push(`Cc: ${email.cc.join(', ')}`);
+  }
+  if (email.replyTo?.length) {
+    lines.push(`Reply-To: ${email.replyTo.join(', ')}`);
   }
   lines.push(`Subject: ${email.subject || '(no subject)'}`, `Date: ${email.date}`, '');
   if (email.text !== undefined) {

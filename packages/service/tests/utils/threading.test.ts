@@ -13,8 +13,8 @@ describe('sanitizeMessageId', () => {
     expect(sanitizeMessageId('  <CAH+x=y@mail.gmail.com> ')).toBe('<CAH+x=y@mail.gmail.com>');
   });
 
-  it('takes the first of a repeated header', () => {
-    expect(sanitizeMessageId(['<a@x>', '<b@x>'])).toBe('<a@x>');
+  it('keeps a domain-literal right side', () => {
+    expect(sanitizeMessageId('<abc@[192.0.2.1]>')).toBe('<abc@[192.0.2.1]>');
   });
 
   it.each([
@@ -22,6 +22,12 @@ describe('sanitizeMessageId', () => {
     ['whitespace inside', '<a b@x>'],
     ['header injection', '<a@x>\r\nBcc: victim@evil.test'],
     ['an angle bracket inside', '<a<b@x>'],
+    ['no @ (a token mailparser wrapped)', '<has>'],
+    ['a comment', '<(comment)>'],
+    ['a header-like token', '<Bcc:>'],
+    ['a quote', '<"a"@x>'],
+    ['two @', '<a@b@x>'],
+    ['a list value', ['<a@x>']],
     ['empty', '<>'],
     ['non-ASCII', '<café@x>'],
     ['too long', `<${'a'.repeat(251)}>`],
@@ -51,6 +57,19 @@ describe('sanitizeReferences', () => {
     expect(kept[0]).toBe('<m0@x>');
     expect(kept.at(-1)).toBe('<m29@x>');
     expect(kept[1]).toBe(`<m${30 - (MAX_REFERENCES - 1)}@x>`);
+  });
+
+  it('drops the junk tokens mailparser makes of a malformed header', () => {
+    // mailparser splits on whitespace and wraps each token: "<has space@x> (c)" arrives as these.
+    expect(sanitizeReferences(['<has>', '<space@x>', '<(c)>'])).toEqual(['<space@x>']);
+  });
+
+  it('stays fast on a hostile, header-sized References (linear, not quadratic)', () => {
+    const ids = Array.from({ length: 44_000 }, (_v, i) => `<m${i}@x>`).join(' ');
+    const started = performance.now();
+    const kept = sanitizeReferences(ids);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(kept).toHaveLength(MAX_REFERENCES);
   });
 
   it('returns nothing for an absent header', () => {
