@@ -68,7 +68,12 @@ export function replyToElsewhere(email: EmailDetail): boolean {
     return false;
   }
   const senderDomain = domainOf(email.from);
-  return email.replyTo.some((address) => domainOf(address) !== senderDomain);
+  return email.replyTo.some((address) => !relatedDomains(domainOf(address), senderDomain));
+}
+
+/** Equal, or one a subdomain of the other (`mail.example.com` and `example.com`). */
+function relatedDomains(a: string, b: string): boolean {
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
 }
 
 /**

@@ -114,6 +114,12 @@ describe('replyToElsewhere', () => {
 
   it("does not flag a Reply-To on the sender's own domain, or none", () => {
     expect(replyToElsewhere({ ...INBOUND, replyTo: ['desk@X.com'] })).toBe(false);
+    expect(replyToElsewhere({ ...INBOUND, replyTo: ['desk@help.x.com'] })).toBe(false);
+    expect(replyToElsewhere({ ...INBOUND, from: 'a@mail.x.com', replyTo: ['desk@x.com'] })).toBe(
+      false,
+    );
+    // A look-alike suffix is not a subdomain.
+    expect(replyToElsewhere({ ...INBOUND, replyTo: ['desk@evilx.com'] })).toBe(true);
     expect(replyToElsewhere(INBOUND)).toBe(false);
   });
 

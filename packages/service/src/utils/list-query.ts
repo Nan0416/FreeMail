@@ -2,9 +2,14 @@
  * The single source of truth for validating `list emails` arguments — the `direction`
  * filter, the `limit` (defaulted + clamped to the shared page-size bounds), and the
  * opaque `cursor`. Both the REST `GET /emails` route and #13's `list_emails` MCP tool
- * call this, so their defaulting/clamping/validation can never drift: a bad value throws
- * the same {@link emailErrors.invalidRequest} `EmailError` (REST maps it to 400, the MCP
- * tool to an `isError` tool-result).
+ * call this, so their defaulting can never drift: a bad value throws the same
+ * {@link emailErrors.invalidRequest} `EmailError` (REST maps it to 400, the MCP tool to an
+ * `isError` tool-result).
+ *
+ * The MCP tool's input schema is stricter in front of this: it advertises `direction` as an
+ * enum and `limit` as an integer from 1 to {@link MAX_EMAIL_PAGE_SIZE}, so an agent sees the
+ * bounds up front, and the SDK rejects a value outside them (`limit: 150`, `direction: ''`)
+ * before this runs, where REST clamps or ignores it.
  */
 import {
   DEFAULT_EMAIL_PAGE_SIZE,
