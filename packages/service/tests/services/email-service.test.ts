@@ -1125,6 +1125,8 @@ describe('EmailService.sendEmail — forwarding stored attachments', () => {
       'report.pdf',
     ]);
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['big.zip']);
+    // The forwarded PDF (third, index 2) is embedded from its new copy, like the first test's.
+    expect(setup.uploads.reads).toEqual(expect.arrayContaining(['attachments/sent/id-1/2']));
   });
 
   it.each([
