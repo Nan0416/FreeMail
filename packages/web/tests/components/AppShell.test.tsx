@@ -294,6 +294,133 @@ describe('AppShell — compose', () => {
   });
 });
 
+describe('AppShell — drafts', () => {
+  function seedDrafts(subjects: readonly string[], html = '<p>hi</p>'): void {
+    const drafts = subjects.map((subject, i) => ({
+      id: `d${i + 1}`,
+      from: 'me@x.com',
+      to: 'a@y.com',
+      cc: '',
+      bcc: '',
+      subject,
+      html,
+      updatedAt: '2026-10-10T00:00:00.000Z',
+    }));
+    window.localStorage.setItem('freemail.drafts.v1', JSON.stringify(drafts));
+  }
+
+  function storedSubjects(): string[] {
+    return JSON.parse(window.localStorage.getItem('freemail.drafts.v1') ?? '[]').map(
+      (draft: { subject: string }) => draft.subject,
+    );
+  }
+
+  async function openDraft(subject: string): Promise<HTMLElement> {
+    fireEvent.click(screen.getByRole('button', { name: /Drafts/ }));
+    const drafts = await screen.findByRole('list', { name: 'Drafts' });
+    fireEvent.click(within(drafts).getByText(subject));
+    return screen.findByRole('dialog', { name: subject });
+  }
+
+  function discardFromList(subject: string): void {
+    const row = within(screen.getByRole('list', { name: 'Drafts' }))
+      .getByText(subject)
+      .closest('li');
+    fireEvent.click(within(row!).getByRole('button', { name: 'Discard draft' }));
+  }
+
+  it('discarding the open draft from the list closes its window, and it stays discarded', async () => {
+    seedDrafts(['Plans']);
+    renderWithApp(<AppShell inboundEnabled />, mockApi([[]]));
+    const dialog = await openDraft('Plans');
+    fireEvent.change(within(dialog).getByLabelText('Subject'), { target: { value: 'Plans v2' } });
+
+    discardFromList('Plans');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(screen.getByText('No drafts.')).toBeInTheDocument();
+    expect(storedSubjects()).toEqual([]);
+    // Undo brings back the window's latest edit, not the older copy the list showed.
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+    expect(storedSubjects()).toEqual(['Plans v2']);
+    expect(
+      within(screen.getByRole('list', { name: 'Drafts' })).getByText('Plans v2'),
+    ).toBeInTheDocument();
+  });
+
+  it('discards a new message that auto-saved into Drafts while still open', async () => {
+    renderWithApp(<AppShell inboundEnabled />, mockApi([[]]));
+    fireEvent.keyDown(window, { key: 'c' });
+    const dialog = await screen.findByRole('dialog', { name: 'New message' });
+    fireEvent.change(within(dialog).getByLabelText('Subject'), { target: { value: 'Fresh' } });
+    await waitFor(() => expect(storedSubjects()).toEqual(['Fresh']), { timeout: 2000 });
+
+    fireEvent.click(screen.getByRole('button', { name: /Drafts/ }));
+    await screen.findByRole('list', { name: 'Drafts' });
+    discardFromList('Fresh');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(storedSubjects()).toEqual([]);
+  });
+
+  it('keeps Undo for an open draft whose fields were all cleared', async () => {
+    seedDrafts(['Plans'], '');
+    renderWithApp(<AppShell inboundEnabled />, mockApi([[]]));
+    const dialog = await openDraft('Plans');
+    fireEvent.change(within(dialog).getByLabelText('To'), { target: { value: '' } });
+    fireEvent.change(within(dialog).getByLabelText('Subject'), { target: { value: '' } });
+
+    discardFromList('Plans');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(storedSubjects()).toEqual([]);
+    // The window holds nothing, so Undo restores the copy the list showed.
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+    expect(storedSubjects()).toEqual(['Plans']);
+  });
+
+  it('refuses to discard the open draft while it is sending', async () => {
+    seedDrafts(['Plans']);
+    const listApi = mockApi([[]]);
+    let release: () => void = () => {};
+    const fetchMock = vi.fn<typeof fetch>(async (url, init) => {
+      if (pathOf(url) === '/emails' && init?.method === 'POST') {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return json(200, { id: 'm1', messageId: 'ses-1', sentAt: '2026-10-10T00:00:00.000Z' });
+      }
+      return listApi(url, init);
+    });
+    renderWithApp(<AppShell inboundEnabled />, fetchMock);
+    const dialog = await openDraft('Plans');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(callsTo(fetchMock, '/emails', 'POST')).toHaveLength(1));
+
+    discardFromList('Plans');
+
+    expect(await screen.findByText('This message is being sent')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Plans' })).toBeInTheDocument();
+    expect(storedSubjects()).toEqual(['Plans']);
+    release();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(storedSubjects()).toEqual([]);
+  });
+
+  it('discarding another draft leaves the open window alone', async () => {
+    seedDrafts(['Plans', 'Old']);
+    renderWithApp(<AppShell inboundEnabled />, mockApi([[]]));
+    await openDraft('Plans');
+
+    discardFromList('Old');
+
+    expect(screen.getByRole('dialog', { name: 'Plans' })).toBeInTheDocument();
+    expect(storedSubjects()).toEqual(['Plans']);
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+    expect(storedSubjects()).toEqual(['Old', 'Plans']);
+  });
+});
+
 it('opens the MCP server page from the sidebar', async () => {
   const fetchMock = vi.fn<typeof fetch>(async (url) => {
     const path = pathOf(url);

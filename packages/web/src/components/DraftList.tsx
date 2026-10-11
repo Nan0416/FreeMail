@@ -1,12 +1,12 @@
 import { FileText, Menu, Trash2 } from 'lucide-react';
-import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import { deleteDraft, saveDraft, type Draft } from '../lib/drafts.js';
+import type { Draft } from '../lib/drafts.js';
 import { formatListDate } from '../lib/format.js';
 
 export interface DraftListProps {
   readonly drafts: readonly Draft[];
   readonly onOpen: (draft: Draft) => void;
+  readonly onDiscard: (draft: Draft) => void;
   readonly onOpenNav: () => void;
 }
 
@@ -80,12 +80,7 @@ export function DraftList(props: DraftListProps): React.JSX.Element {
                     size="icon-sm"
                     aria-label="Discard draft"
                     className="absolute top-1/2 right-2 size-7 -translate-y-1/2 text-muted-foreground opacity-0 group-focus-within:opacity-100 group-hover:opacity-100"
-                    onClick={() => {
-                      deleteDraft(draft.id);
-                      toast('Draft discarded', {
-                        action: { label: 'Undo', onClick: () => saveDraft(draft) },
-                      });
-                    }}
+                    onClick={() => props.onDiscard(draft)}
                   >
                     <Trash2 className="size-4" />
                   </Button>

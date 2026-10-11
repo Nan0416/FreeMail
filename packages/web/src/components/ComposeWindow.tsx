@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Placeholder } from '@tiptap/extensions';
@@ -15,7 +15,14 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ApiError } from '../api/client.js';
 import { useAuth } from '../auth/auth-context.js';
 import { forEachConcurrently } from '../lib/concurrency.js';
-import { deleteDraft, newDraftId, saveDraft, setLastSender, type Draft } from '../lib/drafts.js';
+import {
+  deleteDraft,
+  getDraft,
+  newDraftId,
+  saveDraft,
+  setLastSender,
+  type Draft,
+} from '../lib/drafts.js';
 import { formatBytes } from '../lib/format.js';
 import { parseRecipients } from '../lib/people.js';
 import type { ForwardedAttachment } from '../lib/reply.js';
@@ -44,6 +51,15 @@ export interface ComposeWindowProps {
   readonly onClose: () => void;
   /** Reports how many files are attached, which a saved draft cannot keep. */
   readonly onAttachmentCountChange?: (count: number) => void;
+  readonly ref?: React.Ref<ComposeHandle>;
+}
+
+/** What the app can do to the open window from outside it. */
+export interface ComposeHandle {
+  /** The browser draft this window saves to. */
+  readonly draftId: string;
+  /** Discard the draft and close, exactly as the window's own Discard does. */
+  discard(): void;
 }
 
 type WindowMode = 'normal' | 'minimized' | 'maximized';
@@ -68,7 +84,8 @@ interface FinishedUpload {
 /**
  * A docked compose window: bottom-right on desktop, full-screen on phones, and a large
  * centred sheet when maximized. Edits auto-save to a browser-local draft (see
- * `lib/drafts.ts`); closing keeps the draft, discarding deletes it (with undo).
+ * `lib/drafts.ts`); closing keeps the draft, discarding deletes it (with undo). Files attach
+ * from the picker or by dropping them on the window.
  */
 export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   const auth = useAuth();
@@ -87,6 +104,8 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     props.init.forwardAttachments ?? [],
   );
   const [mode, setMode] = useState<WindowMode>('normal');
+  /** Files are being dragged over the page. */
+  const [dropping, setDropping] = useState(false);
   const [showToolbar, setShowToolbar] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -109,6 +128,11 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
       Placeholder.configure({ placeholder: 'Write your message…' }),
     ],
     content: props.init.html ?? '',
+    editorProps: {
+      // A file dropped on the body is attached by the window, never inserted: a drag can carry
+      // a link or HTML for the file as well.
+      handleDrop: (_view, event) => event.dataTransfer !== null && carriesFiles(event.dataTransfer),
+    },
     onCreate: (event) => setText(event.editor.getText()),
     onUpdate: (event) => {
       setHtml(event.editor.getHTML());
@@ -146,6 +170,9 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
       return;
     }
     const timer = window.setTimeout(() => {
+      if (finished.current) {
+        return;
+      }
       saveDraft(latest.current());
       setSavedAt(new Date());
     }, AUTOSAVE_MS);
@@ -165,6 +192,66 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     },
     [],
   );
+
+  // While a message is open, files dragged anywhere over the page show the drop target, and
+  // a file dropped anywhere but the window is refused: it would open in the tab, replacing
+  // the app and losing what is attached. A drag enters and leaves every element it crosses,
+  // so it has left the page once each element entered has been left (Safari gives no
+  // `relatedTarget` to tell). Meanwhile `data-file-drag` lets the drag pass through iframes
+  // (a message being read, see index.css), whose drag events never reach this window. Should
+  // a leave go missing, the next click (no pointer events fire mid-drag) clears it all.
+  useEffect(() => {
+    const root = document.documentElement;
+    let entered: EventTarget[] = [];
+    function setDragging(dragging: boolean): void {
+      root.toggleAttribute('data-file-drag', dragging);
+      setDropping(dragging);
+    }
+    function refuse(event: DragEvent): void {
+      const data = event.dataTransfer;
+      if (data && !event.defaultPrevented && carriesFiles(data)) {
+        event.preventDefault();
+        data.dropEffect = 'none';
+      }
+    }
+    function onDragEnter(event: DragEvent): void {
+      if (event.target && event.dataTransfer && carriesFiles(event.dataTransfer)) {
+        entered = [...entered, event.target];
+        setDragging(true);
+      }
+    }
+    function onDragLeave(event: DragEvent): void {
+      entered = entered.filter(
+        (target) => target !== event.target && target instanceof Node && target.isConnected,
+      );
+      if (entered.length === 0) {
+        setDragging(false);
+      }
+    }
+    function reset(): void {
+      entered = [];
+      setDragging(false);
+    }
+    function onDrop(event: DragEvent): void {
+      refuse(event);
+      reset();
+    }
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('dragover', refuse);
+    window.addEventListener('drop', onDrop);
+    window.addEventListener('dragend', reset);
+    window.addEventListener('pointerdown', reset, true);
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('dragover', refuse);
+      window.removeEventListener('drop', onDrop);
+      window.removeEventListener('dragend', reset);
+      window.removeEventListener('pointerdown', reset, true);
+      root.removeAttribute('data-file-drag');
+    };
+  }, []);
 
   // Focus the first field that needs input, once the editor exists. `init` is fixed for
   // the life of the window, so this runs on open only.
@@ -186,14 +273,36 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   }
 
   function discard(): void {
-    const kept = snapshot();
+    // Too late once sending: the send goes ahead, and deletes the draft itself.
+    if (sending.current) {
+      toast('This message is being sent', { description: 'It can’t be discarded now.' });
+      return;
+    }
+    // An emptied window has nothing to keep, but the copy in Drafts is still worth an Undo.
+    const kept = hasContent ? snapshot() : getDraft(draftId.current);
     finished.current = true;
     deleteDraft(draftId.current);
     props.onClose();
-    if (hasContent) {
+    if (kept) {
       toast('Draft discarded', {
+        ...(files.length > 0 ? { description: 'Undo won’t bring back its attached files.' } : {}),
         action: { label: 'Undo', onClick: () => saveDraft(kept) },
       });
+    }
+  }
+
+  useImperativeHandle(props.ref, () => ({ draftId: draftId.current, discard }));
+
+  function attachDropped(data: DataTransfer): void {
+    const dropped = droppedFiles(data);
+    setFiles((prev) => [...prev, ...dropped.files]);
+    if (dropped.folders > 0) {
+      toast('Folders can’t be attached', {
+        description: `Attach the files inside, or zip ${dropped.folders === 1 ? 'it' : 'them'} first.`,
+      });
+    } else if (dropped.files.length === 0) {
+      // An app (Photos, say) can drag a file the browser is never given to read.
+      toast('Nothing to attach', { description: 'Save it as a file first, then drop that.' });
     }
   }
 
@@ -368,6 +477,26 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
           } else if (e.key === 'Escape' && !e.defaultPrevented) {
             e.preventDefault();
             setMode(maximized ? 'normal' : 'minimized');
+          }
+        }}
+        // The drop zone; the page-wide drag tracking is in the effect above.
+        onDragEnter={(e) => {
+          if (carriesFiles(e.dataTransfer)) {
+            e.preventDefault();
+          }
+        }}
+        onDragOver={(e) => {
+          if (carriesFiles(e.dataTransfer)) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = busy ? 'none' : 'copy';
+          }
+        }}
+        onDrop={(e) => {
+          if (carriesFiles(e.dataTransfer)) {
+            e.preventDefault();
+            if (!busy) {
+              attachDropped(e.dataTransfer);
+            }
           }
         }}
         className={cn(
@@ -595,14 +724,53 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
             ) : (
               savedAt && <span className="truncate text-xs text-muted-foreground">Draft saved</span>
             )}
-            <WindowButton label="Discard draft" onClick={discard}>
+            <WindowButton label="Discard draft" onClick={discard} disabled={busy}>
               <Trash2 />
             </WindowButton>
           </div>
         </footer>
+
+        {dropping && !busy && (
+          // Takes the drag off the fields and the editor, which would otherwise show a caret
+          // where text would drop. Its content ignores the pointer, so the drag stays on it.
+          <div className="absolute inset-0 z-10 bg-background/90 p-2 animate-in fade-in-0 duration-100">
+            <div className="pointer-events-none flex h-full flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-primary/40 text-[13px] font-medium">
+              <Paperclip className="size-5 text-muted-foreground" />
+              Drop files to attach
+            </div>
+          </div>
+        )}
       </section>
     </>
   );
+}
+
+/** Whether a drag carries files, rather than text or a link. */
+function carriesFiles(data: DataTransfer): boolean {
+  return Array.from(data.types).includes('Files');
+}
+
+/**
+ * The files in a drop, and how many folders were left out: a folder arrives as a `File`
+ * that cannot be read, so it would only fail at upload.
+ */
+function droppedFiles(data: DataTransfer): { files: File[]; folders: number } {
+  const files: File[] = [];
+  let folders = 0;
+  for (const item of Array.from(data.items)) {
+    if (item.kind !== 'file') {
+      continue;
+    }
+    if (item.webkitGetAsEntry()?.isDirectory) {
+      folders += 1;
+      continue;
+    }
+    const file = item.getAsFile();
+    if (file) {
+      files.push(file);
+    }
+  }
+  return { files, folders };
 }
 
 /** Whole percent, rounded down so 100% means done. */

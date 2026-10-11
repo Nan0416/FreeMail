@@ -75,6 +75,10 @@ export function saveDraft(draft: Draft): void {
   write([draft, ...read().filter((d) => d.id !== draft.id)]);
 }
 
+export function getDraft(id: string): Draft | undefined {
+  return read().find((d) => d.id === id);
+}
+
 export function deleteDraft(id: string): void {
   write(read().filter((d) => d.id !== id));
 }

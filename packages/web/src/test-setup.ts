@@ -1,4 +1,12 @@
 import '@testing-library/jest-dom/vitest';
+import { toast } from 'sonner';
+import { afterEach } from 'vitest';
+
+// Toasts live in a module-level store that a newly mounted Toaster replays, so one left
+// on screen by a test would show up — Undo button and all — in the next.
+afterEach(() => {
+  toast.dismiss();
+});
 
 // jsdom gaps that Radix (menus, dialogs, tooltips) and ProseMirror (the compose editor)
 // touch. Inert stand-ins: tests assert behaviour, never layout.

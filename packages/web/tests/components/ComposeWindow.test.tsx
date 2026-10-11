@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UploadTransport } from '../../src/api/client.js';
 import { ComposeWindow, type ComposeInit } from '../../src/components/ComposeWindow.js';
@@ -15,8 +15,8 @@ function api() {
 }
 
 function renderCompose(init: ComposeInit, fetchImpl = api(), onClose = vi.fn()) {
-  renderWithApp(<ComposeWindow init={init} onClose={onClose} />, fetchImpl);
-  return { fetchImpl, onClose };
+  const view = renderWithApp(<ComposeWindow init={init} onClose={onClose} />, fetchImpl);
+  return { fetchImpl, onClose, unmount: view.unmount };
 }
 
 function storedDrafts(): { id: string; subject: string }[] {
@@ -439,6 +439,180 @@ describe('ComposeWindow — attachments', () => {
   });
 });
 
+describe('ComposeWindow — dropping files', () => {
+  const TARGET = 'Drop files to attach';
+
+  /** A dragged item as the browser hands it over; `jsdom` has no `DataTransfer`. */
+  function item(file: File | null, isDirectory = false) {
+    return { kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => ({ isDirectory }) };
+  }
+
+  /** A file drag; `dropEffect` starts as a browser's does, for a drop from the desktop. */
+  function filesDrag(...items: ReturnType<typeof item>[]) {
+    return { types: ['Files'], items, dropEffect: 'copy' };
+  }
+
+  function notes(): File {
+    return new File(['hello'], 'notes.txt', { type: 'text/plain' });
+  }
+
+  function attachments(): string[] {
+    const list = screen.queryByRole('list', { name: 'Attachments' });
+    return list
+      ? within(list)
+          .getAllByRole('listitem')
+          .map((li) => li.textContent ?? '')
+      : [];
+  }
+
+  /** Drag in from outside the page, then drop on the compose window (its drop zone). */
+  function dropOnWindow(drag: object): void {
+    fireEvent.dragEnter(document.body, { dataTransfer: drag });
+    fireEvent.dragOver(screen.getByRole('dialog'), { dataTransfer: drag });
+    fireEvent.drop(screen.getByRole('dialog'), { dataTransfer: drag });
+  }
+
+  it('shows the drop target while files are dragged over the page, until the drag leaves', () => {
+    renderCompose({ from: 'me@x.com' });
+    const drag = filesDrag(item(notes()));
+    const subject = screen.getByLabelText('Subject');
+
+    fireEvent.dragEnter(document.body, { dataTransfer: drag });
+    expect(screen.getByText(TARGET)).toBeInTheDocument();
+    // Iframes (a message being read) let the drag through while it lasts.
+    expect(document.documentElement).toHaveAttribute('data-file-drag');
+    // Crossing into the window enters it before leaving the page body.
+    fireEvent.dragEnter(subject, { dataTransfer: drag });
+    fireEvent.dragLeave(document.body, { dataTransfer: drag });
+    expect(screen.getByText(TARGET)).toBeInTheDocument();
+    // Leaving the page (or Escape) leaves the last element entered.
+    fireEvent.dragLeave(subject, { dataTransfer: drag });
+    expect(screen.queryByText(TARGET)).not.toBeInTheDocument();
+    expect(document.documentElement).not.toHaveAttribute('data-file-drag');
+  });
+
+  it('attaches files dropped on the window', () => {
+    renderCompose({ from: 'me@x.com' });
+    const drag = filesDrag(
+      item(notes()),
+      item(new File(['jpeg'], 'photo.jpg', { type: 'image/jpeg' })),
+    );
+
+    fireEvent.dragEnter(document.body, { dataTransfer: drag });
+    drag.dropEffect = 'none';
+    fireEvent.dragOver(screen.getByRole('dialog'), { dataTransfer: drag });
+    expect(drag.dropEffect).toBe('copy');
+    fireEvent.drop(screen.getByRole('dialog'), { dataTransfer: drag });
+
+    expect(screen.queryByText(TARGET)).not.toBeInTheDocument();
+    expect(attachments()).toEqual([
+      expect.stringContaining('notes.txt'),
+      expect.stringContaining('photo.jpg'),
+    ]);
+  });
+
+  it('leaves out a dropped folder, and says why', async () => {
+    renderCompose({ from: 'me@x.com' });
+    dropOnWindow(filesDrag(item(new File([''], 'Photos'), true), item(notes())));
+    expect(attachments()).toEqual([expect.stringContaining('notes.txt')]);
+    expect(await screen.findByText('Folders can’t be attached')).toBeInTheDocument();
+  });
+
+  it('says so when a drop holds no file it can read', async () => {
+    // An app can drag a file it never hands the browser.
+    renderCompose({ from: 'me@x.com' });
+    dropOnWindow(filesDrag(item(null)));
+    expect(attachments()).toEqual([]);
+    expect(await screen.findByText('Nothing to attach')).toBeInTheDocument();
+  });
+
+  it('attaches a file dropped on the body without inserting its link there', () => {
+    renderCompose({ from: 'me@x.com', html: '<p>Hello</p>' });
+    const paragraph = document.querySelector('.ProseMirror p')!;
+    // A file dragged from a web page carries its address as text too.
+    const drag = {
+      ...filesDrag(item(new File(['png'], 'cat.png', { type: 'image/png' }))),
+      types: ['Files', 'text/uri-list', 'text/plain'],
+      getData: (type: string) => (type === 'text/html' ? '' : 'https://example.com/cat.png'),
+    };
+    // jsdom has no layout: say what is under the pointer, so the editor handles the drop.
+    const under = vi.spyOn(document, 'elementFromPoint').mockReturnValue(paragraph);
+    try {
+      fireEvent.drop(paragraph, { dataTransfer: drag });
+    } finally {
+      under.mockRestore();
+    }
+    expect(document.querySelector('.ProseMirror')).toHaveTextContent('Hello');
+    expect(document.querySelector('.ProseMirror')).not.toHaveTextContent('example.com');
+    expect(attachments()).toEqual([expect.stringContaining('cat.png')]);
+  });
+
+  it('clears a drag whose leave went missing at the next click', () => {
+    renderCompose({ from: 'me@x.com' });
+    fireEvent.dragEnter(document.body, { dataTransfer: filesDrag() });
+    expect(screen.getByText(TARGET)).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByText(TARGET));
+    expect(screen.queryByText(TARGET)).not.toBeInTheDocument();
+    expect(document.documentElement).not.toHaveAttribute('data-file-drag');
+  });
+
+  it('lets iframes take the pointer again if the window closes mid-drag', () => {
+    const view = renderCompose({ from: 'me@x.com' });
+    fireEvent.dragEnter(document.body, { dataTransfer: filesDrag() });
+    expect(document.documentElement).toHaveAttribute('data-file-drag');
+    view.unmount();
+    expect(document.documentElement).not.toHaveAttribute('data-file-drag');
+  });
+
+  it('never shows the drop target for dragged text', () => {
+    renderCompose({ from: 'me@x.com' });
+    fireEvent.dragEnter(screen.getByLabelText('Subject'), {
+      dataTransfer: { types: ['text/plain'], items: [] },
+    });
+    expect(screen.queryByText(TARGET)).not.toBeInTheDocument();
+  });
+
+  it('refuses a file dropped beside the window, which would open in the tab', () => {
+    renderCompose({ from: 'me@x.com' });
+    const drag = filesDrag(item(notes()));
+
+    // `fireEvent` returns false when the event's default was prevented.
+    expect(fireEvent.dragOver(document.body, { dataTransfer: drag })).toBe(false);
+    expect(drag.dropEffect).toBe('none');
+    expect(fireEvent.drop(document.body, { dataTransfer: drag })).toBe(false);
+    expect(attachments()).toEqual([]);
+  });
+
+  it('refuses files, and discarding, while the message is sending', async () => {
+    let release: () => void = () => {};
+    const fetchImpl = vi.fn<typeof fetch>(async (url) => {
+      if (pathOf(url) === '/me') {
+        return json(200, { subject: 'owner' });
+      }
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return json(200, { id: 'm1', messageId: 'ses-1', sentAt: '2026-07-17T00:00:00.000Z' });
+    });
+    const compose = renderCompose({ from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' }, fetchImpl);
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(callsTo(fetchImpl, '/emails', 'POST')).toHaveLength(1));
+
+    const drag = filesDrag(item(notes()));
+    fireEvent.dragEnter(document.body, { dataTransfer: drag });
+    expect(screen.queryByText(TARGET)).not.toBeInTheDocument();
+    // Over the body too, whose editor accepts drags of its own.
+    fireEvent.dragOver(document.querySelector('.ProseMirror p')!, { dataTransfer: drag });
+    expect(drag.dropEffect).toBe('none');
+    fireEvent.drop(screen.getByRole('dialog'), { dataTransfer: drag });
+    expect(attachments()).toEqual([]);
+    expect(screen.getByRole('button', { name: 'Discard draft' })).toBeDisabled();
+
+    release();
+    await waitFor(() => expect(compose.onClose).toHaveBeenCalled());
+  });
+});
+
 describe('ComposeWindow — send is not re-entrant', () => {
   it('sends once when ⌘↵ is pressed again while a send is in flight', async () => {
     let release: () => void = () => {};
@@ -489,6 +663,42 @@ describe('ComposeWindow — drafts', () => {
     expect(storedDrafts()).toEqual([]);
     fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
     expect(storedDrafts().map((d) => d.subject)).toEqual(['Gone soon']);
+  });
+
+  it('offers Undo for an emptied draft, restoring the copy in Drafts', async () => {
+    window.localStorage.setItem(
+      'freemail.drafts.v1',
+      JSON.stringify([
+        {
+          id: 'd1',
+          from: 'me@x.com',
+          to: '',
+          cc: '',
+          bcc: '',
+          subject: 'Plans',
+          html: '',
+          updatedAt: '2026-10-10T00:00:00.000Z',
+        },
+      ]),
+    );
+    renderCompose({ draftId: 'd1', from: 'me@x.com', subject: 'Plans' });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Discard draft' }));
+
+    expect(storedDrafts()).toEqual([]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+    expect(storedDrafts().map((d) => d.subject)).toEqual(['Plans']);
+  });
+
+  it('warns that Undo cannot bring back attached files', async () => {
+    renderCompose({ draftId: 'd1', from: 'me@x.com', subject: 'With file' });
+    fireEvent.change(screen.getByLabelText('Attach files', { selector: 'input' }), {
+      target: { files: [new File(['x'], 'a.txt', { type: 'text/plain' })] },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Discard draft' }));
+    expect(
+      await screen.findByText('Undo won’t bring back its attached files.'),
+    ).toBeInTheDocument();
   });
 
   it('does not save an untouched blank window', () => {
