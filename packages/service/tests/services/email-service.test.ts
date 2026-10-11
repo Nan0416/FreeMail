@@ -98,7 +98,13 @@ class FakeEmails implements EmailsDao {
     if (existing) {
       return Promise.resolve({ created: false, existing });
     }
-    this.keys.set(input.key, { ...input, state: 'pending' });
+    this.keys.set(input.key, {
+      key: input.key,
+      requestFingerprint: input.requestFingerprint,
+      state: 'pending',
+      createdAt: input.createdAt,
+      ttl: input.ttl,
+    });
     return Promise.resolve({ created: true });
   }
   updateIdempotencyRecord(input: UpdateIdempotencyRecordInput): Promise<object> {
@@ -1275,14 +1281,22 @@ describe('EmailService.sendEmail — idempotency keys', () => {
     expect(setup.ses.calls).toHaveLength(0);
   });
 
-  it('frees the key when SES rejects the message, so a retry sends', async () => {
+  it('frees the key when SES refuses the message, so a retry sends', async () => {
     const setup = makeService();
-    setup.ses.fail = true;
+    const send = setup.ses.send.bind(setup.ses);
+    setup.ses.send = (params) => {
+      setup.ses.send = send;
+      setup.ses.calls.push(params);
+      return Promise.reject(
+        Object.assign(new Error('Email address is not verified.'), {
+          name: 'MessageRejected',
+          $fault: 'client',
+        }),
+      );
+    };
 
     await expect(setup.service.sendEmail(request({ idempotencyKey: 'k-5' }))).rejects.toThrow();
     expect(setup.emails.keys.has('k-5')).toBe(false);
-
-    setup.ses.fail = false;
 
     const retry = await setup.service.sendEmail(request({ idempotencyKey: 'k-5' }));
     expect(retry.replayed).toBeUndefined();
@@ -1481,5 +1495,67 @@ describe('EmailService.sendEmail — forwarding: which messages', () => {
     await expect(
       setup.service.sendEmail(request({ attachments: refs as { uploadId: string }[] })),
     ).rejects.toMatchObject({ message: expect.stringContaining('at most 20 attachments') });
+  });
+});
+
+describe('EmailService.sendEmail — idempotency under failure and concurrency', () => {
+  it('keeps the key claimed after an unclear SES failure, so a retry cannot send twice', async () => {
+    const setup = makeService();
+    setup.ses.send = (params) => {
+      setup.ses.calls.push(params);
+      return Promise.reject(Object.assign(new Error('socket hang up'), { name: 'TimeoutError' }));
+    };
+
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'u-1' }))).rejects.toThrow();
+    expect(setup.emails.keys.get('u-1')?.state).toBe('pending');
+
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'u-1' }))).rejects.toMatchObject(
+      { message: expect.stringContaining('may have gone out') },
+    );
+    expect(setup.ses.calls).toHaveLength(1);
+  });
+
+  it('lets exactly one of two concurrent identical sends go out', async () => {
+    const setup = makeService();
+
+    const results = await Promise.allSettled([
+      setup.service.sendEmail(request({ idempotencyKey: 'c-1' })),
+      setup.service.sendEmail(request({ idempotencyKey: 'c-1' })),
+    ]);
+
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(setup.ses.calls).toHaveLength(1);
+  });
+
+  it('replays a sent message even after its upload has expired', async () => {
+    const setup = makeService();
+    const upload = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('hi'));
+    const attachments = [{ uploadId: upload }];
+    const first = await setup.service.sendEmail(request({ idempotencyKey: 'r-1', attachments }));
+    setup.uploads.objects.delete(`uploads/${upload}`);
+
+    const retry = await setup.service.sendEmail(request({ idempotencyKey: 'r-1', attachments }));
+
+    expect(retry).toEqual({ ...first, replayed: true });
+  });
+
+  it('frees the key when a storage check fails after the claim (an upload never made)', async () => {
+    const setup = makeService();
+
+    await expect(
+      setup.service.sendEmail(
+        request({ idempotencyKey: 'v-1', attachments: [{ uploadId: uploadId(9) }] }),
+      ),
+    ).rejects.toMatchObject({ message: expect.stringContaining('was not found') });
+    expect(setup.emails.keyCalls).toEqual(['create:v-1', 'delete:v-1']);
+  });
+
+  it('points at the Sent list only where the mailbox can be read', async () => {
+    const setup = makeService({ canReadMailbox: false });
+    await setup.service.sendEmail(request({ idempotencyKey: 'w-1' }));
+
+    await expect(
+      setup.service.sendEmail(request({ idempotencyKey: 'w-1', text: 'changed' })),
+    ).rejects.toMatchObject({ message: expect.not.stringContaining('list_emails') });
   });
 });

@@ -972,6 +972,8 @@ describe('send_email idempotency', () => {
       pattern: '^[A-Za-z0-9._:-]{1,128}$',
     });
     expect(tool?.description).toContain('Retrying safely');
+    expect(tool?.description).toContain('replayed? }');
+    expect(tool?.description).toContain('the same uploadIds too');
     expect(tool?.description).toContain('Within 1 day');
     expect(tool?.annotations?.idempotentHint).toBe(false);
   });

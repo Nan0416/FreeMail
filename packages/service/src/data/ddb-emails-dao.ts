@@ -382,37 +382,59 @@ export class DdbEmailsDao implements EmailsDao {
         Key: EmailEntity.idempotencyKey(input.key),
         UpdateExpression:
           'SET #fp = if_not_exists(#fp, :fp), #state = if_not_exists(#state, :pending), ' +
-          '#created = if_not_exists(#created, :created), #ttl = if_not_exists(#ttl, :ttl)',
-        ExpressionAttributeNames: {
-          '#fp': 'requestFingerprint',
-          '#state': 'state',
-          '#created': 'createdAt',
-          '#ttl': 'ttl',
-        },
-        ExpressionAttributeValues: {
-          ':fp': input.requestFingerprint,
-          ':pending': 'pending',
-          ':created': input.createdAt,
-          ':ttl': input.ttl,
-        },
+          '#created = if_not_exists(#created, :created), #ttl = if_not_exists(#ttl, :ttl), ' +
+          '#claim = if_not_exists(#claim, :claim)',
+        ExpressionAttributeNames: IDEMPOTENCY_NAMES,
+        ExpressionAttributeValues: claimValues(input),
         ReturnValues: 'ALL_OLD',
       }),
     )) as UpdateCommandOutput;
     const old = out.Attributes;
-    if (old === undefined || old.requestFingerprint === undefined) {
+    if (
+      old === undefined ||
+      old.requestFingerprint === undefined ||
+      old.claimId === input.claimId
+    ) {
       return { created: true };
     }
-    const existing: IdempotencyRecord = {
-      key: input.key,
-      requestFingerprint: String(old.requestFingerprint),
-      state: old.state === 'sent' ? 'sent' : 'pending',
-      ...(old.response !== undefined
-        ? { response: old.response as IdempotencyRecord['response'] }
-        : {}),
-      createdAt: String(old.createdAt),
-      ttl: Number(old.ttl),
-    };
-    return { created: false, existing };
+    if (Number(old.ttl) < input.nowSeconds) {
+      return this.takeOverExpiredClaim(input, old);
+    }
+    return { created: false, existing: toIdempotencyRecord(input.key, old) };
+  }
+
+  /**
+   * An expired record DynamoDB has not swept yet holds the key as if it were live: replace it,
+   * compare-and-swap on its `ttl` so a concurrent claimant can't be overwritten in turn.
+   */
+  private async takeOverExpiredClaim(
+    input: CreateIdempotencyRecordInput,
+    old: Record<string, unknown>,
+  ): Promise<CreateIdempotencyRecordOutput> {
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: EmailEntity.idempotencyKey(input.key),
+          UpdateExpression:
+            'SET #fp = :fp, #state = :pending, #created = :created, #ttl = :ttl, #claim = :claim ' +
+            'REMOVE #response',
+          ConditionExpression: '#ttl = :oldTtl',
+          ExpressionAttributeNames: { ...IDEMPOTENCY_NAMES, '#response': 'response' },
+          ExpressionAttributeValues: { ...claimValues(input), ':oldTtl': old.ttl },
+        }),
+      );
+      return { created: true };
+    } catch (err) {
+      if (!isConditionalCheckFailed(err)) {
+        throw err;
+      }
+      // Someone else renewed it first: theirs is the live claim now.
+      return {
+        created: false,
+        existing: { ...toIdempotencyRecord(input.key, old), state: 'pending' },
+      };
+    }
   }
 
   async updateIdempotencyRecord(
@@ -500,3 +522,35 @@ const LIST_FIELDS_PROJECTION: Projection = (() => {
   });
   return { expression: Object.keys(names).join(', '), names };
 })();
+
+/** The aliased attribute names of an idempotency claim (`state`, `ttl` are reserved words). */
+const IDEMPOTENCY_NAMES = {
+  '#fp': 'requestFingerprint',
+  '#state': 'state',
+  '#created': 'createdAt',
+  '#ttl': 'ttl',
+  '#claim': 'claimId',
+} as const;
+
+function claimValues(input: CreateIdempotencyRecordInput): Record<string, unknown> {
+  return {
+    ':fp': input.requestFingerprint,
+    ':pending': 'pending',
+    ':created': input.createdAt,
+    ':ttl': input.ttl,
+    ':claim': input.claimId,
+  };
+}
+
+function toIdempotencyRecord(key: string, item: Record<string, unknown>): IdempotencyRecord {
+  return {
+    key,
+    requestFingerprint: String(item.requestFingerprint),
+    state: item.state === 'sent' ? 'sent' : 'pending',
+    ...(item.response !== undefined
+      ? { response: item.response as IdempotencyRecord['response'] }
+      : {}),
+    createdAt: String(item.createdAt),
+    ttl: Number(item.ttl),
+  };
+}

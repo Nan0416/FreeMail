@@ -191,47 +191,49 @@ export class EmailService {
       throw emailErrors.invalidRequest('An email body (text or html) is required.');
     }
 
-    const thread =
-      request.inReplyTo === undefined ? undefined : await this.resolveThread(request.inReplyTo);
-    const subject = request.subject ?? (thread ? replySubject(thread.subject) : '');
-
-    const attachments = await this.resolveAttachments(request.attachments);
-
-    const message: PreparedMessage = {
-      from,
-      ...(fromName !== undefined ? { fromName } : {}),
-      to,
-      cc,
-      bcc,
-      recipients,
-      replyTo,
-      subject,
-      ...(text !== undefined ? { text } : {}),
-      ...(html !== undefined ? { html } : {}),
-      ...(thread ? { thread } : {}),
-      attachments,
-    };
-    // Everything above only read and checked; from here on a send has side effects. A send
-    // with an idempotency key claims it first — or returns the earlier send's response.
-    if (request.idempotencyKey === undefined) {
-      return this.deliver(message);
-    }
+    // Everything above checked the request alone. A keyed send claims its key now — before the
+    // checks that read storage (a reply's original, the uploads), so a retry of a send that went
+    // out replays its response even after its uploads have expired.
     const key = request.idempotencyKey;
-    const replay = await this.claimIdempotencyKey(key, request);
-    if (replay !== undefined) {
-      return replay;
+    if (key !== undefined) {
+      const replay = await this.claimIdempotencyKey(key, request);
+      if (replay !== undefined) {
+        return replay;
+      }
     }
-    let response: SendEmailResponse;
+    const attempt = new DeliveryAttempt();
     try {
-      response = await this.deliver(message);
+      const thread =
+        request.inReplyTo === undefined ? undefined : await this.resolveThread(request.inReplyTo);
+      const message: PreparedMessage = {
+        from,
+        ...(fromName !== undefined ? { fromName } : {}),
+        to,
+        cc,
+        bcc,
+        recipients,
+        replyTo,
+        subject: request.subject ?? (thread ? replySubject(thread.subject) : ''),
+        ...(text !== undefined ? { text } : {}),
+        ...(html !== undefined ? { html } : {}),
+        ...(thread ? { thread } : {}),
+        attachments: await this.resolveAttachments(request.attachments),
+      };
+      const response = await this.deliver(message, attempt);
+      if (key !== undefined) {
+        await this.completeIdempotencyKey(key, response);
+      }
+      return response;
     } catch (error) {
-      // SES never accepted it (deliver throws only before or at the SES call): free the key, so
-      // the caller's retry sends rather than being refused.
-      await this.releaseIdempotencyKey(key);
+      // Free the key only when the message certainly did not go out, so the caller's retry
+      // sends. After an unclear SES failure (a timeout, a 5xx) it may have: the key stays
+      // claimed, and a retry is refused with a pointer to the Sent list rather than sending
+      // a second copy.
+      if (key !== undefined && attempt.certainlyNotSent()) {
+        await this.releaseIdempotencyKey(key);
+      }
       throw error;
     }
-    await this.completeIdempotencyKey(key, response);
-    return response;
   }
 
   /**
@@ -250,27 +252,34 @@ export class EmailService {
     }
     const nowMs = this.now().getTime();
     const fingerprint = requestFingerprint(request);
+    const nowSeconds = Math.floor(nowMs / 1000);
     const claim = await this.emailsDao.createIdempotencyRecord({
       key,
+      claimId: this.generateId(),
       requestFingerprint: fingerprint,
       createdAt: new Date(nowMs).toISOString(),
-      ttl: Math.floor(nowMs / 1000) + IDEMPOTENCY_KEY_TTL_SECONDS,
+      nowSeconds,
+      ttl: nowSeconds + IDEMPOTENCY_KEY_TTL_SECONDS,
     });
     if (claim.created) {
       return undefined;
     }
+    const check = this.canReadMailbox
+      ? 'check the Sent list (list_emails with direction "sent")'
+      : 'check whether it arrived';
     if (claim.existing.requestFingerprint !== fingerprint) {
       throw emailErrors.invalidRequest(
-        '"idempotencyKey" was already used for a different message in the last 24 hours. ' +
-          'Use a new key for a new message.',
+        '"idempotencyKey" was already used for a different message in the last 24 hours. If ' +
+          `you are retrying, the first send may already have gone out: ${check}. For a new ` +
+          'message, use a new key.',
       );
     }
     if (claim.existing.state === 'sent' && claim.existing.response !== undefined) {
       return { ...claim.existing.response, replayed: true };
     }
     throw emailErrors.invalidRequest(
-      'A send with this idempotencyKey is still in progress, or was interrupted. Check the ' +
-        'Sent list before sending again, and use a new key if you do.',
+      'A send with this idempotencyKey is still in progress, or was interrupted and may have ' +
+        `gone out: ${check} before sending again, and use a new key if you do.`,
     );
   }
 
@@ -298,10 +307,13 @@ export class EmailService {
 
   /**
    * Send a validated message: copy its attachments to their permanent keys, archive and record
-   * it, and hand it to SES. Throws only before SES accepts the message (or when SES rejects it);
-   * after acceptance nothing it does can fail the send.
+   * it, and hand it to SES. Throws only before SES accepts the message or at the SES call itself
+   * — `attempt` records which, and whether SES refused it outright — never after acceptance.
    */
-  private async deliver(message: PreparedMessage): Promise<SendEmailResponse> {
+  private async deliver(
+    message: PreparedMessage,
+    attempt: DeliveryAttempt,
+  ): Promise<SendEmailResponse> {
     const from = message.from;
     const fromName = message.fromName;
     const to = message.to;
@@ -423,8 +435,12 @@ export class EmailService {
 
     let messageId: string;
     try {
+      attempt.sesCalled();
       messageId = (await this.ses.send({ from, to, cc, bcc, raw })).messageId;
     } catch (error) {
+      if (isClientFault(error)) {
+        attempt.sesRefused();
+      }
       // SES rejected the message: mark the archived row send_failed so the failure is visible
       // in the mailbox, then surface the error to the caller (delivery did not happen).
       await this.recordTerminalStatus({
@@ -733,6 +749,33 @@ export class EmailService {
       sizeBytes: descriptor.sizeBytes,
     };
   }
+}
+
+/**
+ * How far one delivery got: whether a failure could have left the message sent. Before the SES
+ * call it certainly wasn't; SES refusing the request (a client fault — rejected, throttled,
+ * invalid) means it wasn't either; anything else at the SES call (a timeout, a 5xx) is unclear.
+ */
+class DeliveryAttempt {
+  private reachedSes = false;
+  private refusedBySes = false;
+
+  sesCalled(): void {
+    this.reachedSes = true;
+  }
+
+  sesRefused(): void {
+    this.refusedBySes = true;
+  }
+
+  certainlyNotSent(): boolean {
+    return !this.reachedSes || this.refusedBySes;
+  }
+}
+
+/** True for an AWS SDK error the service attributes to the request (it did nothing with it). */
+function isClientFault(error: unknown): boolean {
+  return (error as { $fault?: unknown } | null)?.$fault === 'client';
 }
 
 /** A send that passed every check — what {@link EmailService.deliver} sends. */

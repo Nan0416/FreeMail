@@ -319,11 +319,21 @@ export interface IdempotencyRecord {
   readonly ttl: number;
 }
 
-/** Claim a key for a send that is about to happen: written only if the key is unused. */
+/**
+ * Claim a key for a send that is about to happen: written only if the key is unused, or its
+ * record has expired (DynamoDB deletes expired items lazily, often days late).
+ */
 export interface CreateIdempotencyRecordInput {
   readonly key: string;
+  /**
+   * Random per claim attempt: an SDK retry of the same write (its first response lost) finds
+   * its own claim and reports it created, rather than "already claimed".
+   */
+  readonly claimId: string;
   readonly requestFingerprint: string;
   readonly createdAt: string;
+  /** Now, in epoch seconds: a record whose `ttl` is before it is expired. */
+  readonly nowSeconds: number;
   readonly ttl: number;
 }
 

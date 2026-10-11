@@ -338,11 +338,14 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
           ]
         : []),
       '- replyTo: addresses that replies to this message should go to, if not from.',
-      '- Retrying safely: pass an idempotencyKey you generate (a UUID, say) and reuse it when ' +
-        'you retry the same message after a timeout or an unclear result. Within ' +
-        `${formatDuration(IDEMPOTENCY_KEY_TTL_SECONDS)}, a repeat with the same key and the same ` +
-        'content sends nothing and returns the first result with replayed: true; the same key ' +
-        'with different content is refused. Without a key, every call sends.',
+      '- Retrying safely: pass an idempotencyKey you generate (a UUID, say) and, when you retry ' +
+        'after a timeout or an unclear result, call again with the same key and exactly the ' +
+        'same arguments (the same uploadIds too — do not re-upload). Within ' +
+        `${formatDuration(IDEMPOTENCY_KEY_TTL_SECONDS)}, if the first call sent the message, the ` +
+        'retry sends nothing and returns its result with replayed: true; if the first call is ' +
+        'still running or was cut off, the retry is refused, since the message may already have ' +
+        'gone out. The same key with different arguments is refused. Without a key, every call ' +
+        'sends.',
       `- Attachments: up to ${MAX_ATTACHMENTS} files, each a finished upload from ` +
         'create_attachment_upload' +
         (inboundEnabled
@@ -355,7 +358,7 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         'file is sent as a download link appended to the body, valid for ' +
         `${formatDuration(DOWNLOAD_TOKEN_TTL_SECONDS)}.`,
       '',
-      `Returns { id, messageId, sentAt${inboundEnabled ? ', threaded?' : ''} }. id is this message's FreeMail id${
+      `Returns { id, messageId, sentAt${inboundEnabled ? ', threaded?' : ''}, replayed? }. id is this message's FreeMail id${
         inboundEnabled ? ' (the same id list_emails and get_email use)' : ''
       }; messageId is the SES message id. Success means SES accepted the message for delivery, ` +
         'not that it reached the inbox. If SES rejects it, the tool returns an error' +

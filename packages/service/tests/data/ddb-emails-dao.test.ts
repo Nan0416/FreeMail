@@ -758,8 +758,10 @@ describe('DdbEmailsDao.listEmailSummaries — date range', () => {
 describe('DdbEmailsDao — send idempotency records', () => {
   const claim = {
     key: 'k-1',
+    claimId: 'claim-1',
     requestFingerprint: 'fp',
     createdAt: '2026-10-10T00:00:00.000Z',
+    nowSeconds: 1760054400,
     ttl: 1760140800,
   };
 
@@ -788,9 +790,10 @@ describe('DdbEmailsDao — send idempotency records', () => {
         sk: 'k-1',
         requestFingerprint: 'fp-0',
         state: 'sent',
+        claimId: 'claim-0',
         response: { id: 'h', messageId: 'm', sentAt: 't' },
         createdAt: '2026-10-09T00:00:00.000Z',
-        ttl: 1760054400,
+        ttl: 1760140000,
       },
     };
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
@@ -803,7 +806,7 @@ describe('DdbEmailsDao — send idempotency records', () => {
         state: 'sent',
         response: { id: 'h', messageId: 'm', sentAt: 't' },
         createdAt: '2026-10-09T00:00:00.000Z',
-        ttl: 1760054400,
+        ttl: 1760140000,
       },
     });
   });
@@ -866,5 +869,81 @@ describe('DdbEmailsDao.listEmailSummaries — range edges', () => {
 
     await dao.listEmailSummaries({ direction: 'sent', limit: 5, afterSk: 'M', maxSk: 'M' });
     expect(doc.queries[0]?.input.ExclusiveStartKey).toEqual({ pk: 'SENT', sk: 'M' });
+  });
+});
+
+describe('DdbEmailsDao — idempotency claims: retries and expiry', () => {
+  const claim = {
+    key: 'k-9',
+    claimId: 'claim-b',
+    requestFingerprint: 'fp',
+    createdAt: '2026-10-10T00:00:00.000Z',
+    nowSeconds: 1760054400,
+    ttl: 1760140800,
+  };
+
+  it('treats its own earlier write (an SDK retry after a lost response) as the claim', async () => {
+    const doc = new FakeDoc();
+    doc.response = {
+      Attributes: { requestFingerprint: 'fp', state: 'pending', claimId: 'claim-b', ttl: 1 },
+    };
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    expect(await dao.createIdempotencyRecord(claim)).toEqual({ created: true });
+  });
+
+  it('takes over an expired record DynamoDB has not swept yet, compare-and-swap on its ttl', async () => {
+    const doc = new FakeDoc();
+    doc.response = {
+      Attributes: {
+        requestFingerprint: 'other',
+        state: 'sent',
+        claimId: 'claim-a',
+        createdAt: '2026-10-01T00:00:00.000Z',
+        ttl: claim.nowSeconds - 60,
+      },
+    };
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    expect(await dao.createIdempotencyRecord(claim)).toEqual({ created: true });
+    const takeover = doc.commands[1]?.input as {
+      ConditionExpression?: string;
+      UpdateExpression?: string;
+      ExpressionAttributeValues?: Record<string, unknown>;
+    };
+    expect(takeover.ConditionExpression).toBe('#ttl = :oldTtl');
+    expect(takeover.UpdateExpression).toContain('REMOVE #response');
+    expect(takeover.ExpressionAttributeValues?.[':oldTtl']).toBe(claim.nowSeconds - 60);
+  });
+
+  it('reports a live claim when someone else renewed the expired record first', async () => {
+    const doc = new FakeDoc();
+    doc.response = {
+      Attributes: {
+        requestFingerprint: 'fp',
+        state: 'sent',
+        claimId: 'claim-a',
+        createdAt: '2026-10-01T00:00:00.000Z',
+        ttl: claim.nowSeconds - 60,
+      },
+    };
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+    const send = doc.send.bind(doc);
+    let calls = 0;
+    doc.send = (command) => {
+      calls += 1;
+      if (calls === 2) {
+        doc.commands.push(command);
+        const err = new Error('conditional check failed');
+        err.name = 'ConditionalCheckFailedException';
+        return Promise.reject(err);
+      }
+      return send(command);
+    };
+
+    expect(await dao.createIdempotencyRecord(claim)).toMatchObject({
+      created: false,
+      existing: { state: 'pending' },
+    });
   });
 });
