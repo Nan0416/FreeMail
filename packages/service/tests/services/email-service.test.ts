@@ -8,6 +8,11 @@ import type {
 } from '../../src/data/download-tokens-dao.js';
 import type {
   EmailsDao,
+  CreateIdempotencyRecordInput,
+  CreateIdempotencyRecordOutput,
+  DeleteIdempotencyRecordInput,
+  IdempotencyRecord,
+  UpdateIdempotencyRecordInput,
   GetEmailInput,
   CreateInboundEmailOutput,
   CreateSentEmailInput,
@@ -24,6 +29,7 @@ import type { UploadStore, UploadedObject } from '../../src/facades/s3-upload-st
 import { MAX_INLINE_BODY_BYTES } from '../../src/services/email-body-storage.js';
 import { EmailError } from '../../src/utils/errors.js';
 import { decodeEmailRef, encodeEmailRef } from '../../src/utils/email-ref.js';
+import { requestFingerprint } from '../../src/utils/idempotency.js';
 import type { RawMimeInput } from '../../src/utils/mime.js';
 import { EmailService, type EmailServiceDeps } from '../../src/services/email-service.js';
 import type { SendRawParams, SesSender } from '../../src/facades/ses-email-facade.js';
@@ -35,7 +41,8 @@ class FakeSes implements SesSender {
   send(params: SendRawParams): Promise<{ messageId: string }> {
     this.calls.push(params);
     if (this.fail) {
-      return Promise.reject(new Error('ses boom'));
+      // A refusal: SES attributes it to the request (MessageRejected and the like).
+      return Promise.reject(Object.assign(new Error('ses boom'), { $fault: 'client' }));
     }
     return Promise.resolve({ messageId: this.messageId });
   }
@@ -79,6 +86,45 @@ class FakeEmails implements EmailsDao {
   }
   listEmailSummaries(): Promise<ListEmailSummariesOutput> {
     return Promise.resolve({ emails: [] });
+  }
+  /** Idempotency records by key, and the calls made against them. */
+  readonly keys = new Map<string, IdempotencyRecord>();
+  readonly keyCalls: string[] = [];
+  failKeyUpdate = false;
+  createIdempotencyRecord(
+    input: CreateIdempotencyRecordInput,
+  ): Promise<CreateIdempotencyRecordOutput> {
+    this.keyCalls.push(`create:${input.key}`);
+    const existing = this.keys.get(input.key);
+    if (existing) {
+      return Promise.resolve({ created: false, existing });
+    }
+    this.keys.set(input.key, {
+      key: input.key,
+      requestFingerprint: input.requestFingerprint,
+      state: 'pending',
+      createdAt: input.createdAt,
+      ttl: input.ttl,
+    });
+    return Promise.resolve({ created: true });
+  }
+  updateIdempotencyRecord(input: UpdateIdempotencyRecordInput): Promise<object> {
+    this.keyCalls.push(`update:${input.key}`);
+    if (this.failKeyUpdate) {
+      return Promise.reject(new Error('ddb down'));
+    }
+    const record = this.keys.get(input.key);
+    if (record) {
+      this.keys.set(input.key, { ...record, state: 'sent', response: input.response });
+    }
+    return Promise.resolve({});
+  }
+  deleteIdempotencyRecord(input: DeleteIdempotencyRecordInput): Promise<object> {
+    this.keyCalls.push(`delete:${input.key}`);
+    if (this.keys.get(input.key)?.state === 'pending') {
+      this.keys.delete(input.key);
+    }
+    return Promise.resolve({});
   }
   /** Stored rows getEmail can find, by `pk|sk`. */
   readonly stored = new Map<string, GetEmailOutput>();
@@ -1175,6 +1221,129 @@ describe('EmailService.sendEmail — forwarding stored attachments', () => {
   });
 });
 
+describe('EmailService.sendEmail — idempotency keys', () => {
+  it('sends without touching keys when none is given', async () => {
+    const setup = makeService();
+
+    await setup.service.sendEmail(request());
+
+    expect(setup.emails.keyCalls).toEqual([]);
+  });
+
+  it('claims the key, sends, then records the response', async () => {
+    const setup = makeService();
+
+    const result = await setup.service.sendEmail(request({ idempotencyKey: 'k-1' }));
+
+    expect(result.replayed).toBeUndefined();
+    expect(setup.emails.keyCalls).toEqual(['create:k-1', 'update:k-1']);
+    expect(setup.emails.keys.get('k-1')).toMatchObject({ state: 'sent', response: result });
+    // Remembered for a day.
+    expect(setup.emails.keys.get('k-1')?.ttl).toBe(
+      Math.floor(Date.parse(NOW_ISO) / 1000) + 24 * 60 * 60,
+    );
+  });
+
+  it('replays the first response for a retry of the same message, sending nothing', async () => {
+    const setup = makeService();
+    const first = await setup.service.sendEmail(request({ idempotencyKey: 'k-2' }));
+
+    const retry = await setup.service.sendEmail(request({ idempotencyKey: 'k-2' }));
+
+    expect(retry).toEqual({ ...first, replayed: true });
+    expect(setup.ses.calls).toHaveLength(1);
+    expect(setup.emails.records).toHaveLength(1);
+  });
+
+  it('refuses the same key on a different message', async () => {
+    const setup = makeService();
+    await setup.service.sendEmail(request({ idempotencyKey: 'k-3' }));
+
+    await expect(
+      setup.service.sendEmail(request({ idempotencyKey: 'k-3', text: 'something else' })),
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: expect.stringContaining('different message'),
+    });
+    expect(setup.ses.calls).toHaveLength(1);
+  });
+
+  it('refuses a retry while the first send is still pending', async () => {
+    const setup = makeService();
+    setup.emails.keys.set('k-4', {
+      key: 'k-4',
+      requestFingerprint: requestFingerprint(request({ idempotencyKey: 'k-4' })),
+      state: 'pending',
+      createdAt: NOW_ISO,
+      ttl: 0,
+    });
+
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'k-4' }))).rejects.toMatchObject(
+      { message: expect.stringContaining('still in progress') },
+    );
+    expect(setup.ses.calls).toHaveLength(0);
+  });
+
+  it('frees the key when SES refuses the message, so a retry sends', async () => {
+    const setup = makeService();
+    const send = setup.ses.send.bind(setup.ses);
+    setup.ses.send = (params) => {
+      setup.ses.send = send;
+      setup.ses.calls.push(params);
+      return Promise.reject(
+        Object.assign(new Error('Email address is not verified.'), {
+          name: 'MessageRejected',
+          $fault: 'client',
+        }),
+      );
+    };
+
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'k-5' }))).rejects.toThrow();
+    expect(setup.emails.keys.has('k-5')).toBe(false);
+
+    const retry = await setup.service.sendEmail(request({ idempotencyKey: 'k-5' }));
+    expect(retry.replayed).toBeUndefined();
+    expect(setup.ses.calls).toHaveLength(2);
+  });
+
+  it('frees the key when a step before SES fails', async () => {
+    const setup = makeService();
+    setup.objectStore.failKeyPrefix = 'sent/';
+
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'k-6' }))).rejects.toThrow();
+    expect(setup.emails.keyCalls).toEqual(['create:k-6', 'delete:k-6']);
+  });
+
+  it('does not claim a key for a request that fails validation', async () => {
+    const setup = makeService();
+
+    await expect(
+      setup.service.sendEmail(request({ idempotencyKey: 'k-7', to: [] })),
+    ).rejects.toMatchObject({ code: 'invalid_request' });
+    expect(setup.emails.keyCalls).toEqual([]);
+  });
+
+  it('still succeeds when recording the response fails (the mail is out)', async () => {
+    const setup = makeService();
+    setup.emails.failKeyUpdate = true;
+
+    const result = await setup.service.sendEmail(request({ idempotencyKey: 'k-8' }));
+
+    expect(result.messageId).toBe('ses-msg-1');
+    expect(setup.emails.keys.get('k-8')?.state).toBe('pending');
+  });
+
+  it.each(['', 'has space', 'x'.repeat(129)])('rejects the key %j', async (key) => {
+    const setup = makeService();
+
+    await expect(setup.service.sendEmail(request({ idempotencyKey: key }))).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: expect.stringContaining('idempotencyKey'),
+    });
+    expect(setup.ses.calls).toHaveLength(0);
+  });
+});
+
 describe('EmailService.sendEmail — forwarding: which messages', () => {
   const SK = '2026-07-16T09:00:00.000Z#m1';
 
@@ -1329,5 +1498,89 @@ describe('EmailService.sendEmail — forwarding: which messages', () => {
     await expect(
       setup.service.sendEmail(request({ attachments: refs as { uploadId: string }[] })),
     ).rejects.toMatchObject({ message: expect.stringContaining('at most 20 attachments') });
+  });
+});
+
+describe('EmailService.sendEmail — idempotency under failure and concurrency', () => {
+  it('keeps the key claimed after an unclear SES failure, so a retry cannot send twice', async () => {
+    const setup = makeService();
+    setup.ses.send = (params) => {
+      setup.ses.calls.push(params);
+      return Promise.reject(Object.assign(new Error('socket hang up'), { name: 'TimeoutError' }));
+    };
+
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'u-1' }))).rejects.toThrow();
+    expect(setup.emails.keys.get('u-1')?.state).toBe('pending');
+
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'u-1' }))).rejects.toMatchObject(
+      { message: expect.stringContaining('may have gone out') },
+    );
+    expect(setup.ses.calls).toHaveLength(1);
+  });
+
+  it('lets exactly one of two concurrent identical sends go out', async () => {
+    const setup = makeService();
+
+    const results = await Promise.allSettled([
+      setup.service.sendEmail(request({ idempotencyKey: 'c-1' })),
+      setup.service.sendEmail(request({ idempotencyKey: 'c-1' })),
+    ]);
+
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    expect(setup.ses.calls).toHaveLength(1);
+  });
+
+  it('replays a sent message even after its upload has expired', async () => {
+    const setup = makeService();
+    const upload = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('hi'));
+    const attachments = [{ uploadId: upload }];
+    const first = await setup.service.sendEmail(request({ idempotencyKey: 'r-1', attachments }));
+    setup.uploads.objects.delete(`uploads/${upload}`);
+
+    const retry = await setup.service.sendEmail(request({ idempotencyKey: 'r-1', attachments }));
+
+    expect(retry).toEqual({ ...first, replayed: true });
+  });
+
+  it('frees the key when a storage check fails after the claim (an upload never made)', async () => {
+    const setup = makeService();
+
+    await expect(
+      setup.service.sendEmail(
+        request({ idempotencyKey: 'v-1', attachments: [{ uploadId: uploadId(9) }] }),
+      ),
+    ).rejects.toMatchObject({ message: expect.stringContaining('was not found') });
+    expect(setup.emails.keyCalls).toEqual(['create:v-1', 'delete:v-1']);
+  });
+
+  it('points at the Sent list only where the mailbox can be read', async () => {
+    const setup = makeService({ canReadMailbox: false });
+    await setup.service.sendEmail(request({ idempotencyKey: 'w-1' }));
+
+    await expect(
+      setup.service.sendEmail(request({ idempotencyKey: 'w-1', text: 'changed' })),
+    ).rejects.toMatchObject({ message: expect.not.stringContaining('list_emails') });
+  });
+});
+
+describe('EmailService.sendEmail — an unclear SES outcome', () => {
+  it.each([
+    ['a timeout', Object.assign(new Error('socket hang up'), { name: 'TimeoutError' })],
+    ['a 5xx', Object.assign(new Error('internal'), { $fault: 'server' })],
+    [
+      'a refusal after an SDK retry',
+      Object.assign(new Error('throttled'), { $fault: 'client', $metadata: { attempts: 2 } }),
+    ],
+  ])('leaves the row "sending" after %s, rather than claiming it failed', async (_label, error) => {
+    const setup = makeService();
+    setup.ses.send = (params) => {
+      setup.ses.calls.push(params);
+      return Promise.reject(error);
+    };
+
+    await expect(setup.service.sendEmail(request())).rejects.toBe(error);
+
+    expect(setup.emails.statusUpdates).toEqual([]);
+    expect(setup.emails.records[0]?.status).toBe('sending');
   });
 });

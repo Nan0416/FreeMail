@@ -188,6 +188,7 @@ function parseSendEmailBody(body: Record<string, unknown>): SendEmailRequest {
   const bcc = optionalStringArray(body, 'bcc');
   const attachments = optionalAttachments(body);
   const inReplyTo = optionalString(body, 'inReplyTo');
+  const idempotencyKey = optionalString(body, 'idempotencyKey');
   const replyTo = optionalStringArray(body, 'replyTo');
   return {
     from,
@@ -200,6 +201,7 @@ function parseSendEmailBody(body: Record<string, unknown>): SendEmailRequest {
     ...(bcc !== undefined ? { bcc } : {}),
     ...(attachments !== undefined ? { attachments } : {}),
     ...(inReplyTo !== undefined ? { inReplyTo } : {}),
+    ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
     ...(replyTo !== undefined ? { replyTo } : {}),
   };
 }

@@ -17,6 +17,7 @@
 import {
   ATTACHMENT_URL_TTL_SECONDS,
   DOWNLOAD_TOKEN_TTL_SECONDS,
+  IDEMPOTENCY_KEY_TTL_SECONDS,
   MAX_ATTACHMENTS,
   MAX_EMAIL_PAGE_SIZE,
   MAX_LIST_FILTER_CHARS,
@@ -166,7 +167,8 @@ const sentStatusSchema = z
   .enum(['sending', 'sent', 'send_failed'])
   .optional()
   .describe(
-    'Sent mail only. "sending": recorded, SES not yet answered (or the update was lost). ' +
+    'Sent mail only. "sending": outcome not recorded — still sending, or SES may already have ' +
+      'delivered it; do not resend without checking. ' +
       '"sent": SES accepted it for delivery. "send_failed": SES rejected it; it was not delivered.',
   );
 
@@ -337,6 +339,14 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
           ]
         : []),
       '- replyTo: addresses that replies to this message should go to, if not from.',
+      '- Retrying safely: pass an idempotencyKey you generate (a UUID, say) and, when you retry ' +
+        'after a timeout or an unclear result, call again with the same key and exactly the ' +
+        'same arguments (the same uploadIds too — do not re-upload). Within ' +
+        `${formatDuration(IDEMPOTENCY_KEY_TTL_SECONDS)}, if the first call sent the message, the ` +
+        'retry sends nothing and returns its result with replayed: true; if the first call is ' +
+        'still running or was cut off, the retry is refused, since the message may already have ' +
+        'gone out. The same key with different arguments is refused. Without a key, every call ' +
+        'sends.',
       `- Attachments: up to ${MAX_ATTACHMENTS} files, each a finished upload from ` +
         'create_attachment_upload' +
         (inboundEnabled
@@ -350,7 +360,7 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         'file is sent as a download link appended to the body, valid for ' +
         `${formatDuration(DOWNLOAD_TOKEN_TTL_SECONDS)}.`,
       '',
-      `Returns { id, messageId, sentAt${inboundEnabled ? ', threaded?' : ''} }. id is this message's FreeMail id${
+      `Returns { id, messageId, sentAt${inboundEnabled ? ', threaded?' : ''}, replayed? }. id is this message's FreeMail id${
         inboundEnabled ? ' (the same id list_emails and get_email use)' : ''
       }; messageId is the SES message id. Success means SES accepted the message for delivery, ` +
         'not that it reached the inbox. If SES rejects it, the tool returns an error' +
@@ -382,6 +392,14 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         .optional()
         .describe('Plain-text body. At least one of text or html is required.'),
       html: z.string().optional().describe('HTML body. At least one of text or html is required.'),
+      idempotencyKey: z
+        .string()
+        .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+        .optional()
+        .describe(
+          'Optional key that makes retries safe (1–128 of letters, digits, ".", "_", ":", "-"). ' +
+            'Reuse it only to retry the same message.',
+        ),
       replyTo: z
         .array(z.string())
         .max(MAX_REPLY_TO_ADDRESSES)
@@ -430,6 +448,13 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         .describe(
           'Only when inReplyTo was given: false means the reply went out unthreaded, because ' +
             'the original has no usable Message-ID.',
+        ),
+      replayed: z
+        .boolean()
+        .optional()
+        .describe(
+          'True when nothing new was sent: an earlier call with the same idempotencyKey sent ' +
+            'this message, and this is its result.',
         ),
     }),
     annotations: {

@@ -101,6 +101,14 @@ describe('FreeMailStack', () => {
     template.resourceCountIs('Custom::S3AutoDeleteObjects', 1);
   });
 
+  it('lets the emails table expire send idempotency records (TTL on `ttl`)', () => {
+    const template = synth(makeConfig());
+    template.hasResourceProperties('AWS::DynamoDB::Table', {
+      GlobalSecondaryIndexes: Match.arrayWith([Match.objectLike({ IndexName: 'list' })]),
+      TimeToLiveSpecification: { AttributeName: 'ttl', Enabled: true },
+    });
+  });
+
   it('gives the emails table a list index that projects only the list fields', () => {
     const template = synth(makeConfig());
     template.hasResourceProperties('AWS::DynamoDB::Table', {

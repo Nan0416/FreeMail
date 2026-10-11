@@ -13,7 +13,12 @@
  * exact key a command was issued against.
  */
 import type { EmailListFilter } from '@freemail/shared';
-import { FAILED_PARTITION, INBOUND_PARTITION, SENT_PARTITION } from './emails-dao.js';
+import {
+  FAILED_PARTITION,
+  IDEMPOTENCY_PARTITION,
+  INBOUND_PARTITION,
+  SENT_PARTITION,
+} from './emails-dao.js';
 
 /** A full DynamoDB primary key for the single-table auth and emails layouts. */
 export interface TableKey {
@@ -62,6 +67,8 @@ export const EmailEntity = {
     pk: SENT_PARTITION,
     sk: `${sentAtIso}#${id}`,
   }),
+  /** A send's idempotency record, by the caller's key — beside the messages, never listed. */
+  idempotencyKey: (key: string): TableKey => ({ pk: IDEMPOTENCY_PARTITION, sk: key }),
   /** A received message — under FAILED when its content could not be extracted. */
   inbound: (receivedAtIso: string, id: string, failed: boolean): TableKey => ({
     pk: failed ? FAILED_PARTITION : INBOUND_PARTITION,

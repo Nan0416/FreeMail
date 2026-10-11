@@ -63,6 +63,8 @@ export class DataConstruct extends Construct {
       partitionKey: { name: 'pk', type: STRING },
       sortKey: { name: 'sk', type: STRING },
       billingMode: BillingMode.PAY_PER_REQUEST,
+      // Only send idempotency records (pk 'SEND_KEY') carry `ttl`; messages never expire.
+      timeToLiveAttribute: 'ttl',
       removalPolicy: RemovalPolicy.RETAIN,
     });
     // The mailbox list reads this index, not the table: same keys, but only the list fields

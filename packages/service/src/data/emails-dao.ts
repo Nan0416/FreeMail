@@ -8,7 +8,7 @@
  * folder) — each `sk='<iso>#<id>'` so the read slice lists any partition newest-first and
  * merges sent + received into one timeline.
  */
-import type { EmailListFilter, SentStatus } from '@freemail/shared';
+import type { EmailListFilter, SendEmailResponse, SentStatus } from '@freemail/shared';
 import type { EmailListIndexAttribute } from '@freemail/shared/storage';
 
 /** Partition holding sent messages. */
@@ -21,6 +21,12 @@ export const INBOUND_PARTITION = 'INBOUND';
  * quarantine bucket. Listed as the Errors folder, never in the main timeline.
  */
 export const FAILED_PARTITION = 'FAILED';
+
+/**
+ * Partition holding send idempotency records (`sk` = the caller's key). Never listed, and not
+ * a message partition, so no message handle can address it.
+ */
+export const IDEMPOTENCY_PARTITION = 'SEND_KEY';
 
 /** The only valid partitions — used to validate a decoded message handle. */
 export const EMAIL_PARTITIONS: ReadonlySet<string> = new Set([
@@ -299,6 +305,57 @@ export interface ListEmailSummariesOutput {
   readonly emails: ReadonlyArray<EmailSummary>;
 }
 
+/** A send's idempotency record: the request it was first used for, and — once sent — the answer. */
+export interface IdempotencyRecord {
+  readonly key: string;
+  /** Fingerprint of the request the key was first used for. */
+  readonly requestFingerprint: string;
+  /** `pending` from the claim until SES accepts the message; then `sent`, with its response. */
+  readonly state: 'pending' | 'sent';
+  readonly response?: SendEmailResponse;
+  /** ISO-8601. */
+  readonly createdAt: string;
+  /** Epoch seconds when DynamoDB may delete the record. */
+  readonly ttl: number;
+}
+
+/**
+ * Claim a key for a send that is about to happen: written only if the key is unused, or its
+ * record has expired (DynamoDB deletes expired items lazily, often days late).
+ */
+export interface CreateIdempotencyRecordInput {
+  readonly key: string;
+  /**
+   * Random per claim attempt: an SDK retry of the same write (its first response lost) finds
+   * its own claim and reports it created, rather than "already claimed".
+   */
+  readonly claimId: string;
+  readonly requestFingerprint: string;
+  readonly createdAt: string;
+  /** Now, in epoch seconds: a record whose `ttl` is before it is expired. */
+  readonly nowSeconds: number;
+  readonly ttl: number;
+}
+
+/** Created, or the record already holding the key (the same request's earlier send, or not). */
+export type CreateIdempotencyRecordOutput =
+  { readonly created: true } | { readonly created: false; readonly existing: IdempotencyRecord };
+
+/** Mark a claimed key's send done, with the response a replay returns. */
+export interface UpdateIdempotencyRecordInput {
+  readonly key: string;
+  readonly response: SendEmailResponse;
+}
+
+export interface UpdateIdempotencyRecordOutput {}
+
+/** Release a claim whose send never reached SES, so a retry can send. Only a `pending` one. */
+export interface DeleteIdempotencyRecordInput {
+  readonly key: string;
+}
+
+export interface DeleteIdempotencyRecordOutput {}
+
 export interface EmailsDao {
   /**
    * Record a sent message before the SES call (`status:'sending'`, with `rawS3Key` +
@@ -334,4 +391,23 @@ export interface EmailsDao {
 
   /** Fetch exactly one row by its full primary key, or `null` if absent. */
   getEmail(input: GetEmailInput): Promise<GetEmailOutput | null>;
+
+  /**
+   * Claim an idempotency key: written only where the key is unused, atomically, returning the
+   * record already there otherwise — from the write itself, so it needs no read grant (the MCP
+   * role has none without inbound).
+   */
+  createIdempotencyRecord(
+    input: CreateIdempotencyRecordInput,
+  ): Promise<CreateIdempotencyRecordOutput>;
+
+  /** Record that a claimed key's send succeeded, with its response. */
+  updateIdempotencyRecord(
+    input: UpdateIdempotencyRecordInput,
+  ): Promise<UpdateIdempotencyRecordOutput>;
+
+  /** Drop a still-`pending` claim (the send failed before SES accepted it). */
+  deleteIdempotencyRecord(
+    input: DeleteIdempotencyRecordInput,
+  ): Promise<DeleteIdempotencyRecordOutput>;
 }
