@@ -100,12 +100,102 @@ describe('sanitizeEmailHtml — hostile input', () => {
   });
 });
 
+/** The single `<a>` or `<area>` in a sanitized fragment, parsed back into a DOM. */
+function onlyLink(html: string): Element {
+  const links = new DOMParser().parseFromString(html, 'text/html').querySelectorAll('a, area');
+  expect(links).toHaveLength(1);
+  return links[0]!;
+}
+
 describe('sanitizeEmailHtml — links', () => {
   it('forces target=_blank and rel=noopener noreferrer on every link', () => {
     const out = sanitizeEmailHtml('<a href="https://example.com">visit</a>', { allowImages: true });
     expect(out).toContain('target="_blank"');
     expect(out).toContain('rel="noopener noreferrer"');
     expect(out).toContain('https://example.com');
+  });
+
+  it('drops every href that would resolve against the app page', () => {
+    // The reader's srcdoc iframe inherits the app page's base URL, so each of these would
+    // open a page on the app's own origin.
+    for (const href of [
+      '/',
+      '/account/settings',
+      'unsubscribe',
+      '../outside',
+      './page.html',
+      '?q=relative-query',
+      'www.example.com',
+      'example.com/pricing',
+      '',
+      ' /padded ',
+      // Same scheme as the https: app page, so the browser resolves these relative to it.
+      'https:account/settings',
+      'HTTPS:/account/settings',
+    ]) {
+      const link = onlyLink(
+        sanitizeEmailHtml(`<a href="${href}" target="_top">x</a>`, { allowImages: true }),
+      );
+      expect(link.hasAttribute('href'), href).toBe(false);
+      expect(link.hasAttribute('target'), href).toBe(false);
+      expect(link.textContent).toBe('x');
+    }
+  });
+
+  it('writes absolute links back fully resolved', () => {
+    for (const [href, expected] of [
+      ['https://example.com/a b', 'https://example.com/a%20b'],
+      ['  HTTPS://Example.com/x  ', 'https://example.com/x'],
+      ['http://example.com', 'http://example.com/'],
+      // Protocol-relative names its own host, like the https: app page would resolve it.
+      ['//example.com/protocol-relative', 'https://example.com/protocol-relative'],
+      // `http:` differs from the app page's scheme, so it is not relative to it.
+      ['http:example.com', 'http://example.com/'],
+      ['mailto:test@example.com', 'mailto:test@example.com'],
+      ['tel:+15551234567', 'tel:+15551234567'],
+    ] as const) {
+      const link = onlyLink(sanitizeEmailHtml(`<a href="${href}">x</a>`, { allowImages: true }));
+      expect(link.getAttribute('href'), href).toBe(expected);
+      expect(link.getAttribute('target'), href).toBe('_blank');
+      expect(link.getAttribute('rel'), href).toBe('noopener noreferrer');
+    }
+  });
+
+  it('points a #fragment link at the iframe itself so it scrolls the email', () => {
+    for (const [href, expected] of [
+      ['#section-2', 'about:srcdoc#section-2'],
+      [' #padded ', 'about:srcdoc#padded'],
+      ['#', 'about:srcdoc#'],
+    ] as const) {
+      const link = onlyLink(sanitizeEmailHtml(`<a href="${href}">x</a>`, { allowImages: true }));
+      expect(link.getAttribute('href'), href).toBe(expected);
+      // Overrides the document's <base target="_blank">.
+      expect(link.getAttribute('target'), href).toBe('_self');
+    }
+  });
+
+  it('applies the same rules to image-map areas', () => {
+    const relative = onlyLink(
+      sanitizeEmailHtml('<map name="m"><area href="/account" alt="a"></map>', {
+        allowImages: true,
+      }),
+    );
+    expect(relative.hasAttribute('href')).toBe(false);
+
+    const absolute = onlyLink(
+      sanitizeEmailHtml('<map name="m"><area href="https://example.com/x" alt="a"></map>', {
+        allowImages: true,
+      }),
+    );
+    expect(absolute.getAttribute('href')).toBe('https://example.com/x');
+    expect(absolute.getAttribute('target')).toBe('_blank');
+    expect(absolute.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  it('leaves a link with no href alone', () => {
+    const link = onlyLink(sanitizeEmailHtml('<a name="top">x</a>', { allowImages: true }));
+    expect(link.hasAttribute('href')).toBe(false);
+    expect(link.hasAttribute('target')).toBe(false);
   });
 });
 
@@ -131,6 +221,22 @@ describe('sanitizeEmailHtml — image blocking (layer 1: stripped src)', () => {
       allowImages: false,
     });
     expect(out).not.toContain('tracker.example');
+  });
+
+  it('never loads an image from the app page, even when images are allowed', () => {
+    for (const src of ['/logo.png', 'logo.png', 'https:logo.png', '?x=1']) {
+      const out = sanitizeEmailHtml(
+        `<img src="${src}"><table><tr><td background="${src}">x</td></tr></table>`,
+        { allowImages: true },
+      );
+      expect(out, src).not.toContain('src=');
+      expect(out, src).not.toContain('background=');
+    }
+  });
+
+  it('writes an allowed image source back fully resolved', () => {
+    const out = sanitizeEmailHtml('<img src="//cdn.example/a b.png">', { allowImages: true });
+    expect(out).toContain('src="https://cdn.example/a%20b.png"');
   });
 });
 
