@@ -6,11 +6,10 @@
  * read at ingest — attacker-controlled, so an id is kept only when it has RFC 5322's `msg-id`
  * shape, `<id-left@id-right>` built from atext and dots (no whitespace, no CR/LF, no quotes,
  * parentheses, or angle brackets), and the chain is capped in length and count before it can
- * ever reach an outgoing header. A message we
- * sent has no stored `Message-ID` of ours: SES replaces whatever the composer wrote with
- * `<sesMessageId@email.amazonses.com>` (`<id@<region>.amazonses.com>` outside us-east-1), which
- * is what recipients — and their replies' `In-Reply-To` — see, so it is derived from the SES
- * message id.
+ * ever reach an outgoing header. For a message we sent, SES replaces whatever the composer
+ * wrote with `<sesMessageId@email.amazonses.com>` (`<id@<region>.amazonses.com>` outside
+ * us-east-1) — what recipients, and their replies' `In-Reply-To`, see. The send records that id
+ * when SES accepts the message; for an older row it is derived from the SES message id.
  */
 
 /** RFC 5322 `atext`, plus `.` (dot-atom). */
