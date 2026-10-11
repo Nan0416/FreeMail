@@ -7,8 +7,8 @@
  *
  * What each tool SAYS — its description, schemas, and annotations, and the server's
  * instructions — lives in `tool-definitions.ts`; this file registers those and implements the
- * callbacks. `limit` defaulting for `list_emails` is still the same {@link parseListEmailsQuery}
- * the REST route uses.
+ * callbacks. `list_emails` defaulting is the same {@link parseListEmailsQuery} the REST route
+ * uses; its input schema rejects out-of-range values before that (see list-query.ts).
  *
  * The read tools are registered ONLY when inbound is enabled (see {@link buildMcpServer}),
  * since the feature is "agents read inbound mail"; with inbound off, only `send_email`
