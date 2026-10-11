@@ -94,13 +94,6 @@ export class FreeMailStack extends Stack {
     new CfnOutput(this, 'QuarantineBucketName', { value: data.quarantineBucket.bucketName });
     new CfnOutput(this, 'WebBucketName', { value: web.webBucket.bucketName });
 
-    new CfnOutput(this, 'ApiEndpoint', {
-      description:
-        'Generated execute-api URL of the FreeMail HTTP API. Callers should use the api ' +
-        'custom domain (ApiCustomDomainUrl) instead — the session cookies are __Host- ' +
-        'prefixed and therefore host-locked to it.',
-      value: api.httpApi.apiEndpoint,
-    });
     new CfnOutput(this, 'ApiCustomDomainUrl', {
       description:
         'The API domain. Used by BOTH the web app (cross-origin, credentialed CORS) and ' +

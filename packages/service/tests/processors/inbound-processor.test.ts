@@ -614,7 +614,7 @@ describe('InboundProcessor', () => {
 });
 
 describe('InboundProcessor — your own download links become attachments', () => {
-  const BASE = 'https://abc123.execute-api.us-east-1.amazonaws.com';
+  const BASE = 'https://api.example.com';
   const TOKEN = `T${'0'.repeat(42)}`;
 
   function stored(over: Partial<GetDownloadTokenOutput> = {}): GetDownloadTokenOutput {

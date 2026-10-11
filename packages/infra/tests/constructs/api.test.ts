@@ -91,7 +91,14 @@ describe('ApiConstruct', () => {
     const template = synth();
     template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
     template.resourceCountIs('AWS::SecretsManager::Secret', 0);
-    template.hasOutput('ApiEndpoint', {});
+  });
+
+  it('answers only on the custom domain — the generated execute-api URL is disabled', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
+      DisableExecuteApiEndpoint: true,
+    });
+    expect(() => template.hasOutput('ApiEndpoint', {})).toThrow();
   });
 
   it('locks credentialed CORS to the ONE canonical app origin (#47)', () => {

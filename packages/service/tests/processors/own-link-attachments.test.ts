@@ -12,7 +12,7 @@ import {
   type ResolveLinkedAttachmentsRequest,
 } from '../../src/processors/own-link-attachments.js';
 
-const BASE = 'https://abc123.execute-api.us-east-1.amazonaws.com';
+const BASE = 'https://api.example.com';
 const RECEIVED_AT = '2026-10-10T00:00:00.000Z';
 
 /** A well-formed (43-char base64url) token, distinct per n. */

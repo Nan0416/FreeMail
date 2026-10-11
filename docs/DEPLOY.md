@@ -102,15 +102,14 @@ The Lambda handlers are bundled from source at synth (esbuild), so no separate h
 
 `cdk deploy` prints outputs you'll use immediately:
 
-| Output                                                                | Use                                                                                                                                                                                            |
-| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`WebAppUrl`**                                                       | Open this to sign in and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                                                                               |
-| **`ApiEndpoint`**                                                     | The generated execute-api URL. New clients, MCP agents and download links all use `ApiCustomDomainUrl`; keep it enabled — download links sent before that switch point here until they expire. |
-| **`ApiCustomDomainUrl`**                                              | The API domain. Used by **both** the web app (cross-origin) and agents (`x-api-key`).                                                                                                          |
-| **`HostedZoneNameServers`**                                           | Present only when FreeMail **created** the zone. **Set these at your registrar** to activate the zone (see [§5](#5-dns-and-email-authentication)).                                             |
-| **`SesProductionAccessNote`**                                         | A link to the SES account dashboard to request production access (see [§4](#4-ses-production-access-sandbox-exit)).                                                                            |
-| **`SesMailFromDomain`**, **`SesBounceComplaintTopicArn`**             | The custom MAIL FROM subdomain and the SNS topic that receives bounce/complaint notifications.                                                                                                 |
-| **`MailBucketName`**, **`QuarantineBucketName`**, **`WebBucketName`** | The S3 buckets (mail and quarantine are retained on teardown — see [§10](#10-troubleshooting)).                                                                                                |
+| Output                                                                | Use                                                                                                                                                |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`WebAppUrl`**                                                       | Open this to sign in and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                                   |
+| **`ApiCustomDomainUrl`**                                              | The API domain. Used by **both** the web app (cross-origin) and agents (`x-api-key`).                                                              |
+| **`HostedZoneNameServers`**                                           | Present only when FreeMail **created** the zone. **Set these at your registrar** to activate the zone (see [§5](#5-dns-and-email-authentication)). |
+| **`SesProductionAccessNote`**                                         | A link to the SES account dashboard to request production access (see [§4](#4-ses-production-access-sandbox-exit)).                                |
+| **`SesMailFromDomain`**, **`SesBounceComplaintTopicArn`**             | The custom MAIL FROM subdomain and the SNS topic that receives bounce/complaint notifications.                                                     |
+| **`MailBucketName`**, **`QuarantineBucketName`**, **`WebBucketName`** | The S3 buckets (mail and quarantine are retained on teardown — see [§10](#10-troubleshooting)).                                                    |
 
 ### After deploying
 
