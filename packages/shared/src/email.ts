@@ -196,7 +196,8 @@ export type EmailListFilter = EmailDirection | 'failed';
  * `sending` the instant the message is archived + recorded, then `sent` once SES accepts it
  * (a `sesMessageId` exists) or `send_failed` if SES rejects it — so a failed send is visible
  * in the mailbox instead of vanishing. SES's later reports then move it on: `delivered` once a
- * receiving server accepted it, `bounced` once any recipient's copy bounced (which outranks
+ * receiving server accepted it for at least one recipient (each recipient's outcome is in the
+ * delivery events), `bounced` once any recipient's copy bounced (which outranks
  * `delivered`), `send_failed` if SES rejected it after all. Absent on inbound rows (and on any
  * legacy sent row written before this field existed).
  */
@@ -214,7 +215,10 @@ export interface DeliveryEvent {
   readonly at: string;
   /** The recipients it is about (empty when SES names none, e.g. a reject). */
   readonly recipients: readonly string[];
-  /** For a bounce, delay, complaint, or reject: SES's reason, condensed. */
+  /**
+   * For a bounce, delay, complaint, or reject: SES's own classification — type names and the
+   * enhanced status code (`Permanent/General (5.1.1)`), never the receiving server's free text.
+   */
   readonly detail?: string;
 }
 

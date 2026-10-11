@@ -16,6 +16,9 @@ import type {
 } from '@freemail/shared';
 import type { EmailListIndexAttribute } from '@freemail/shared/storage';
 
+/** Most delivery reports kept on one sent row; later ones still move its status. */
+export const MAX_DELIVERY_EVENTS = 30;
+
 /** Partition holding sent messages. */
 export const SENT_PARTITION = 'SENT';
 /** Partition holding received messages. */
@@ -111,7 +114,10 @@ export interface CreateSentEmailInput {
    * transition. Absent before SES accepts it, and on rows from before it was recorded.
    */
   readonly messageIdHeader?: string;
-  /** SES's reports after accepting it, appended as they arrive (SNS may repeat one). */
+  /**
+   * SES's reports after accepting it, appended as they arrive (SNS may repeat one) — at most
+   * {@link MAX_DELIVERY_EVENTS}, so the row stays well inside DynamoDB's item limit.
+   */
   readonly deliveryEvents?: readonly DeliveryEvent[];
 }
 
@@ -391,8 +397,10 @@ export interface EmailsDao {
 
   /**
    * Apply the terminal status transition after the SES call — `sent` (+ `sesMessageId`) or
-   * `send_failed` (+ `error`). Conditional on the row existing (it was just written); a
-   * plain `SET`, it never moves the row (the sort key derives from the unchanged `sentAt`).
+   * `send_failed` (+ `error`). Conditional on the row existing (it was just written) and still
+   * `sending`: a delivery report that got there first keeps its status, and the ids and error
+   * are still recorded. A plain `SET`, it never moves the row (the sort key derives from the
+   * unchanged `sentAt`).
    */
   updateSentEmailStatus(input: UpdateSentEmailStatusInput): Promise<UpdateSentEmailStatusOutput>;
 

@@ -15,7 +15,9 @@ import {
   Identity,
   SuppressionReasons,
 } from 'aws-cdk-lib/aws-ses';
-import { Topic } from 'aws-cdk-lib/aws-sns';
+import { SqsDestination } from 'aws-cdk-lib/aws-lambda-destinations';
+import { FilterOrPolicy, SubscriptionFilter, Topic } from 'aws-cdk-lib/aws-sns';
+import { Queue } from 'aws-cdk-lib/aws-sqs';
 import { LambdaSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
 import type { SesIdentityMode } from '@freemail/shared/config';
@@ -214,7 +216,7 @@ export class SesConstruct extends Construct {
       handler: 'index.handler',
       timeout: Duration.seconds(10),
       logGroup,
-      description: 'Logs SES bounce/complaint notifications to CloudWatch for audit.',
+      description: 'Logs SES bounce/complaint/delay/reject reports to CloudWatch for audit.',
       code: Code.fromInline(
         [
           'exports.handler = async (event) => {',
@@ -225,7 +227,17 @@ export class SesConstruct extends Construct {
         ].join('\n'),
       ),
     });
-    this.bounceComplaintTopic.addSubscription(new LambdaSubscription(logger));
+    // Not deliveries: one per sent message, with its subject and recipients, would turn the
+    // audit log into a copy of the Sent folder. The tracker records those on the row.
+    this.bounceComplaintTopic.addSubscription(
+      new LambdaSubscription(logger, {
+        filterPolicyWithMessageBody: {
+          eventType: FilterOrPolicy.filter(
+            SubscriptionFilter.stringFilter({ denylist: ['Delivery'] }),
+          ),
+        },
+      }),
+    );
     return logger;
   }
 
@@ -251,6 +263,14 @@ export class SesConstruct extends Construct {
       }),
     });
     emailsTable.grant(tracker, 'dynamodb:UpdateItem');
+    // SNS invokes asynchronously: retry a storage failure, then keep the report for inspection.
+    tracker.configureAsyncInvoke({
+      retryAttempts: 2,
+      maxEventAge: Duration.hours(6),
+      onFailure: new SqsDestination(
+        new Queue(this, 'DeliveryTrackerDlq', { retentionPeriod: Duration.days(14) }),
+      ),
+    });
     this.bounceComplaintTopic.addSubscription(new LambdaSubscription(tracker));
     return tracker;
   }

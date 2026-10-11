@@ -166,7 +166,23 @@ describe('SesConstruct', () => {
         policy as { Properties: { PolicyDocument: { Statement: { Action: string | string[] }[] } } }
       ).Properties.PolicyDocument.Statement.flatMap((statement) => statement.Action),
     );
-    expect(actions).toEqual(['dynamodb:UpdateItem']);
+    // On the table: UpdateItem only. (Its other grant is SendMessage to its own DLQ.)
+    expect(actions.filter((action) => action.startsWith('dynamodb:'))).toEqual([
+      'dynamodb:UpdateItem',
+    ]);
+    // A report that still fails after the retries is kept, not lost.
+    template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
+      MaximumRetryAttempts: 2,
+      DestinationConfig: { OnFailure: { Destination: Match.anyValue() } },
+    });
+  });
+
+  it("keeps deliveries out of the audit log (they'd copy the Sent folder into it)", () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::SNS::Subscription', {
+      FilterPolicyScope: 'MessageBody',
+      FilterPolicy: { eventType: [{ 'anything-but': ['Delivery'] }] },
+    });
   });
 
   it('publishes bounce and complaint events to an SNS topic', () => {

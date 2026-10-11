@@ -25,6 +25,7 @@ import type { EmailListFilter } from '@freemail/shared';
 import { EMAIL_LIST_INDEX_ATTRIBUTES, EMAIL_LIST_INDEX_NAME } from '@freemail/shared/storage';
 import { getLogger } from '../utils/logger.js';
 import { CONDITIONAL_CHECK_FAILED, EmailEntity, isConditionalCheckFailed } from './entities.js';
+import { MAX_DELIVERY_EVENTS } from './emails-dao.js';
 import type {
   UpdateSentEmailDeliveryInput,
   UpdateSentEmailDeliveryOutput,
@@ -182,11 +183,17 @@ export class DdbEmailsDao implements EmailsDao {
           // The row was just written by putSent; guard against a vanished/absent row — and never
           // walk a status back: SES's report of the delivery may already have moved it on.
           ConditionExpression: 'attribute_exists(pk) AND #status = :sending',
+          // Tells the two apart: a failed check with no row returned means the row is gone.
+          ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
         }),
       );
     } catch (err) {
-      if (!isConditionalCheckFailed(err) || sets.length === 1) {
+      if (!isConditionalCheckFailed(err) || !hasOldItem(err)) {
         throw err;
+      }
+      if (sets.length === 1) {
+        // Only the status was to change, and a report already moved it on.
+        return {};
       }
       // A report got there first: keep its status, record the rest.
       delete names['#status'];
@@ -216,16 +223,28 @@ export class DdbEmailsDao implements EmailsDao {
           Key: key,
           UpdateExpression: 'SET #events = list_append(if_not_exists(#events, :empty), :events)',
           ExpressionAttributeNames: { '#events': 'deliveryEvents' },
-          ExpressionAttributeValues: { ':empty': [], ':events': input.events },
-          // Only a message we recorded: never create a stray row from a report.
-          ConditionExpression: 'attribute_exists(pk)',
+          ExpressionAttributeValues: {
+            ':empty': [],
+            ':events': input.events,
+            ':max': MAX_DELIVERY_EVENTS,
+          },
+          // Only a message we recorded — never create a stray row from a report — and only while
+          // the list has room, so the row stays inside DynamoDB's item limit.
+          ConditionExpression:
+            'attribute_exists(pk) AND (attribute_not_exists(#events) OR size(#events) < :max)',
+          ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
         }),
       );
     } catch (err) {
-      if (isConditionalCheckFailed(err)) {
+      if (isConditionalCheckFailed(err) && !hasOldItem(err)) {
         return { found: false };
       }
-      throw err;
+      // The list is full, or the row is at DynamoDB's size limit: the report isn't kept, but it
+      // still moves the status (a final bounce must still show as bounced).
+      if (!isConditionalCheckFailed(err) && !isItemTooLarge(err)) {
+        throw err;
+      }
+      logger.warn(`Delivery report for sent message ${input.id} not stored: the row is full.`);
     }
     if (input.status !== undefined) {
       const from = STATUS_ADVANCES_FROM[input.status];
@@ -636,3 +655,14 @@ const STATUS_ADVANCES_FROM: Record<
   bounced: ['sending', 'sent', 'delivered'],
   send_failed: ['sending', 'sent'],
 };
+
+/** A failed condition that returned the existing item (ReturnValuesOnConditionCheckFailure). */
+function hasOldItem(err: unknown): boolean {
+  return (err as { Item?: unknown } | null)?.Item !== undefined;
+}
+
+/** DynamoDB's refusal of a write that would take an item past its 400 KB limit. */
+function isItemTooLarge(err: unknown): boolean {
+  const failure = err as { name?: string; message?: string } | null;
+  return failure?.name === 'ValidationException' && /item size/i.test(failure.message ?? '');
+}

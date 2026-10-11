@@ -9,6 +9,11 @@
  * without them — mail sent before tags, or not by FreeMail — is skipped, and so is one whose row
  * is gone. Only a storage failure throws, so the async invocation retries; SNS delivers at least
  * once, and a repeated report just appends a duplicate the reader folds away.
+ *
+ * What it keeps of a report is only what SES itself generates — the bounce or delay type and
+ * the enhanced status code (`5.1.1`) — never the receiving server's free-text diagnostic:
+ * anyone the agent emails controls that text, and it would reach the agent in a sent message,
+ * which the read tools present as self-authored.
  */
 import type { DeliveryEvent, SentStatus } from '@freemail/shared';
 import type { EmailsDao } from '../data/emails-dao.js';
@@ -91,11 +96,13 @@ function toReport(event: SesEvent): Report | undefined {
       };
     case 'Bounce': {
       const bounce = event.bounce;
-      const diagnostic = bounce?.bouncedRecipients?.find((r) => r.diagnosticCode)?.diagnosticCode;
       return {
         event: deliveryEvent('bounced', bounce?.timestamp ?? fallbackAt, {
           recipients: bounce?.bouncedRecipients?.map((r) => r.emailAddress),
-          detail: joinDetail([bounce?.bounceType, bounce?.bounceSubType], diagnostic),
+          detail: joinDetail(
+            [bounce?.bounceType, bounce?.bounceSubType],
+            bounce?.bouncedRecipients?.map((r) => r.status ?? r.diagnosticCode),
+          ),
         }),
         status: 'bounced',
       };
@@ -104,22 +111,26 @@ function toReport(event: SesEvent): Report | undefined {
       return {
         event: deliveryEvent('complained', event.complaint?.timestamp ?? fallbackAt, {
           recipients: event.complaint?.complainedRecipients?.map((r) => r.emailAddress),
-          detail: event.complaint?.complaintFeedbackType,
+          detail: joinDetail([event.complaint?.complaintFeedbackType], undefined),
         }),
       };
     case 'DeliveryDelay': {
       const delay = event.deliveryDelay;
-      const diagnostic = delay?.delayedRecipients?.find((r) => r.diagnosticCode)?.diagnosticCode;
       return {
         event: deliveryEvent('delayed', delay?.timestamp ?? fallbackAt, {
           recipients: delay?.delayedRecipients?.map((r) => r.emailAddress),
-          detail: joinDetail([delay?.delayType], diagnostic),
+          detail: joinDetail(
+            [delay?.delayType],
+            delay?.delayedRecipients?.map((r) => r.status ?? r.diagnosticCode),
+          ),
         }),
       };
     }
     case 'Reject':
       return {
-        event: deliveryEvent('rejected', fallbackAt, { detail: event.reject?.reason }),
+        event: deliveryEvent('rejected', fallbackAt, {
+          detail: SES_REASON_RE.test(event.reject?.reason ?? '') ? event.reject?.reason : undefined,
+        }),
         status: 'send_failed',
       };
     default:
@@ -164,13 +175,28 @@ function clean(value: string | undefined, maxChars: number): string {
   return line.length > maxChars ? line.slice(0, maxChars) : line;
 }
 
-/** `Permanent/General: smtp; 550 5.1.1 user unknown`. */
+/** One of SES's own type names (`Permanent`, `MailboxFull`, `abuse`) — letters and `-` only. */
+const SES_TOKEN_RE = /^[A-Za-z-]{1,40}$/;
+
+/** SES's own short reject reason (`Bad content`) — words only. */
+const SES_REASON_RE = /^[A-Za-z][A-Za-z ]{0,59}$/;
+
+/** An RFC 3463 enhanced status code (`5.1.1`), wherever it appears in a status or diagnostic. */
+const STATUS_CODE_RE = /\b([245]\.\d{1,3}\.\d{1,3})\b/;
+
+/**
+ * `Permanent/General (5.1.1)`: the SES type names that are well-formed tokens, and the first
+ * enhanced status code found — nothing else of what the remote server wrote.
+ */
 function joinDetail(
   kinds: ReadonlyArray<string | undefined>,
-  diagnostic: string | undefined,
+  statuses: ReadonlyArray<string | undefined> | undefined,
 ): string {
-  const kind = kinds.filter((part) => part !== undefined && part !== '').join('/');
-  return [kind, diagnostic].filter((part) => part !== undefined && part !== '').join(': ');
+  const kind = kinds.filter((part) => part !== undefined && SES_TOKEN_RE.test(part)).join('/');
+  const code = (statuses ?? [])
+    .map((status) => (status === undefined ? undefined : STATUS_CODE_RE.exec(status)?.[1]))
+    .find((match) => match !== undefined);
+  return code === undefined ? kind : `${kind} (${code})`.trim();
 }
 
 /** The parts of SES's event JSON this reads — everything optional: it is external input. */
@@ -188,6 +214,7 @@ interface SesEvent {
     readonly bounceSubType?: string;
     readonly bouncedRecipients?: readonly {
       readonly emailAddress?: string;
+      readonly status?: string;
       readonly diagnosticCode?: string;
     }[];
   };
@@ -201,6 +228,7 @@ interface SesEvent {
     readonly delayType?: string;
     readonly delayedRecipients?: readonly {
       readonly emailAddress?: string;
+      readonly status?: string;
       readonly diagnosticCode?: string;
     }[];
   };

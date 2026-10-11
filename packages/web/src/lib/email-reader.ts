@@ -141,7 +141,7 @@ export function sentStatusNotice(email: EmailDetail): string | null {
   }
   if (email.status === 'bounced') {
     const bounced = (email.deliveryEvents ?? []).filter((event) => event.type === 'bounced');
-    const who = bounced.flatMap((event) => event.recipients);
+    const who = [...new Set(bounced.flatMap((event) => event.recipients))];
     const reason = bounced.find((event) => event.detail)?.detail;
     return (
       `This message bounced${who.length ? ` for ${who.join(', ')}` : ''}` +

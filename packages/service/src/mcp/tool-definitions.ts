@@ -172,8 +172,9 @@ const sentStatusSchema = z
   .describe(
     'Sent mail only. "sending": recorded, but SES\'s answer was not (still sending, or the ' +
       'outcome is unknown — it may have gone out). "sent": SES accepted it for delivery. ' +
-      '"delivered": a receiving mail server accepted it. "bounced": it bounced for at least one ' +
-      'recipient (see deliveryEvents). "send_failed": SES refused it; it was not sent.',
+      '"delivered": a receiving mail server accepted it for at least one recipient (each ' +
+      "recipient's outcome is in deliveryEvents). " +
+      '"bounced": it bounced for at least one recipient (see deliveryEvents). "send_failed": SES refused it; it was not sent.',
   );
 
 const deliveryEventSchema = outputSchemaFor<DeliveryEvent>()(
@@ -184,7 +185,10 @@ const deliveryEventSchema = outputSchemaFor<DeliveryEvent>()(
     detail: z
       .string()
       .optional()
-      .describe("SES's reason for a bounce, delay, complaint, or reject, condensed."),
+      .describe(
+        "SES's classification — e.g. Permanent/General (5.1.1) for a bounce. Only SES's own " +
+          "codes, never the receiving server's text.",
+      ),
   }),
 );
 

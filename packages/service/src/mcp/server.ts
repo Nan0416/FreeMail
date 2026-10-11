@@ -246,7 +246,7 @@ function listRow(email: EmailListItem): string {
   } else if (email.direction === 'inbound' && email.quarantined) {
     flags = ' [quarantined]';
   } else if (email.direction === 'sent' && email.status && email.status !== 'sent') {
-    // Surface a not-yet-delivered send (`sending`/`send_failed`) so a failed send is visible.
+    // Surface any status but plain `sent`: sending (unknown outcome), delivered, bounced, failed.
     flags = ` [${email.status}]`;
   }
   return `- [${email.direction}] ${email.date} ${who} — ${email.subject || '(no subject)'} (id: ${email.id})${flags}`;
