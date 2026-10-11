@@ -83,6 +83,10 @@ export class McpDependencyFactory {
       ...limits,
       downloadBaseUrl: this.config.downloadBaseUrl,
       emailDomain: this.config.emailDomain,
+      sesRegion: this.config.sesRegion,
+      // Without inbound this Lambda has no read grant on the emails table, so it cannot look up
+      // the message a reply answers.
+      canReadMailbox: this.config.inboundEnabled,
     });
 
     if (!this.config.inboundEnabled) {

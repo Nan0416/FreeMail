@@ -25,6 +25,12 @@ export interface RawMimeInput {
   /** Passed to the composer but never emitted as a header (see file header). */
   readonly bcc: readonly string[];
   readonly subject: string;
+  /** `Reply-To` addresses, if any. */
+  readonly replyTo?: readonly string[];
+  /** `In-Reply-To`: the id of the message this one answers (already validated). */
+  readonly inReplyTo?: string;
+  /** `References`: the thread's ids, oldest first (already validated). */
+  readonly references?: readonly string[];
   readonly text?: string;
   readonly html?: string;
   readonly attachments: readonly RawMimeAttachment[];
@@ -38,6 +44,13 @@ export function buildRawMime(input: RawMimeInput): Promise<Buffer> {
     ...(input.cc.length > 0 ? { cc: [...input.cc] } : {}),
     ...(input.bcc.length > 0 ? { bcc: [...input.bcc] } : {}),
     subject: input.subject,
+    ...(input.replyTo !== undefined && input.replyTo.length > 0
+      ? { replyTo: [...input.replyTo] }
+      : {}),
+    ...(input.inReplyTo !== undefined ? { inReplyTo: input.inReplyTo } : {}),
+    ...(input.references !== undefined && input.references.length > 0
+      ? { references: [...input.references] }
+      : {}),
     ...(input.text !== undefined ? { text: input.text } : {}),
     ...(input.html !== undefined ? { html: input.html } : {}),
     attachments: input.attachments.map((attachment) => ({

@@ -9,6 +9,8 @@ export interface ComposePrefill {
   readonly cc: string;
   readonly subject: string;
   readonly html: string;
+  /** For a reply: the id of the message answered, so the send threads it. Absent on forward. */
+  readonly inReplyTo?: string;
 }
 
 function escapeHtml(value: string): string {
@@ -58,6 +60,23 @@ function domainOf(address: string): string {
 }
 
 /**
+ * True when a received message asks for replies at a domain other than its sender's — the
+ * shape of a reply-redirect scam. Reply follows `Reply-To`, so the reader flags it.
+ */
+export function replyToElsewhere(email: EmailDetail): boolean {
+  if (email.direction !== 'inbound' || !email.replyTo) {
+    return false;
+  }
+  const senderDomain = domainOf(email.from);
+  return email.replyTo.some((address) => !relatedDomains(domainOf(address), senderDomain));
+}
+
+/** Equal, or one a subdomain of the other (`mail.example.com` and `example.com`). */
+function relatedDomains(a: string, b: string): boolean {
+  return a === b || a.endsWith(`.${b}`) || b.endsWith(`.${a}`);
+}
+
+/**
  * Which of our addresses an inbound message reached, so the reply goes out from it.
  * Preference: a recipient on the same domain as the last address we sent from, then the
  * last sender itself, then the first recipient.
@@ -73,8 +92,10 @@ export function replySender(email: EmailDetail, lastSender: string): string {
 }
 
 /**
- * Prefill a compose window for reply / reply-all / forward. The API sends each message
- * standalone (it cannot set `In-Reply-To`), so this is a new message with a quoted body.
+ * Prefill a compose window for reply / reply-all / forward. A reply carries the original's id
+ * as `inReplyTo`, so the API threads it (`In-Reply-To` / `References`) into the same
+ * conversation; a forward starts a new one. A received message's `Reply-To`, when it has one,
+ * is where the sender asked replies to go, so it replaces `From` as the primary recipient.
  */
 export function buildPrefill(
   email: EmailDetail,
@@ -104,7 +125,12 @@ export function buildPrefill(
   }
 
   // Replying to our own sent message continues to its recipients rather than ourselves.
-  const primary = email.direction === 'sent' ? [...email.to] : [email.from];
+  const primary =
+    email.direction === 'sent'
+      ? [...email.to]
+      : email.replyTo && email.replyTo.length > 0
+        ? [...email.replyTo]
+        : [email.from];
   const others =
     mode === 'replyAll'
       ? [...(email.direction === 'sent' ? [] : email.to), ...email.cc].filter(
@@ -117,5 +143,6 @@ export function buildPrefill(
     cc: others.join(', '),
     subject: withPrefix(email.subject, 'Re'),
     html: `<p></p><p>On ${when}, ${sender} wrote:</p>${quoted}`,
+    inReplyTo: email.id,
   };
 }

@@ -18,6 +18,8 @@ export interface Draft {
   readonly subject: string;
   /** Editor HTML. */
   readonly html: string;
+  /** For a reply: the id of the message answered, so sending the draft still threads it. */
+  readonly inReplyTo?: string;
   /** ISO-8601. */
   readonly updatedAt: string;
 }

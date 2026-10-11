@@ -32,6 +32,8 @@ export interface ComposeInit {
   readonly bcc?: string;
   readonly subject?: string;
   readonly html?: string;
+  /** For a reply: the id of the message answered (threads the send). */
+  readonly inReplyTo?: string;
 }
 
 export interface ComposeWindowProps {
@@ -120,6 +122,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     bcc,
     subject,
     html,
+    ...(props.init.inReplyTo ? { inReplyTo: props.init.inReplyTo } : {}),
     updatedAt: new Date().toISOString(),
   });
   const latest = useRef(snapshot);
@@ -275,11 +278,14 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
         ...(recipients.to.length ? { to: recipients.to } : {}),
         ...(recipients.cc.length ? { cc: recipients.cc } : {}),
         ...(recipients.bcc.length ? { bcc: recipients.bcc } : {}),
-        ...(subject.trim() ? { subject } : {}),
+        // A reply always sends its subject, so one cleared on purpose is not refilled with
+        // "Re: …" by the server.
+        ...(subject.trim() || props.init.inReplyTo ? { subject } : {}),
         // Both parts: HTML for capable clients, plain text as the alternative.
         html: bodyHtml,
         text: bodyText,
         ...(attachments.length ? { attachments } : {}),
+        ...(props.init.inReplyTo ? { inReplyTo: props.init.inReplyTo } : {}),
       };
       await auth.client.sendEmail(request);
       setLastSender({ address: request.from, name: fromName.trim() });

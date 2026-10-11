@@ -134,6 +134,7 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
         bcc: draft.bcc,
         subject: draft.subject,
         html: draft.html,
+        inReplyTo: draft.inReplyTo,
       }),
     [openCompose],
   );

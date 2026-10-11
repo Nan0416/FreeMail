@@ -289,3 +289,20 @@ describe('EmailReader — actions', () => {
     expect(screen.getByRole('button', { name: 'Reply' })).toBeDisabled();
   });
 });
+
+describe('EmailReader — Reply-To', () => {
+  it("shows Reply-To and flags one outside the sender's domain", async () => {
+    renderReader(mockReader({ ...BASE_INBOUND, replyTo: ['pay@evil.test'] }));
+
+    expect(await screen.findByText('Reply-To')).toBeInTheDocument();
+    expect(screen.getByText(/pay@evil\.test/)).toBeInTheDocument();
+    expect(screen.getByText(/not the sender.s domain/)).toBeInTheDocument();
+  });
+
+  it('shows a same-domain Reply-To without the flag', async () => {
+    renderReader(mockReader({ ...BASE_INBOUND, replyTo: ['desk@x.com'] }));
+
+    expect(await screen.findByText('Reply-To')).toBeInTheDocument();
+    expect(screen.queryByText(/not the sender.s domain/)).not.toBeInTheDocument();
+  });
+});

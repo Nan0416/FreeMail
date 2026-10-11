@@ -22,6 +22,7 @@ import {
   MAX_RAW_MESSAGE_BYTES,
   MAX_UPLOAD_BYTES,
   MAX_RECIPIENTS,
+  MAX_REPLY_TO_ADDRESSES,
   isSubdomainOrEqual,
   isValidEmailAddress,
   normalizeDomain,
@@ -40,13 +41,14 @@ import type { OutboundObjectStore } from '../facades/s3-outbound-object-store.js
 import { appendDownloadLinks, type DownloadLink } from '../utils/attachment-links.js';
 import type { UploadStore, UploadedObject } from '../facades/s3-upload-store.js';
 import { downloadUrl, generateDownloadToken } from '../utils/download-token.js';
-import { encodeEmailRef } from '../utils/email-ref.js';
-import { emailErrors } from '../utils/errors.js';
+import { decodeEmailRef, encodeEmailRef } from '../utils/email-ref.js';
+import { EmailError, emailErrors } from '../utils/errors.js';
 import { mapBounded } from '../utils/bounded-map.js';
 import { buildRawMime, type RawMimeAttachment, type RawMimeInput } from '../utils/mime.js';
 import type { SesSender } from '../facades/ses-email-facade.js';
 import { isValidUploadId, uploadKey } from './attachment-service.js';
 import { bodyKey, estimateRowBytes, storeEmailBody } from './email-body-storage.js';
+import { replyReferences, replySubject, sesMessageIdHeader } from '../utils/threading.js';
 
 /** A send, exactly as REST and MCP both receive it. */
 export type SendEmailServiceRequest = SendEmailRequest;
@@ -73,6 +75,14 @@ export interface EmailServiceDeps {
   readonly downloadBaseUrl: string;
   /** The domain every `from` must be under (the configured send domain). */
   readonly emailDomain: string;
+  /** The region SES sends from — it names the host of the Message-ID SES gives a sent message. */
+  readonly sesRegion: string;
+  /**
+   * Whether this service may read the mailbox to look up the message a reply answers. False on
+   * an MCP server without inbound, whose role has no read grant on the emails table. Required,
+   * so a new caller decides rather than inheriting a grant it may not have.
+   */
+  readonly canReadMailbox: boolean;
   /** MIME builder; injectable so service tests don't depend on the MIME library. */
   readonly buildMime?: (input: RawMimeInput) => Promise<Buffer>;
   /** Clock, injectable for tests. */
@@ -104,6 +114,8 @@ export class EmailService {
   private readonly embedTotalBytes: number;
   private readonly downloadBaseUrl: string;
   private readonly emailDomain: string;
+  private readonly sesRegion: string;
+  private readonly canReadMailbox: boolean;
   private readonly buildMime: (input: RawMimeInput) => Promise<Buffer>;
   private readonly now: () => Date;
   private readonly generateId: () => string;
@@ -120,6 +132,8 @@ export class EmailService {
     this.embedTotalBytes = deps.embedTotalBytes ?? DEFAULT_EMBED_TOTAL_BYTES;
     this.downloadBaseUrl = deps.downloadBaseUrl;
     this.emailDomain = normalizeDomain(deps.emailDomain);
+    this.sesRegion = deps.sesRegion;
+    this.canReadMailbox = deps.canReadMailbox;
     this.buildMime = deps.buildMime ?? buildRawMime;
     this.now = deps.now ?? (() => new Date());
     this.generateId = deps.generateId ?? (() => crypto.randomUUID());
@@ -145,12 +159,28 @@ export class EmailService {
         throw emailErrors.invalidRequest(`"${address}" is not a valid email address.`);
       }
     }
+    const replyTo = normalizeRecipients(request.replyTo);
+    if (replyTo.length > MAX_REPLY_TO_ADDRESSES) {
+      throw emailErrors.invalidRequest(
+        `"replyTo" may list at most ${MAX_REPLY_TO_ADDRESSES} addresses.`,
+      );
+    }
+    for (const address of replyTo) {
+      if (!isValidEmailAddress(address)) {
+        throw emailErrors.invalidRequest(`"replyTo": "${address}" is not a valid email address.`);
+      }
+    }
 
     const text = nonEmpty(request.text);
     const html = nonEmpty(request.html);
     if (text === undefined && html === undefined) {
       throw emailErrors.invalidRequest('An email body (text or html) is required.');
     }
+
+    const thread =
+      request.inReplyTo === undefined ? undefined : await this.resolveThread(request.inReplyTo);
+    const subject = request.subject ?? (thread ? replySubject(thread.subject) : '');
+    const threadHeaders = thread?.headers;
 
     const attachments = await this.resolveAttachments(request.attachments);
 
@@ -201,7 +231,11 @@ export class EmailService {
       to,
       cc,
       bcc,
-      subject: request.subject ?? '',
+      subject,
+      ...(replyTo.length > 0 ? { replyTo } : {}),
+      ...(threadHeaders
+        ? { inReplyTo: threadHeaders.inReplyTo, references: threadHeaders.references }
+        : {}),
       ...(body.text !== undefined ? { text: body.text } : {}),
       ...(body.html !== undefined ? { html: body.html } : {}),
       attachments: embed,
@@ -225,7 +259,9 @@ export class EmailService {
       to,
       cc,
       bcc,
-      subject: request.subject ?? '',
+      subject,
+      ...(replyTo.length > 0 ? { replyTo } : {}),
+      ...(threadHeaders ? { references: threadHeaders.references } : {}),
       sentAt,
       attachmentCount: attachments.length,
       sizeBytes: raw.length,
@@ -266,10 +302,23 @@ export class EmailService {
 
     // Delivered: mark sent (+ the SES id). Best-effort — the mail is already out, so this must
     // not fail the response; a lost update leaves the row at 'sending' (self-describing).
-    await this.recordTerminalStatus({ id, sentAt, status: 'sent', sesMessageId: messageId });
+    // Record the Message-ID SES gave it too, so a later reply threads on exactly what the
+    // recipients saw even if this deployment's region changes.
+    await this.recordTerminalStatus({
+      id,
+      sentAt,
+      status: 'sent',
+      sesMessageId: messageId,
+      messageIdHeader: sesMessageIdHeader(messageId, this.sesRegion),
+    });
 
     // The same opaque id the list and read surfaces use, so a caller can open what it just sent.
-    return { id: encodeEmailRef(EmailEntity.sent(sentAt, id)), messageId, sentAt };
+    return {
+      id: encodeEmailRef(EmailEntity.sent(sentAt, id)),
+      messageId,
+      sentAt,
+      ...(thread ? { threaded: threadHeaders !== undefined } : {}),
+    };
   }
 
   /**
@@ -358,6 +407,51 @@ export class EmailService {
     return [...own];
   }
 
+  /**
+   * The message `handle` names, for a reply: its subject, and the threading headers —
+   * `In-Reply-To` is its `Message-ID` (stored for received mail, derived from the SES id for our
+   * own) and `References` extends its chain. A message without a usable id (received before ids
+   * were recorded, or with a malformed one; a send SES never accepted) has no headers: the reply
+   * still goes out, unthreaded, and the response says so. A handle that names nothing is the
+   * caller's mistake, and an error.
+   */
+  private async resolveThread(handle: unknown): Promise<ReplyThread> {
+    if (typeof handle !== 'string' || handle.length === 0) {
+      throw emailErrors.invalidRequest('"inReplyTo" must be a message id from the mailbox list.');
+    }
+    if (!this.canReadMailbox) {
+      throw emailErrors.invalidRequest(
+        '"inReplyTo" needs receiving enabled on this deployment, to look up the original message.',
+      );
+    }
+    let row;
+    try {
+      row = await this.emailsDao.getEmail(decodeEmailRef(handle));
+    } catch (error) {
+      if (error instanceof EmailError) {
+        throw emailErrors.invalidRequest('"inReplyTo" is not a message id from the mailbox list.');
+      }
+      throw error;
+    }
+    if (row === null) {
+      throw emailErrors.invalidRequest('"inReplyTo" names no message in the mailbox.');
+    }
+    // Received mail: its own header. Sent mail: the id recorded when SES accepted it, or — on a
+    // row from before that was recorded — derived from the SES id the same way.
+    const messageId =
+      row.messageIdHeader ??
+      (row.direction === 'sent' && row.sesMessageId !== undefined
+        ? sesMessageIdHeader(row.sesMessageId, this.sesRegion)
+        : undefined);
+    if (messageId === undefined) {
+      return { subject: row.subject };
+    }
+    return {
+      subject: row.subject,
+      headers: { inReplyTo: messageId, references: replyReferences(row.references, messageId) },
+    };
+  }
+
   /** Enforce "from any address under the configured domain" — an explicit 400, not a 500 from SES. */
   private validateSender(from: unknown): string {
     if (typeof from !== 'string' || from.trim().length === 0) {
@@ -426,6 +520,17 @@ export class EmailService {
     }
     return resolved;
   }
+}
+
+/** What a reply carries from the message it answers. */
+interface ReplyThread {
+  /** The original's subject — the default for the reply's own. */
+  readonly subject: string;
+  /** Absent when the original has no usable `Message-ID`: the reply goes out unthreaded. */
+  readonly headers?: {
+    readonly inReplyTo: string;
+    readonly references: readonly string[];
+  };
 }
 
 /** How many uploads a send HEADs, copies, or reads at once. */

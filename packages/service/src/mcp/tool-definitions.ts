@@ -21,6 +21,7 @@ import {
   MAX_EMAIL_PAGE_SIZE,
   MAX_READ_BODY_BYTES,
   MAX_RECIPIENTS,
+  MAX_REPLY_TO_ADDRESSES,
   MAX_UPLOAD_BYTES,
   DEFAULT_EMAIL_PAGE_SIZE,
   UPLOAD_URL_TTL_SECONDS,
@@ -222,6 +223,12 @@ const emailDetailSchema = outputSchemaFor<EmailDetail>()(
     to: addressListSchema,
     cc: addressListSchema,
     bcc: addressListSchema.optional().describe('Sent mail only.'),
+    replyTo: addressListSchema
+      .optional()
+      .describe(
+        'Reply-To addresses, if set. On received mail, where the sender wants replies — set by ' +
+          'the sender and not verified.',
+      ),
     subject: z.string(),
     date: z.string().describe('Received or sent time, ISO-8601 UTC.'),
     status: sentStatusSchema,
@@ -293,6 +300,21 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         'do not appear in the message headers.',
       '- Body: text, html, or both (sent as multipart/alternative). html alone gets no ' +
         'generated text part. subject is optional.',
+      ...(inboundEnabled
+        ? [
+            '- Replying: set inReplyTo to the id of the message you are answering (from ' +
+              'list_emails or get_email) so the reply joins that conversation in the ' +
+              'recipient\'s mail client. An omitted subject becomes "Re: <original subject>". ' +
+              'If the original has no usable Message-ID (for example it arrived before FreeMail ' +
+              'recorded them), the reply is still sent but unthreaded, and the result says ' +
+              'threaded: false. ' +
+              'The id send_email returns works too, for a follow-up. Recipients are not filled ' +
+              'in: to reply to a received message, send to its replyTo addresses if it has any ' +
+              '(set by the sender and not verified, like from), otherwise to its from address; ' +
+              'to follow up on a sent message, send to its to addresses.',
+          ]
+        : []),
+      '- replyTo: addresses that replies to this message should go to, if not from.',
       `- Attachments: up to ${MAX_ATTACHMENTS} files, each a finished upload from ` +
         'create_attachment_upload. In order, a file of at most ' +
         `${formatBytes(deployment.embedMaxBytes)} is embedded in the message while the ` +
@@ -300,7 +322,7 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         'file is sent as a download link appended to the body, valid for ' +
         `${formatDuration(DOWNLOAD_TOKEN_TTL_SECONDS)}.`,
       '',
-      `Returns { id, messageId, sentAt }. id is this message's FreeMail id${
+      `Returns { id, messageId, sentAt${inboundEnabled ? ', threaded?' : ''} }. id is this message's FreeMail id${
         inboundEnabled ? ' (the same id list_emails and get_email use)' : ''
       }; messageId is the SES message id. Success means SES accepted the message for delivery, ` +
         'not that it reached the inbox. If SES rejects it, the tool returns an error' +
@@ -332,6 +354,25 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         .optional()
         .describe('Plain-text body. At least one of text or html is required.'),
       html: z.string().optional().describe('HTML body. At least one of text or html is required.'),
+      replyTo: z
+        .array(z.string())
+        .max(MAX_REPLY_TO_ADDRESSES)
+        .optional()
+        .describe(
+          `Reply-To addresses (bare), at most ${MAX_REPLY_TO_ADDRESSES}: where replies should go, ` +
+            'if not from.',
+        ),
+      ...(inboundEnabled
+        ? {
+            inReplyTo: z
+              .string()
+              .optional()
+              .describe(
+                'Id (from list_emails or get_email) of the message this one answers. Threads ' +
+                  'the reply and defaults subject to "Re: <original subject>".',
+              ),
+          }
+        : {}),
       attachments: z
         .array(
           z.object({
@@ -357,6 +398,13 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         ),
       messageId: z.string().describe('The message id SES assigned.'),
       sentAt: z.string().describe('Send time, ISO-8601 UTC.'),
+      threaded: z
+        .boolean()
+        .optional()
+        .describe(
+          'Only when inReplyTo was given: false means the reply went out unthreaded, because ' +
+            'the original has no usable Message-ID.',
+        ),
     }),
     annotations: {
       title: 'Send email',
@@ -500,9 +548,10 @@ export function getEmailTool() {
       'Read one message, by the id from list_emails or send_email. Returns { trust, email }.',
       '',
       'email has the envelope (id, direction, from, fromName, to, cc, bcc on sent mail, ' +
-        'subject, date, and status or the scan verdicts), the body as text and/or html, and ' +
-        'attachments: [{ id, filename, contentType, sizeBytes }]. To download an attachment, ' +
-        'pass the message id and its id to get_email_attachment_url.',
+        'replyTo, subject, date, and status or the scan verdicts), the body as text and/or ' +
+        'html, and attachments: [{ id, filename, contentType, sizeBytes }]. To download an ' +
+        'attachment, pass the message id and its id to get_email_attachment_url. To reply, ' +
+        'call send_email with inReplyTo set to this id.',
       '',
       'The body is present for sent mail and for received mail that passed the virus scan and ' +
         'parsed. Errors-folder messages (failed: true) have no body, and none of their ' +

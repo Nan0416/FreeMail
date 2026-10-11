@@ -758,3 +758,59 @@ describe('InboundProcessor — your own download links become attachments', () =
     expect(row.attachments.some((a) => a.id.startsWith('link-'))).toBe(false);
   });
 });
+
+describe('InboundProcessor — threading headers', () => {
+  it("records the message's Message-ID, References, and Reply-To", async () => {
+    const store = new FakeStore();
+    const repo = new FakeDao();
+    seed(
+      store,
+      'THREAD1',
+      [
+        'X-SES-Spam-Verdict: PASS',
+        'X-SES-Virus-Verdict: PASS',
+        'From: Alice <a@x.com>',
+        'Reply-To: desk@x.com',
+        'To: b@y.com',
+        'Subject: Re: Hi',
+        'Message-ID: <reply@x.com>',
+        'References: <root@y.com>',
+        'Content-Type: text/plain; charset=utf-8',
+        '',
+        'Hello there',
+        '',
+      ].join('\r\n'),
+    );
+
+    await new InboundProcessor(
+      store,
+      repo,
+      new FakeBodyStore(),
+      new FakeQuarantine(),
+    ).processInboundEmail({ rawKey: 'inbound/THREAD1' });
+
+    expect(repo.inbound[0]).toMatchObject({
+      messageIdHeader: '<reply@x.com>',
+      references: ['<root@y.com>'],
+      replyTo: ['desk@x.com'],
+    });
+  });
+
+  it('records none of them for a message without them', async () => {
+    const store = new FakeStore();
+    const repo = new FakeDao();
+    seed(store, 'PLAIN', CLEAN_TEXT);
+
+    await new InboundProcessor(
+      store,
+      repo,
+      new FakeBodyStore(),
+      new FakeQuarantine(),
+    ).processInboundEmail({ rawKey: 'inbound/PLAIN' });
+
+    const row = repo.inbound[0]!;
+    expect(row.messageIdHeader).toBeUndefined();
+    expect(row.references).toBeUndefined();
+    expect(row.replyTo).toBeUndefined();
+  });
+});

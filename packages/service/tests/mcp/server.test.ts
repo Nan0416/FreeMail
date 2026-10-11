@@ -754,3 +754,105 @@ describe('formatting helpers', () => {
     expect(formatDuration(seconds)).toBe(text);
   });
 });
+
+describe('send_email reply fields', () => {
+  it('offers inReplyTo only when the read tools exist; replyTo always', async () => {
+    const sendOnly = await connect(vi.fn());
+    const withRead = await connectRead(fakeReadService({}));
+    const props = async (client: Client) =>
+      Object.keys(
+        (await client.listTools()).tools.find((t) => t.name === 'send_email')?.inputSchema
+          .properties ?? {},
+      );
+
+    expect(await props(sendOnly)).toContain('replyTo');
+    expect(await props(sendOnly)).not.toContain('inReplyTo');
+    expect(await props(withRead)).toEqual(expect.arrayContaining(['replyTo', 'inReplyTo']));
+  });
+
+  it('explains how to reply', async () => {
+    const client = await connectRead(fakeReadService({}));
+    const tools = (await client.listTools()).tools;
+
+    expect(tools.find((t) => t.name === 'send_email')?.description).toContain(
+      'set inReplyTo to the id of the message you are answering',
+    );
+    expect(tools.find((t) => t.name === 'get_email')?.description).toContain(
+      'call send_email with inReplyTo set to this id',
+    );
+  });
+
+  it('passes inReplyTo and replyTo to the email service', async () => {
+    const send = vi.fn().mockResolvedValue({ id: 'e1', messageId: 'm1', sentAt: 't' });
+    const client = await connectWith({
+      emailService: { sendEmail: send } as unknown as EmailService,
+      readService: fakeReadService({}),
+      inboundEnabled: true,
+    });
+
+    await client.callTool({
+      name: 'send_email',
+      arguments: {
+        from: 'me@example.com',
+        to: ['you@elsewhere.com'],
+        text: 'hi',
+        inReplyTo: 'HANDLE',
+        replyTo: ['desk@example.com'],
+      },
+    });
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ inReplyTo: 'HANDLE', replyTo: ['desk@example.com'] }),
+    );
+  });
+});
+
+describe('send_email unthreaded reply', () => {
+  it('says so in the text when a reply went out unthreaded', async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValue({ id: 'e1', messageId: 'm1', sentAt: 't', threaded: false });
+    const client = await connectWith({
+      emailService: { sendEmail: send } as unknown as EmailService,
+      readService: fakeReadService({}),
+      inboundEnabled: true,
+    });
+
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: { from: 'me@example.com', to: ['a@b.com'], text: 'hi', inReplyTo: 'H' },
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent).toMatchObject({ threaded: false });
+    expect(textOf(result)).toContain('NOT threaded');
+  });
+});
+
+describe('get_email text shows Reply-To', () => {
+  it('inside the untrusted frame for received mail', async () => {
+    const email: EmailDetail = {
+      id: 'ref-in-7',
+      direction: 'inbound',
+      from: 'a@b.test',
+      to: ['me@example.com'],
+      cc: [],
+      replyTo: ['desk@elsewhere.test'],
+      subject: 's',
+      date: '2026-07-18T00:00:00.000Z',
+      text: 'hi',
+      attachments: [],
+      hasAttachments: false,
+      attachmentCount: 0,
+      sizeBytes: 10,
+    };
+    const client = await connectRead(
+      fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }),
+    );
+
+    const text = textOf(await client.callTool({ name: 'get_email', arguments: { id: 'x' } }));
+
+    expect(text).toContain('Reply-To: desk@elsewhere.test');
+    expect(text.indexOf('Reply-To:')).toBeGreaterThan(text.indexOf('<<<UNTRUSTED-EMAIL'));
+  });
+});

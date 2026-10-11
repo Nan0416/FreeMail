@@ -455,3 +455,78 @@ describe('parseInbound — hostile / degenerate input', () => {
     await expect(parseInbound(bad, new FakeSink())).rejects.toThrow('s3 read blew up');
   });
 });
+
+describe('parseInbound threading headers', () => {
+  const withHeaders = (extra: string[]): string[] => [
+    'X-SES-Spam-Verdict: PASS',
+    'X-SES-Virus-Verdict: PASS',
+    'From: Alice <a@x.com>',
+    'To: b@y.com',
+    'Subject: Lunch?',
+    ...extra,
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    'body',
+    '',
+  ];
+
+  it('captures Message-ID, References, and Reply-To', async () => {
+    const parsed = await parseInbound(
+      mime(
+        withHeaders([
+          'Message-ID: <CAHAHw2P5@mail.gmail.com>',
+          'References: <root@x.com>',
+          ' <mid@x.com>',
+          'Reply-To: Desk <desk@x.com>, other@x.com',
+        ]),
+      ),
+      new FakeSink(),
+      looseLimits(),
+    );
+
+    expect(parsed.messageIdHeader).toBe('<CAHAHw2P5@mail.gmail.com>');
+    expect(parsed.references).toEqual(['<root@x.com>', '<mid@x.com>']);
+    expect(parsed.replyTo).toEqual(['desk@x.com', 'other@x.com']);
+  });
+
+  it('drops a malformed Message-ID and malformed References tokens', async () => {
+    const parsed = await parseInbound(
+      mime(withHeaders(['Message-ID: <has space@x.com>', 'References: <ok@x.com> <bad<id@x.com>'])),
+      new FakeSink(),
+      looseLimits(),
+    );
+
+    expect(parsed.messageIdHeader).toBeUndefined();
+    expect(parsed.references).toEqual(['<ok@x.com>']);
+  });
+
+  it('drops a Message-ID that decodes to a header injection', async () => {
+    const parsed = await parseInbound(
+      mime(withHeaders(['Message-ID: =?utf-8?q?<a@x.com>=0D=0ABcc:_victim@evil.test?='])),
+      new FakeSink(),
+      looseLimits(),
+    );
+
+    expect(parsed.messageIdHeader).toBeUndefined();
+  });
+
+  it('keeps at most 10 Reply-To addresses', async () => {
+    const many = Array.from({ length: 15 }, (_v, i) => `r${i}@x.com`).join(', ');
+    const parsed = await parseInbound(
+      mime(withHeaders([`Reply-To: ${many}`])),
+      new FakeSink(),
+      looseLimits(),
+    );
+
+    expect(parsed.replyTo).toHaveLength(10);
+    expect(parsed.replyTo[0]).toBe('r0@x.com');
+  });
+
+  it('reports none when the headers are absent', async () => {
+    const parsed = await parseInbound(mime(withHeaders([])), new FakeSink(), looseLimits());
+
+    expect(parsed.messageIdHeader).toBeUndefined();
+    expect(parsed.references).toEqual([]);
+    expect(parsed.replyTo).toEqual([]);
+  });
+});

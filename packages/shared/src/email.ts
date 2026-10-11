@@ -57,6 +57,16 @@ export interface SendEmailRequest {
   readonly html?: string;
   /** Finished uploads to attach, in order. */
   readonly attachments?: readonly EmailAttachmentRef[];
+  /**
+   * The id (as the list and read API return it) of the message this one answers. The send
+   * sets `In-Reply-To` and `References` from it so the reply joins that conversation, and
+   * defaults an omitted `subject` to `Re: <its subject>`. Recipients are still the caller's.
+   * An original without a usable `Message-ID` still gets its reply, unthreaded — see
+   * {@link SendEmailResponse.threaded}.
+   */
+  readonly inReplyTo?: string;
+  /** `Reply-To` addresses: where the recipients' replies should go, if not `from`. */
+  readonly replyTo?: readonly string[];
 }
 
 /** Result of a successful send. */
@@ -67,6 +77,12 @@ export interface SendEmailResponse {
   readonly messageId: string;
   /** Send time, ISO-8601. */
   readonly sentAt: string;
+  /**
+   * Present when the send named `inReplyTo`: true when the reply carries the threading
+   * headers; false when the original had no usable `Message-ID` (missing or malformed, received
+   * before FreeMail recorded it, or a send SES never accepted), so it went out unthreaded.
+   */
+  readonly threaded?: boolean;
 }
 
 /** Max size of one uploaded attachment. Larger than any provider accepts embedded, so it is linked. */
@@ -77,6 +93,9 @@ export const UPLOAD_URL_TTL_SECONDS = 15 * 60;
 
 /** Max number of attachments on one message. */
 export const MAX_ATTACHMENTS = 20;
+
+/** Max `Reply-To` addresses on a sent message, and kept from a received one. */
+export const MAX_REPLY_TO_ADDRESSES = 10;
 
 /** Max recipients across to + cc + bcc — SES's per-message destination limit. */
 export const MAX_RECIPIENTS = 50;
@@ -220,6 +239,11 @@ export interface EmailDetail {
   readonly cc: readonly string[];
   /** Sent messages only (bcc is never retained for received mail). */
   readonly bcc?: readonly string[];
+  /**
+   * `Reply-To` addresses, when the message set them. For received mail this is where the
+   * sender asked replies to go (attacker-controlled, like `from`).
+   */
+  readonly replyTo?: readonly string[];
   readonly subject: string;
   /** Timeline sort time, ISO-8601 UTC. */
   readonly date: string;

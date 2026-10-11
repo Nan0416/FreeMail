@@ -26,7 +26,7 @@
  * S3 source stream) rejects, so the async invocation retries.
  */
 import type { Readable, Transform } from 'node:stream';
-import { MAX_READ_BODY_BYTES } from '@freemail/shared';
+import { MAX_READ_BODY_BYTES, MAX_REPLY_TO_ADDRESSES } from '@freemail/shared';
 import { Joiner, Splitter, type ErrorWithCode } from '@zone-eu/mailsplit';
 import { MailParser, type AddressObject } from 'mailparser';
 import type { InboundAttachmentDescriptor, InboundParseStatus } from '../data/emails-dao.js';
@@ -46,6 +46,7 @@ import {
 import { normalizeAddressList, normalizeFrom, sanitizeSubject } from './sanitize.js';
 import { BodyLimiter, RawByteLimiter } from './stream-limits.js';
 import { dmarcPassDomain } from './sender-auth.js';
+import { sanitizeMessageId, sanitizeReferences } from './threading.js';
 import { extractVerdicts, type Verdicts } from './verdicts.js';
 
 /**
@@ -71,6 +72,12 @@ export interface ParsedInbound {
   readonly subject: string;
   /** The `Date:` header as ISO, if present and parseable. Display-only, attacker-controlled. */
   readonly headerDate?: string;
+  /** The `Message-ID`, when it is one well-formed id — what a threaded reply points at. */
+  readonly messageIdHeader?: string;
+  /** The well-formed ids of `References`, capped — carried into a reply's own chain. */
+  readonly references: readonly string[];
+  /** `Reply-To` addresses, sanitized, at most {@link MAX_REPLY_TO_ADDRESSES} — where the sender wants replies. */
+  readonly replyTo: readonly string[];
   readonly verdicts: Verdicts;
   /**
    * The From domain SES's own DMARC check passed for (see `sender-auth.ts`); absent when it
@@ -190,6 +197,9 @@ export function parseInbound(
     let cc: string[] = [];
     let subject = '';
     let headerDate: string | undefined;
+    let messageIdHeader: string | undefined;
+    let references: string[] = [];
+    let replyTo: string[] = [];
     let textBody: string | undefined;
     let htmlBody: string | undefined;
     let attachmentCount = 0;
@@ -228,6 +238,9 @@ export function parseInbound(
         cc,
         subject,
         headerDate,
+        ...(messageIdHeader !== undefined ? { messageIdHeader } : {}),
+        references,
+        replyTo,
         verdicts: verdicts!,
         ...(authenticatedDomain !== undefined ? { dmarcPassDomain: authenticatedDomain } : {}),
         exposed: exposed && parseStatus === 'ok',
@@ -291,6 +304,11 @@ export function parseInbound(
       const date = headers.get('date');
       headerDate =
         date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined;
+      messageIdHeader = sanitizeMessageId(headers.get('message-id'));
+      references = sanitizeReferences(headers.get('references'));
+      replyTo = normalizeAddressList(
+        headers.get('reply-to') as AddressObject | AddressObject[] | undefined,
+      ).slice(0, MAX_REPLY_TO_ADDRESSES);
     });
 
     parser.on('data', (data) => {

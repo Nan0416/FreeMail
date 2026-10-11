@@ -128,6 +128,8 @@ export class DdbEmailsDao implements EmailsDao {
           error: input.error,
           attachments: input.attachments,
           body: input.body,
+          replyTo: input.replyTo,
+          references: input.references,
         },
         ConditionExpression: 'attribute_not_exists(pk)',
       }),
@@ -146,6 +148,11 @@ export class DdbEmailsDao implements EmailsDao {
       names['#mid'] = 'sesMessageId';
       values[':mid'] = input.sesMessageId;
       sets.push('#mid = :mid');
+    }
+    if (input.messageIdHeader !== undefined) {
+      names['#msgid'] = 'messageIdHeader';
+      values[':msgid'] = input.messageIdHeader;
+      sets.push('#msgid = :msgid');
     }
     if (input.error !== undefined) {
       names['#error'] = 'error';
@@ -184,6 +191,9 @@ export class DdbEmailsDao implements EmailsDao {
             snippet: input.snippet,
             receivedAt: input.receivedAt,
             headerDate: input.headerDate,
+            messageIdHeader: input.messageIdHeader,
+            references: input.references,
+            replyTo: input.replyTo,
             hasAttachments: input.hasAttachments,
             attachmentCount: input.attachmentCount,
             attachments: input.attachments,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EmailDetail } from '@freemail/shared';
-import { buildPrefill, quotedText, replySender } from '../../src/lib/reply.js';
+import { buildPrefill, quotedText, replySender, replyToElsewhere } from '../../src/lib/reply.js';
 
 const INBOUND: EmailDetail = {
   id: 'h1',
@@ -67,6 +67,18 @@ describe('buildPrefill', () => {
     expect(p.html).toContain('&lt;a href=&quot;https://evil.example&quot;&gt;Al&lt;/a&gt;');
   });
 
+  it('threads a reply to the original, but not a forward', () => {
+    expect(buildPrefill(INBOUND, 'reply', '').inReplyTo).toBe('h1');
+    expect(buildPrefill(INBOUND, 'replyAll', '').inReplyTo).toBe('h1');
+    expect(buildPrefill(INBOUND, 'forward', '').inReplyTo).toBeUndefined();
+  });
+
+  it("replies to the sender's Reply-To when there is one", () => {
+    const p = buildPrefill({ ...INBOUND, replyTo: ['desk@x.com'] }, 'replyAll', 'me@mine.dev');
+    expect(p.to).toBe('desk@x.com');
+    expect(p.cc).toBe('bob@x.com, carol@x.com');
+  });
+
   it('continues a sent message to its recipients', () => {
     const sent: EmailDetail = { ...INBOUND, direction: 'sent', from: 'me@mine.dev', cc: [] };
     const p = buildPrefill(sent, 'reply', '');
@@ -92,5 +104,28 @@ describe('replySender', () => {
       'me@mine.dev',
     );
     expect(replySender({ ...INBOUND, to: ['x@other.com'], cc: [] }, '')).toBe('x@other.com');
+  });
+});
+
+describe('replyToElsewhere', () => {
+  it("flags a received message whose Reply-To leaves the sender's domain", () => {
+    expect(replyToElsewhere({ ...INBOUND, replyTo: ['pay@evil.test'] })).toBe(true);
+  });
+
+  it("does not flag a Reply-To on the sender's own domain, or none", () => {
+    expect(replyToElsewhere({ ...INBOUND, replyTo: ['desk@X.com'] })).toBe(false);
+    expect(replyToElsewhere({ ...INBOUND, replyTo: ['desk@help.x.com'] })).toBe(false);
+    expect(replyToElsewhere({ ...INBOUND, from: 'a@mail.x.com', replyTo: ['desk@x.com'] })).toBe(
+      false,
+    );
+    // A look-alike suffix is not a subdomain.
+    expect(replyToElsewhere({ ...INBOUND, replyTo: ['desk@evilx.com'] })).toBe(true);
+    expect(replyToElsewhere(INBOUND)).toBe(false);
+  });
+
+  it('never flags our own sent mail', () => {
+    expect(replyToElsewhere({ ...INBOUND, direction: 'sent', replyTo: ['a@other.test'] })).toBe(
+      false,
+    );
   });
 });

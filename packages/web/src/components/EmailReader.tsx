@@ -31,7 +31,7 @@ import { useAuth } from '../auth/auth-context.js';
 import { bodyKind, quarantineNotice, sentStatusNotice } from '../lib/email-reader.js';
 import { formatBytes, formatLongDate } from '../lib/format.js';
 import { avatarTint, initials } from '../lib/people.js';
-import type { ReplyMode } from '../lib/reply.js';
+import { replyToElsewhere, type ReplyMode } from '../lib/reply.js';
 import { cn } from '@/lib/utils';
 import { EmailBodyFrame } from './EmailBodyFrame.js';
 import { Kbd } from './Kbd.js';
@@ -312,6 +312,24 @@ function ReaderContent(props: {
                 <>
                   <dt>Bcc</dt>
                   <dd className="min-w-0 truncate">{props.email.bcc.join(', ')}</dd>
+                </>
+              )}
+              {props.email.replyTo && props.email.replyTo.length > 0 && (
+                <>
+                  <dt>Reply-To</dt>
+                  <dd
+                    className={cn(
+                      'min-w-0',
+                      replyToElsewhere(props.email) ? 'break-words' : 'truncate',
+                    )}
+                  >
+                    {props.email.replyTo.join(', ')}
+                    {replyToElsewhere(props.email) && (
+                      <span className="ml-1.5 font-medium text-warning">
+                        (not the sender&rsquo;s domain — replies go here)
+                      </span>
+                    )}
+                  </dd>
                 </>
               )}
             </dl>

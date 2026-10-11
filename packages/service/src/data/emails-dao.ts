@@ -88,6 +88,18 @@ export interface CreateSentEmailInput {
   readonly attachments?: readonly SentAttachmentDescriptor[];
   /** The body as sent (download links included). Absent on a row written before bodies were stored. */
   readonly body?: StoredEmailBody;
+  /** `Reply-To` addresses the message carried, if any. */
+  readonly replyTo?: readonly string[];
+  /**
+   * The `References` chain the message carried — set on a reply, ending with the id of the
+   * message it answered — so a reply to THIS message continues the same thread.
+   */
+  readonly references?: readonly string[];
+  /**
+   * The `Message-ID` SES gave the message (it replaces the composer's), set with the `sent`
+   * transition. Absent before SES accepts it, and on rows from before it was recorded.
+   */
+  readonly messageIdHeader?: string;
 }
 
 /** Nothing to report: the conditional put either landed or threw. */
@@ -110,6 +122,8 @@ export interface UpdateSentEmailStatusInput {
   readonly status: Extract<SentStatus, 'sent' | 'send_failed'>;
   /** Set on `sent`. */
   readonly sesMessageId?: string;
+  /** Set on `sent`: the `Message-ID` SES gave the message. */
+  readonly messageIdHeader?: string;
   /** Set on `send_failed` — a short reason. */
   readonly error?: string;
 }
@@ -174,6 +188,16 @@ export interface CreateInboundEmailInput {
   readonly receivedAt: string;
   /** The message's own `Date:` header, ISO-8601 — display-only, attacker-controlled, may be absent. */
   readonly headerDate?: string;
+  /**
+   * The message's `Message-ID`, kept only when well-formed — what a threaded reply's
+   * `In-Reply-To` points at. Absent when the header was missing or malformed, and on rows
+   * written before it was recorded.
+   */
+  readonly messageIdHeader?: string;
+  /** Its well-formed `References` ids, capped — a reply's chain starts from these. */
+  readonly references?: readonly string[];
+  /** `Reply-To` addresses, sanitized + count-capped — attacker-controlled, like `from`. */
+  readonly replyTo?: readonly string[];
   readonly hasAttachments: boolean;
   readonly attachmentCount: number;
   /** Extracted attachments — empty unless content is exposable. */

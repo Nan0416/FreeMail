@@ -643,3 +643,48 @@ describe('DdbEmailsDao — list index + paging', () => {
     expect(doc.queries).toHaveLength(1);
   });
 });
+
+describe('DdbEmailsDao — threading fields', () => {
+  it('writes an inbound message id, references, and reply-to', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.createInboundEmail(
+      inboundRecord({
+        messageIdHeader: '<m@x>',
+        references: ['<r@x>'],
+        replyTo: ['desk@example.com'],
+      }),
+    );
+
+    expect(doc.commands[0]?.input?.Item).toMatchObject({
+      messageIdHeader: '<m@x>',
+      references: ['<r@x>'],
+      replyTo: ['desk@example.com'],
+    });
+  });
+});
+
+describe('DdbEmailsDao — sent Message-ID', () => {
+  it('sets the Message-ID with the sent transition', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.updateSentEmailStatus({
+      id: 'e1',
+      sentAt: '2026-07-17T10:00:00.000Z',
+      status: 'sent',
+      sesMessageId: 's1',
+      messageIdHeader: '<s1@email.amazonses.com>',
+    });
+
+    const input = doc.commands[0]?.input as {
+      UpdateExpression?: string;
+      ExpressionAttributeNames?: Record<string, string>;
+      ExpressionAttributeValues?: Record<string, unknown>;
+    };
+    expect(input.UpdateExpression).toContain('#msgid = :msgid');
+    expect(input.ExpressionAttributeNames?.['#msgid']).toBe('messageIdHeader');
+    expect(input.ExpressionAttributeValues?.[':msgid']).toBe('<s1@email.amazonses.com>');
+  });
+});

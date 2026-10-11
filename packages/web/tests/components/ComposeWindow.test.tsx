@@ -74,6 +74,36 @@ describe('ComposeWindow — sending', () => {
     });
   });
 
+  it('threads a reply, and keeps a subject the user cleared', async () => {
+    const compose = renderCompose({
+      from: 'me@x.com',
+      to: 'a@y.com',
+      subject: 'Re: Hi',
+      html: '<p>sure</p>',
+      inReplyTo: 'HANDLE-1',
+    });
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(compose.onClose).toHaveBeenCalled());
+    const [[, init]] = callsTo(compose.fetchImpl, '/emails', 'POST');
+    expect(JSON.parse(String(init?.body))).toMatchObject({ inReplyTo: 'HANDLE-1', subject: '' });
+  });
+
+  it('keeps inReplyTo on the saved draft', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderCompose({ from: 'me@x.com', subject: 'Re: Hi', inReplyTo: 'HANDLE-2' });
+      fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Re: Hi!' } });
+      await act(async () => {
+        vi.advanceTimersByTime(1000);
+      });
+      expect(storedDrafts()).toEqual([expect.objectContaining({ inReplyTo: 'HANDLE-2' })]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('surfaces a send failure and keeps the window open', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (url) =>
       pathOf(url) === '/me'

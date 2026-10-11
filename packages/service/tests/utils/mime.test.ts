@@ -145,4 +145,41 @@ describe('buildRawMime', () => {
     expect(raw).toContain('multipart/mixed');
     expect(raw).toContain(content.toString('base64'));
   });
+
+  it('emits Reply-To and the threading headers when given', async () => {
+    const raw = (
+      await buildRawMime({
+        from: 'sender@example.com',
+        to: ['to@example.net'],
+        cc: [],
+        bcc: [],
+        subject: 'Re: Lunch?',
+        replyTo: ['desk@example.com'],
+        inReplyTo: '<parent@mail.example.net>',
+        references: ['<root@mail.example.net>', '<parent@mail.example.net>'],
+        text: 'Sure.',
+        attachments: [],
+      })
+    ).toString('utf8');
+
+    expect(raw).toMatch(/^Reply-To: desk@example\.com/m);
+    expect(raw).toMatch(/^In-Reply-To: <parent@mail\.example\.net>/m);
+    expect(raw).toMatch(/^References: <root@mail\.example\.net> <parent@mail\.example\.net>/m);
+  });
+
+  it('omits them when not given', async () => {
+    const raw = (
+      await buildRawMime({
+        from: 'sender@example.com',
+        to: ['to@example.net'],
+        cc: [],
+        bcc: [],
+        subject: 'Hello',
+        text: 'body',
+        attachments: [],
+      })
+    ).toString('utf8');
+
+    expect(raw).not.toMatch(/^(Reply-To|In-Reply-To|References):/im);
+  });
 });
