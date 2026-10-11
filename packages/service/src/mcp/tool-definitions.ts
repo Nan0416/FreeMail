@@ -41,6 +41,7 @@ import type { ToolAnnotations } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { MAX_ENCODED_FILENAME_BYTES, MAX_FILENAME_CHARS } from '../services/attachment-service.js';
 import type { DetailTrust, ListTrust } from '../utils/untrusted-frame.js';
+import { MAX_DELIVERY_EVENTS } from '../data/emails-dao.js';
 
 /** The deployment facts the tool text states — the sender domain and the attachment limits. */
 export interface McpDeploymentInfo {
@@ -172,8 +173,8 @@ const sentStatusSchema = z
   .describe(
     'Sent mail only. "sending": outcome not recorded — still sending, or SES may already have ' +
       'delivered it; do not resend without checking. "sent": SES accepted it for delivery. ' +
-      '"delivered": a receiving mail server accepted it for at least one recipient (each ' +
-      "recipient's outcome is in deliveryEvents). " +
+      '"delivered": a receiving mail server accepted it for at least one recipient (the ' +
+      `per-recipient reports are in deliveryEvents, up to ${MAX_DELIVERY_EVENTS} of them). ` +
       '"bounced": it bounced for at least one recipient (see deliveryEvents). ' +
       '"send_failed": SES refused it; it was not sent.',
   );
