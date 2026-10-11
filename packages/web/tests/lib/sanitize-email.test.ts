@@ -108,7 +108,7 @@ function onlyLink(html: string): Element {
 }
 
 describe('sanitizeEmailHtml — links', () => {
-  it('forces target=_blank and rel=noopener noreferrer on every link', () => {
+  it('forces target=_blank and rel=noopener noreferrer on an absolute link', () => {
     const out = sanitizeEmailHtml('<a href="https://example.com">visit</a>', { allowImages: true });
     expect(out).toContain('target="_blank"');
     expect(out).toContain('rel="noopener noreferrer"');
@@ -132,6 +132,10 @@ describe('sanitizeEmailHtml — links', () => {
       // Same scheme as the https: app page, so the browser resolves these relative to it.
       'https:account/settings',
       'HTTPS:/account/settings',
+      // The URL parser drops the tab and the leading control character; entities decode.
+      'ht&#9;tps:/account/settings',
+      '&#47;account/settings',
+      '&#1;#frag',
     ]) {
       const link = onlyLink(
         sanitizeEmailHtml(`<a href="${href}" target="_top">x</a>`, { allowImages: true }),
@@ -151,6 +155,9 @@ describe('sanitizeEmailHtml — links', () => {
       ['//example.com/protocol-relative', 'https://example.com/protocol-relative'],
       // `http:` differs from the app page's scheme, so it is not relative to it.
       ['http:example.com', 'http://example.com/'],
+      // Backslashes are slashes in an https: URL, so these name their own host.
+      ['/\\evil.example', 'https://evil.example/'],
+      ['https:\\\\evil.example', 'https://evil.example/'],
       ['mailto:test@example.com', 'mailto:test@example.com'],
       ['tel:+15551234567', 'tel:+15551234567'],
     ] as const) {
@@ -174,6 +181,14 @@ describe('sanitizeEmailHtml — links', () => {
     }
   });
 
+  it('drops a link the URL parser would turn into markup', () => {
+    // DOMPurify checks the raw value, where a tab hides `</style`; the URL parser strips it.
+    const link = onlyLink(
+      sanitizeEmailHtml('<a href="mailto:x&lt;&#9;/style&gt;y">x</a>', { allowImages: true }),
+    );
+    expect(link.hasAttribute('href')).toBe(false);
+  });
+
   it('applies the same rules to image-map areas', () => {
     const relative = onlyLink(
       sanitizeEmailHtml('<map name="m"><area href="/account" alt="a"></map>', {
@@ -190,6 +205,12 @@ describe('sanitizeEmailHtml — links', () => {
     expect(absolute.getAttribute('href')).toBe('https://example.com/x');
     expect(absolute.getAttribute('target')).toBe('_blank');
     expect(absolute.getAttribute('rel')).toBe('noopener noreferrer');
+
+    const fragment = onlyLink(
+      sanitizeEmailHtml('<map name="m"><area href="#x" alt="a"></map>', { allowImages: true }),
+    );
+    expect(fragment.getAttribute('href')).toBe('about:srcdoc#x');
+    expect(fragment.getAttribute('target')).toBe('_self');
   });
 
   it('leaves a link with no href alone', () => {
@@ -223,7 +244,7 @@ describe('sanitizeEmailHtml — image blocking (layer 1: stripped src)', () => {
     expect(out).not.toContain('tracker.example');
   });
 
-  it('never loads an image from the app page, even when images are allowed', () => {
+  it('never resolves an image src or background against the app page', () => {
     for (const src of ['/logo.png', 'logo.png', 'https:logo.png', '?x=1']) {
       const out = sanitizeEmailHtml(
         `<img src="${src}"><table><tr><td background="${src}">x</td></tr></table>`,
@@ -235,8 +256,12 @@ describe('sanitizeEmailHtml — image blocking (layer 1: stripped src)', () => {
   });
 
   it('writes an allowed image source back fully resolved', () => {
-    const out = sanitizeEmailHtml('<img src="//cdn.example/a b.png">', { allowImages: true });
+    const out = sanitizeEmailHtml(
+      '<img src="//cdn.example/a b.png"><table><tr><td background="//cdn.example/bg.png">x</td></tr></table>',
+      { allowImages: true },
+    );
     expect(out).toContain('src="https://cdn.example/a%20b.png"');
+    expect(out).toContain('background="https://cdn.example/bg.png"');
   });
 });
 
@@ -248,6 +273,8 @@ describe('buildEmailSrcdoc — per-email CSP (layer 2)', () => {
     expect(doc).toContain("default-src 'none'");
     expect(doc).toContain("img-src 'none'");
     expect(doc).toContain('<base target="_blank">');
+    // A link whose href was dropped renders as plain text, not link-colored.
+    expect(doc).toContain('a[href]{color:');
     expect(doc).toContain('hi');
   });
 

@@ -56,16 +56,13 @@ function resolveEmailUrl(value: string): URL | undefined {
 }
 
 /**
- * `value` as an absolute URL with one of `protocols`, or `undefined` if it is relative to
- * the page, does not parse, or has another scheme. A protocol-relative `//host/path` names
- * its own host, so it counts as absolute (`https:`).
+ * Whether a {@link resolveEmailUrl} result may be written back: absolute (a protocol-relative
+ * `//host/path` names its own host, so it counts) with one of `protocols`. A URL with `<` or
+ * `>` is refused too: DOMPurify's own markup-in-attribute check ran on the raw value, and
+ * the URL parser strips the tab or newline that could have hidden `</style` from it.
  */
-function toAbsoluteUrl(value: string, protocols: ReadonlySet<string>): string | undefined {
-  const url = resolveEmailUrl(value);
-  if (url === undefined || url.origin === STAND_IN_ORIGIN || !protocols.has(url.protocol)) {
-    return undefined;
-  }
-  return url.href;
+function isAbsoluteUrl(url: URL, protocols: ReadonlySet<string>): boolean {
+  return url.origin !== STAND_IN_ORIGIN && protocols.has(url.protocol) && !/[<>]/.test(url.href);
 }
 
 /**
@@ -80,14 +77,13 @@ function rewriteLink(node: Element): void {
   if (href === null) {
     return;
   }
-  const absolute = toAbsoluteUrl(href, LINK_PROTOCOLS);
-  if (absolute !== undefined) {
-    node.setAttribute('href', absolute);
+  const url = resolveEmailUrl(href);
+  if (url !== undefined && isAbsoluteUrl(url, LINK_PROTOCOLS)) {
+    node.setAttribute('href', url.href);
     node.setAttribute('target', '_blank');
     node.setAttribute('rel', 'noopener noreferrer');
     return;
   }
-  const url = resolveEmailUrl(href);
   if (url !== undefined && href.trim().startsWith('#')) {
     // An empty fragment (`href="#"`) still needs its `#`: plain `about:srcdoc` would
     // navigate the iframe away from the email instead of scrolling it.
@@ -142,7 +138,10 @@ const FORBIDDEN_ATTRS = ['ping', 'formaction', 'srcset'];
 /** Declarations that make a `style` value dangerous (legacy script-in-CSS + remote CSS import). */
 const DANGEROUS_CSS = /expression\s*\(|javascript:|vbscript:|behavior\s*:|-moz-binding|@import/i;
 
-/** Single-URL resource loaders. Kept only for absolute `https?:` when images are allowed, else stripped. */
+/**
+ * Single-URL resource loaders. Kept only for absolute `https?:` when images are allowed,
+ * else stripped.
+ */
 const RESOURCE_ATTRS = ['src', 'background', 'poster'];
 
 /**
@@ -172,11 +171,11 @@ function installHooks(): void {
       if (value === null) {
         continue;
       }
-      const absolute = currentAllowImages ? toAbsoluteUrl(value, RESOURCE_PROTOCOLS) : undefined;
-      if (absolute === undefined) {
-        node.removeAttribute(attr);
+      const url = currentAllowImages ? resolveEmailUrl(value) : undefined;
+      if (url !== undefined && isAbsoluteUrl(url, RESOURCE_PROTOCOLS)) {
+        node.setAttribute(attr, url.href);
       } else {
-        node.setAttribute(attr, absolute);
+        node.removeAttribute(attr);
       }
     }
   });
