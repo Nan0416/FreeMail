@@ -29,7 +29,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
 import { EmailError } from '../utils/errors.js';
-import { parseListEmailsQuery } from '../utils/list-query.js';
+import { parseListEmailsQuery, type RawListEmailsInput } from '../utils/list-query.js';
 import type { EmailReadService } from '../services/email-read-service.js';
 import type { AttachmentUploader } from '../services/attachment-service.js';
 import type { EmailService } from '../services/email-service.js';
@@ -145,7 +145,7 @@ export async function handleSendEmail(
 export async function handleListEmails(
   readService: EmailReadService,
   nonce: () => string,
-  args: { direction?: string | undefined; limit?: number | undefined; cursor?: string | undefined },
+  args: RawListEmailsInput,
 ): Promise<CallToolResult> {
   try {
     const query = parseListEmailsQuery(args);

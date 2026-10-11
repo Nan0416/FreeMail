@@ -316,19 +316,28 @@ export class DdbEmailsDao implements EmailsDao {
   ): Promise<Record<string, unknown>[]> {
     const pk = EmailEntity.partitionFor(input.direction);
     const items: Record<string, unknown>[] = [];
+    // A cursor at or below the range's floor has nothing older left in range.
+    if (input.afterSk !== undefined && input.minSk !== undefined && input.afterSk <= input.minSk) {
+      return items;
+    }
     // Resume strictly after the last row we emitted for this partition. pk is server-derived
     // (never client-supplied), so a crafted cursor can't retarget it. The index shares the
-    // table's keys, so the same {pk, sk} is a valid start key for either.
-    let startKey: Record<string, unknown> | undefined = input.afterSk
-      ? { pk, sk: input.afterSk }
-      : undefined;
+    // table's keys, so the same {pk, sk} is a valid start key for either. A cursor above the
+    // range's ceiling (the filters changed between pages) starts from the ceiling instead —
+    // DynamoDB rejects a start key outside the key condition.
+    const resumeSk =
+      input.afterSk !== undefined && (input.maxSk === undefined || input.afterSk <= input.maxSk)
+        ? input.afterSk
+        : undefined;
+    let startKey: Record<string, unknown> | undefined = resumeSk ? { pk, sk: resumeSk } : undefined;
+    const range = sortKeyCondition(input);
     do {
       const out = (await this.doc.send(
         new QueryCommand({
           TableName: this.tableName,
           ...(indexName ? { IndexName: indexName } : {}),
-          KeyConditionExpression: 'pk = :pk',
-          ExpressionAttributeValues: { ':pk': pk },
+          KeyConditionExpression: `pk = :pk${range.expression}`,
+          ExpressionAttributeValues: { ':pk': pk, ...range.values },
           // Newest-first: sk = '<iso>#<id>' sorts lexicographically by receipt/send time.
           ScanIndexForward: false,
           Limit: input.limit - items.length,
@@ -347,4 +356,24 @@ export class DdbEmailsDao implements EmailsDao {
     )) as GetCommandOutput;
     return out.Item ? toRow(out.Item) : null;
   }
+}
+
+/** The sort-key half of a list query's key condition: a date range, if one was given. */
+function sortKeyCondition(input: QueryEmailsByDirectionInput): {
+  readonly expression: string;
+  readonly values: Record<string, string>;
+} {
+  if (input.minSk !== undefined && input.maxSk !== undefined) {
+    return {
+      expression: ' AND sk BETWEEN :lo AND :hi',
+      values: { ':lo': input.minSk, ':hi': input.maxSk },
+    };
+  }
+  if (input.minSk !== undefined) {
+    return { expression: ' AND sk >= :lo', values: { ':lo': input.minSk } };
+  }
+  if (input.maxSk !== undefined) {
+    return { expression: ' AND sk <= :hi', values: { ':hi': input.maxSk } };
+  }
+  return { expression: '', values: {} };
 }

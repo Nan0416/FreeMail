@@ -420,6 +420,32 @@ describe('rest handler — reads are access-token-only', () => {
     });
   });
 
+  it('passes the search filters through, normalized', async () => {
+    await invoke('GET /emails', {
+      contentType: null,
+      lambda: lambdaContext('access'),
+      query: { q: ' invoice ', from: 'alice', after: '2026-10-01', before: '2026-10-02T00:00Z' },
+    });
+    expect(readMocks.listEmails).toHaveBeenLastCalledWith({
+      limit: 25,
+      filters: {
+        query: 'invoice',
+        from: 'alice',
+        after: '2026-10-01T00:00:00.000Z',
+        before: '2026-10-02T00:00:00.000Z',
+      },
+    });
+  });
+
+  it('rejects a malformed date filter with 400', async () => {
+    const res = await invoke('GET /emails', {
+      contentType: null,
+      lambda: lambdaContext('access'),
+      query: { after: 'last week' },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('defaults the limit and omits absent filters', async () => {
     await invoke('GET /emails', { contentType: null, lambda: lambdaContext('access') });
     expect(readMocks.listEmails).toHaveBeenCalledWith({ limit: 25 });

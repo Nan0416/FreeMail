@@ -5,7 +5,9 @@ import {
   decodeListCursor,
   encodeListCursor,
   listEmailsPage,
+  pageQuery,
   type MergeQuery,
+  type MergeQueryResult,
 } from '../../src/utils/list-merge.js';
 
 /** Minimal row for a given direction + sort key (`<iso>#<id>`). */
@@ -62,7 +64,7 @@ function makeStore(
     inbound: inboundSks.map((sk) => rowFor('inbound', sk)).sort((a, b) => (a.sk < b.sk ? 1 : -1)),
   };
   let calls = 0;
-  const query: MergeQuery = (direction, opts) => {
+  const query: MergeQuery = pageQuery((direction, opts) => {
     calls++;
     const all = partitions[direction];
     let start = 0;
@@ -73,7 +75,7 @@ function makeStore(
       start = idx === -1 ? all.length : idx;
     }
     return Promise.resolve(all.slice(start, start + opts.limit));
-  };
+  });
   return {
     get calls() {
       return calls;
@@ -203,11 +205,11 @@ describe('listEmailsPage — the Errors folder', () => {
       ...rowFor('inbound', `2026-07-17T0${9 - i}:00:00.000Z#${id}`),
       pk: 'FAILED',
     }));
-    const query: MergeQuery = (direction, opts) => {
+    const query: MergeQuery = pageQuery((direction, opts) => {
       expect(direction).toBe('failed');
       const start = opts.afterSk ? all.findIndex((r) => r.sk === opts.afterSk) + 1 : 0;
       return Promise.resolve(all.slice(start, start + opts.limit));
-    };
+    });
 
     const seen: string[] = [];
     let cursor: string | undefined;
@@ -264,5 +266,118 @@ describe('list cursor codec', () => {
         expect((err as EmailError).status).toBe(400);
       }
     }
+  });
+});
+
+describe('listEmailsPage — filtered folders with a scan budget', () => {
+  /**
+   * A store whose query matches rows by a predicate and examines at most `budget` rows per call
+   * — the shape of the read service's filtered scan.
+   */
+  function filteringStore(
+    partitions: Record<'sent' | 'inbound', string[]>,
+    matches: (sk: string) => boolean,
+    budget: number,
+  ): MergeQuery {
+    const rows = {
+      sent: skDescending(partitions.sent).map((sk) => rowFor('sent', sk)),
+      inbound: skDescending(partitions.inbound).map((sk) => rowFor('inbound', sk)),
+    };
+    return (direction, opts): Promise<MergeQueryResult> => {
+      const all = rows[direction as 'sent' | 'inbound'];
+      const afterSk = opts.afterSk;
+      const start = afterSk === undefined ? 0 : all.findIndex((r) => r.sk < afterSk);
+      const from = start === -1 ? all.length : start;
+      const found: GetEmailOutput[] = [];
+      let scannedToSk: string | undefined;
+      let index = from;
+      for (; index < all.length && index < from + budget; index += 1) {
+        scannedToSk = all[index].sk;
+        if (matches(all[index].sk)) {
+          found.push(all[index]);
+          if (found.length === opts.limit) {
+            return Promise.resolve({ rows: found, exhausted: false, scannedToSk });
+          }
+        }
+      }
+      return Promise.resolve({
+        rows: found,
+        exhausted: index >= all.length,
+        ...(scannedToSk ? { scannedToSk } : {}),
+      });
+    };
+  }
+
+  const sks = (prefix: string, n: number, step: number, offset: number): string[] =>
+    Array.from({ length: n }, (_v, i) => {
+      const second = String(offset + i * step).padStart(4, '0');
+      return `2026-07-17T10:00:00.${second.slice(-3)}Z#${prefix}${second}`;
+    });
+
+  it.each([
+    { limit: 1, budget: 1 },
+    { limit: 2, budget: 3 },
+    { limit: 3, budget: 2 },
+    { limit: 5, budget: 7 },
+    { limit: 10, budget: 1000 },
+  ])(
+    'returns every match exactly once, newest first (limit $limit, budget $budget)',
+    async (opts) => {
+      const partitions = { sent: sks('s', 40, 3, 0), inbound: sks('i', 40, 3, 1) };
+      // Sparse, uneven matches: a few sent rows, a run of inbound rows.
+      const wanted = (sk: string) => /#s0(00[0-9]|09[0-9])$/.test(sk) || /#i00[3-6]\d$/.test(sk);
+      const expected = skDescending([...partitions.sent, ...partitions.inbound]).filter(wanted);
+      expect(expected.length).toBeGreaterThan(5);
+
+      const rows = await drainAll(filteringStore(partitions, wanted, opts.budget), {
+        limit: opts.limit,
+      });
+
+      expect(rows.map((r) => r.sk)).toEqual(expected);
+    },
+  );
+
+  it('makes progress through pages with no matches at all, then ends', async () => {
+    const partitions = { sent: sks('s', 30, 2, 0), inbound: sks('i', 30, 2, 1) };
+    const pages: number[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 100; i += 1) {
+      const page = await listEmailsPage({
+        query: filteringStore(partitions, () => false, 4),
+        limit: 5,
+        ...(cursor ? { cursor } : {}),
+      });
+      pages.push(page.rows.length);
+      cursor = page.nextCursor;
+      if (!cursor) {
+        break;
+      }
+    }
+
+    expect(cursor).toBeUndefined();
+    expect(pages.every((n) => n === 0)).toBe(true);
+    // 30 rows per folder, 4 examined per page: it ends after about 8 pages, not 100.
+    expect(pages.length).toBeLessThanOrEqual(9);
+  });
+
+  it('holds back a match that may be out of order with a folder still mid-scan', async () => {
+    // Inbound finds i8 at once, but sent has only examined s9 (10:00:09): an unexamined sent
+    // row could be anywhere below that, including above i8 (10:00:08), so i8 must wait until
+    // sent's scan has passed it.
+    const partitions = {
+      sent: ['2026-07-17T10:00:09.000Z#s9', '2026-07-17T10:00:07.000Z#s7'],
+      inbound: ['2026-07-17T10:00:08.000Z#i8'],
+    };
+    const wanted = (sk: string) => sk.endsWith('#s7') || sk.endsWith('#i8');
+
+    const first = await listEmailsPage({
+      query: filteringStore(partitions, wanted, 1),
+      limit: 5,
+    });
+    expect(first.rows).toEqual([]);
+    expect(first.nextCursor).toBeDefined();
+
+    const rows = await drainAll(filteringStore(partitions, wanted, 1), { limit: 5 });
+    expect(rows.map((r) => r.id)).toEqual(['i8', 's7']);
   });
 });

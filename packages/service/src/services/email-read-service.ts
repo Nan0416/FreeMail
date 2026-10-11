@@ -23,7 +23,9 @@ import {
   type EmailAttachmentInfo,
   type EmailDetail,
   type EmailListFilter,
+  type EmailListFilters,
   type EmailListItem,
+  LIST_FILTER_SCAN_ROWS,
   type ListEmailsResponse,
   MAX_EMAIL_RESPONSE_BYTES,
   MAX_READ_BODY_BYTES,
@@ -62,7 +64,13 @@ import { fitBodyToBudget } from '../utils/body-budget.js';
 import { contentDispositionForDownload } from '../utils/content-disposition.js';
 import { decodeEmailRef, encodeEmailRef } from '../utils/email-ref.js';
 import { emailErrors } from '../utils/errors.js';
-import { listEmailsPage } from '../utils/list-merge.js';
+import {
+  listEmailsPage,
+  pageQuery,
+  type MergeQuery,
+  type MergeQueryResult,
+} from '../utils/list-merge.js';
+import { hasTextFilters, matchesListFilters, sortKeyBounds } from '../utils/list-filter.js';
 import { getLogger } from '../utils/logger.js';
 import { loadEmailBody } from './email-body-storage.js';
 
@@ -98,6 +106,8 @@ export interface ListEmailsServiceRequest {
   readonly direction?: EmailListFilter;
   readonly limit: number;
   readonly cursor?: string;
+  /** Text and date filters; absent → the whole folder. */
+  readonly filters?: EmailListFilters;
 }
 
 /**
@@ -125,6 +135,9 @@ const logger = getLogger('EmailReadService');
 const NO_SUCH_KEY = 'NoSuchKey';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Rows per list-index read while scanning for filter matches. */
+const FILTER_BATCH_ROWS = 200;
 
 /** A no-op attachment sink: the reader re-parses only for the body, never re-storing attachments. */
 const NOOP_SINK: AttachmentSink = {
@@ -181,11 +194,23 @@ export class EmailReadService {
     this.parse = deps.parse ?? parseInbound;
   }
 
-  /** List the merged (or direction-filtered) timeline, newest-first, one opaque-cursor page. */
+  /**
+   * List the merged (or direction-filtered) timeline, newest-first, one opaque-cursor page. A
+   * date range narrows the query itself; text filters make each folder scan for matches (see
+   * {@link scanForMatches}).
+   */
   async listEmails(request: ListEmailsServiceRequest): Promise<ListEmailsResponse> {
+    const filters = request.filters;
+    const bounds = sortKeyBounds(filters);
+    const query: MergeQuery =
+      filters !== undefined && hasTextFilters(filters)
+        ? (direction, opts) => this.scanForMatches(direction, opts, filters, bounds)
+        : pageQuery(
+            async (direction, opts) =>
+              (await this.emailsDao.listEmailSummaries({ direction, ...opts, ...bounds })).emails,
+          );
     const page = await listEmailsPage({
-      query: async (direction, opts) =>
-        (await this.emailsDao.listEmailSummaries({ direction, ...opts })).emails,
+      query,
       ...(request.direction ? { direction: request.direction } : {}),
       limit: request.limit,
       ...(request.cursor ? { cursor: request.cursor } : {}),
@@ -194,6 +219,45 @@ export class EmailReadService {
       emails: page.rows.map((row) => this.toListItem(row)),
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
+  }
+
+  /**
+   * One folder's matches for a filtered page: read list-index rows newest-first in batches and
+   * keep those that match, stopping at `limit` matches, at the folder's end, or after
+   * {@link LIST_FILTER_SCAN_ROWS} rows — so a page costs at most that many small reads per
+   * folder however rare the matches are, and says how far it got.
+   */
+  private async scanForMatches(
+    direction: EmailListFilter,
+    opts: { readonly limit: number; readonly afterSk?: string },
+    filters: EmailListFilters,
+    bounds: { readonly minSk?: string; readonly maxSk?: string },
+  ): Promise<MergeQueryResult> {
+    const matches: EmailSummary[] = [];
+    let afterSk = opts.afterSk;
+    let scanned = 0;
+    let scannedToSk: string | undefined;
+    while (scanned < LIST_FILTER_SCAN_ROWS) {
+      const batchSize = Math.min(FILTER_BATCH_ROWS, LIST_FILTER_SCAN_ROWS - scanned);
+      const batch = (
+        await this.emailsDao.listEmailSummaries({ direction, limit: batchSize, afterSk, ...bounds })
+      ).emails;
+      for (const row of batch) {
+        scanned += 1;
+        scannedToSk = row.sk;
+        if (matchesListFilters(row, filters)) {
+          matches.push(row);
+          if (matches.length === opts.limit) {
+            return { rows: matches, exhausted: false, scannedToSk };
+          }
+        }
+      }
+      if (batch.length < batchSize) {
+        return { rows: matches, exhausted: true, ...(scannedToSk ? { scannedToSk } : {}) };
+      }
+      afterSk = scannedToSk;
+    }
+    return { rows: matches, exhausted: false, ...(scannedToSk ? { scannedToSk } : {}) };
   }
 
   /** Read one message. Received + exposable → body materialized; otherwise envelope-only. */

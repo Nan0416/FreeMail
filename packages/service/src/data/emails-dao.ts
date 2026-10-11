@@ -265,6 +265,10 @@ export interface QueryEmailsByDirectionInput {
   readonly limit: number;
   /** Return only rows strictly older than this sort key; omit to start from the newest. */
   readonly afterSk?: string | undefined;
+  /** Only rows with a sort key at or above this (a date range's lower bound). */
+  readonly minSk?: string | undefined;
+  /** Only rows with a sort key at or below this (a date range's upper bound). */
+  readonly maxSk?: string | undefined;
 }
 
 export interface QueryEmailsByDirectionOutput {
