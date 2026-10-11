@@ -899,9 +899,12 @@ describe('list_emails search', () => {
 });
 
 describe('send_email forwarding', () => {
-  type ArraySchema = {
-    items?: { anyOf?: { properties?: Record<string, unknown> }[] } & Record<string, unknown>;
-  };
+  interface ArraySchema {
+    readonly items?: {
+      readonly anyOf?: readonly { readonly properties?: Record<string, unknown> }[];
+      readonly properties?: Record<string, unknown>;
+    };
+  }
 
   it('accepts { emailId, attachmentId } only when the read tools exist', async () => {
     const sendOnly = await connect(vi.fn());
