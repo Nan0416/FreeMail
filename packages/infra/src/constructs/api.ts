@@ -124,6 +124,10 @@ export class ApiConstruct extends Construct {
     this.httpApi = new HttpApi(this, 'HttpApi', {
       apiName: 'FreeMail',
       description: 'FreeMail REST + MCP API.',
+      // The API answers ONLY on its custom domain (below). The generated execute-api URL is
+      // switched off: nothing uses it — the session cookies are `__Host-` and host-locked to
+      // the custom domain, and agents and download links are pointed there too.
+      disableExecuteApiEndpoint: true,
       // Credentialed CORS locked to the ONE canonical SPA origin (#47, supersedes the
       // #31 same-origin-proxy model). This is Layer 2 of the three-layer model: the
       // response-READ boundary, and the preflight denial that stops a same-site sibling
@@ -159,8 +163,7 @@ export class ApiConstruct extends Construct {
     });
 
     // The public base for `/d/{token}` download links (DOWNLOAD_BASE_URL): the API's own
-    // domain, which is what recipients see in the message — never the generated execute-api
-    // URL. (That one still answers, so links minted before this switch keep working.)
+    // domain, which is what recipients see in the message.
     this.downloadBaseUrl = `https://${props.customDomain.domainName}`;
 
     this.restHandler = this.nodeFunction('RestHandler', 'service-handler.ts', {
@@ -343,9 +346,8 @@ export class ApiConstruct extends Construct {
     // The API's custom domain — where the browser AND agents both reach it (#47). A
     // DNS-validated ACM cert (in the stack region — a REGIONAL HTTP-API custom domain
     // requires the cert in the API's own region, which the us-east-1 pin satisfies) + a
-    // regional custom domain mapped to the default stage + alias records. The generated
-    // `execute-api` URL keeps working, but nothing depends on it any more: the session
-    // cookies are `__Host-` and therefore host-locked to THIS domain.
+    // regional custom domain mapped to the default stage + alias records. It is the API's
+    // only address: the generated `execute-api` URL is disabled (see the HttpApi above).
     const certificate = new Certificate(this, 'Certificate', {
       domainName: props.customDomain.domainName,
       validation: CertificateValidation.fromDns(props.customDomain.hostedZone),

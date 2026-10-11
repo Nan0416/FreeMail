@@ -91,7 +91,17 @@ describe('ApiConstruct', () => {
     const template = synth();
     template.resourceCountIs('AWS::ApiGatewayV2::Api', 1);
     template.resourceCountIs('AWS::SecretsManager::Secret', 0);
-    template.hasOutput('ApiEndpoint', {});
+  });
+
+  it('answers only on the custom domain — the generated execute-api URL is disabled', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
+      DisableExecuteApiEndpoint: true,
+    });
+    expect(template.findOutputs('ApiEndpoint')).toEqual({});
+    // `httpApi.url` / `defaultStage.url` still return the dead host without throwing, so no
+    // synthesized value may name it (Lambda permissions' `arn:…:execute-api:` ARNs are fine).
+    expect(JSON.stringify(template.toJSON())).not.toMatch(/\.execute-api\./);
   });
 
   it('locks credentialed CORS to the ONE canonical app origin (#47)', () => {
