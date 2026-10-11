@@ -41,7 +41,8 @@ class FakeSes implements SesSender {
   send(params: SendRawParams): Promise<{ messageId: string }> {
     this.calls.push(params);
     if (this.fail) {
-      return Promise.reject(new Error('ses boom'));
+      // A refusal: SES attributes it to the request (MessageRejected and the like).
+      return Promise.reject(Object.assign(new Error('ses boom'), { $fault: 'client' }));
     }
     return Promise.resolve({ messageId: this.messageId });
   }
@@ -1170,6 +1171,8 @@ describe('EmailService.sendEmail — forwarding stored attachments', () => {
       'report.pdf',
     ]);
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['big.zip']);
+    // The forwarded PDF (third, index 2) is embedded from its new copy, like the first test's.
+    expect(setup.uploads.reads).toEqual(expect.arrayContaining(['attachments/sent/id-1/2']));
   });
 
   it.each([
@@ -1557,5 +1560,27 @@ describe('EmailService.sendEmail — idempotency under failure and concurrency',
     await expect(
       setup.service.sendEmail(request({ idempotencyKey: 'w-1', text: 'changed' })),
     ).rejects.toMatchObject({ message: expect.not.stringContaining('list_emails') });
+  });
+});
+
+describe('EmailService.sendEmail — an unclear SES outcome', () => {
+  it.each([
+    ['a timeout', Object.assign(new Error('socket hang up'), { name: 'TimeoutError' })],
+    ['a 5xx', Object.assign(new Error('internal'), { $fault: 'server' })],
+    [
+      'a refusal after an SDK retry',
+      Object.assign(new Error('throttled'), { $fault: 'client', $metadata: { attempts: 2 } }),
+    ],
+  ])('leaves the row "sending" after %s, rather than claiming it failed', async (_label, error) => {
+    const setup = makeService();
+    setup.ses.send = (params) => {
+      setup.ses.calls.push(params);
+      return Promise.reject(error);
+    };
+
+    await expect(setup.service.sendEmail(request())).rejects.toBe(error);
+
+    expect(setup.emails.statusUpdates).toEqual([]);
+    expect(setup.emails.records[0]?.status).toBe('sending');
   });
 });

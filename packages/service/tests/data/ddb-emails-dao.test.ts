@@ -911,7 +911,7 @@ describe('DdbEmailsDao — idempotency claims: retries and expiry', () => {
       UpdateExpression?: string;
       ExpressionAttributeValues?: Record<string, unknown>;
     };
-    expect(takeover.ConditionExpression).toBe('#ttl = :oldTtl');
+    expect(takeover.ConditionExpression).toBe('#ttl = :oldTtl OR #claim = :claim');
     expect(takeover.UpdateExpression).toContain('REMOVE #response');
     expect(takeover.ExpressionAttributeValues?.[':oldTtl']).toBe(claim.nowSeconds - 60);
   });

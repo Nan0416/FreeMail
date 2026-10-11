@@ -350,7 +350,8 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         'create_attachment_upload' +
         (inboundEnabled
           ? ', or a file already on a message in the mailbox — { emailId, attachmentId } from ' +
-            'get_email — which is forwarded as is, with nothing downloaded or uploaded'
+            'get_email — which is forwarded as is, with nothing downloaded or uploaded (not from ' +
+            'mail flagged as spam or in the Errors folder)'
           : '') +
         '. In order, a file of at most ' +
         `${formatBytes(deployment.embedMaxBytes)} is embedded in the message while the ` +
