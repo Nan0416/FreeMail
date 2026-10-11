@@ -90,6 +90,14 @@
   }
 }
 
+/*
+ * While files are dragged over the page with a message open (set by ComposeWindow), iframes
+ * let the drag through: a drop on one would reach its own document, out of the app's reach.
+ */
+html[data-file-drag] iframe {
+  pointer-events: none;
+}
+
 /* Rich-text editor content (Tiptap / ProseMirror). */
 .compose-editor .ProseMirror {
   min-height: 100%;

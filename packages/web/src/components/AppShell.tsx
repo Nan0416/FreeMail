@@ -146,7 +146,7 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
   // saving, or it would save the draft straight back.
   const discardDraft = useCallback((draft: Draft) => {
     if (composeWindow.current?.draftId === draft.id) {
-      composeWindow.current.discard(draft);
+      composeWindow.current.discard();
       return;
     }
     // A window still loading (its code is fetched on first compose) is not opened at all.
