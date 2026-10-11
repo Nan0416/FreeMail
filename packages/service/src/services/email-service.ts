@@ -730,7 +730,7 @@ export class EmailService {
       if (row.quarantined) {
         throw emailErrors.invalidRequest(
           `${where}: that message was flagged as spam, so its attachments are not forwarded. ` +
-            'Download the file and attach it as an upload if you trust it.',
+            "Sending such a file on is the mailbox owner's decision.",
         );
       }
     }
