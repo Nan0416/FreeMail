@@ -1,6 +1,7 @@
 /**
  * Upload wiring shared by the REST and MCP dependency factories, which both send mail.
  */
+import { DEFAULT_EMBED_ATTACHMENT_BYTES, DEFAULT_EMBED_TOTAL_BYTES } from '@freemail/shared';
 import { S3Client } from '@aws-sdk/client-s3';
 
 /**
@@ -12,13 +13,22 @@ export function createUploadPresignClient(): S3Client {
   return new S3Client({ requestChecksumCalculation: 'WHEN_REQUIRED' });
 }
 
-/** The deploy-configured embed limits, spread into `EmailServiceDeps` (absent → defaults). */
+/** The embed limits in force: what the send path enforces and the MCP tool text states. */
+export interface EmbedLimits {
+  readonly embedMaxBytes: number;
+  readonly embedTotalBytes: number;
+}
+
+/**
+ * The deploy-configured embed limits with the defaults applied — resolved in one place, so the
+ * numbers `EmailService` enforces and the numbers the MCP descriptions state cannot differ.
+ */
 export function embedLimits(config: {
   readonly embedMaxBytes: number | undefined;
   readonly embedTotalBytes: number | undefined;
-}): { embedMaxBytes?: number; embedTotalBytes?: number } {
+}): EmbedLimits {
   return {
-    ...(config.embedMaxBytes !== undefined ? { embedMaxBytes: config.embedMaxBytes } : {}),
-    ...(config.embedTotalBytes !== undefined ? { embedTotalBytes: config.embedTotalBytes } : {}),
+    embedMaxBytes: config.embedMaxBytes ?? DEFAULT_EMBED_ATTACHMENT_BYTES,
+    embedTotalBytes: config.embedTotalBytes ?? DEFAULT_EMBED_TOTAL_BYTES,
   };
 }

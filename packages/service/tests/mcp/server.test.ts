@@ -737,7 +737,8 @@ describe('formatting helpers', () => {
   it.each([
     [500, '500 bytes'],
     [3 * 1024 * 1024, '3 MiB'],
-    [1.5 * 1024 * 1024, '1.5 MiB'],
+    [1.5 * 1024 * 1024, '1572864 bytes'],
+    [5_000_000, '5000000 bytes'],
     [100 * 1024 * 1024, '100 MiB'],
   ])('formatBytes(%s) → %s', (bytes, text) => {
     expect(formatBytes(bytes)).toBe(text);

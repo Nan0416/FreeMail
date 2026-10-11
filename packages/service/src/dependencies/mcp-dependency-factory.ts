@@ -7,11 +7,7 @@
  * request. Absent is the honest representation, and `buildMcpServer` advertises the read
  * tools only when it is present.
  */
-import {
-  DEFAULT_EMBED_ATTACHMENT_BYTES,
-  DEFAULT_EMBED_TOTAL_BYTES,
-  normalizeDomain,
-} from '@freemail/shared';
+import { normalizeDomain } from '@freemail/shared';
 import { S3Client } from '@aws-sdk/client-s3';
 import { SESv2Client } from '@aws-sdk/client-sesv2';
 import { DdbDownloadTokensDao } from '../data/ddb-download-tokens-dao.js';
@@ -22,7 +18,7 @@ import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { S3UploadStore } from '../facades/s3-upload-store.js';
 import { AttachmentService, type AttachmentUploader } from '../services/attachment-service.js';
-import { createUploadPresignClient } from './uploads.js';
+import { createUploadPresignClient, embedLimits } from './uploads.js';
 import { S3AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import { EmailReadService } from '../services/email-read-service.js';
 import { EmailService } from '../services/email-service.js';
@@ -56,10 +52,10 @@ export class McpDependencyFactory {
     const s3 = new S3Client({});
 
     // The limits the send path enforces, resolved once so the tool text states the same numbers.
+    const limits = embedLimits(this.config);
     const deployment: McpDeploymentInfo = {
       emailDomain: normalizeDomain(this.config.emailDomain),
-      embedMaxBytes: this.config.embedMaxBytes ?? DEFAULT_EMBED_ATTACHMENT_BYTES,
-      embedTotalBytes: this.config.embedTotalBytes ?? DEFAULT_EMBED_TOTAL_BYTES,
+      ...limits,
     };
 
     const emailsDao = new DdbEmailsDao(doc, this.config.emailsTable);
@@ -84,8 +80,7 @@ export class McpDependencyFactory {
       bodies: bodyStore,
       tokensDao: downloadTokensDao,
       uploads: uploadStore,
-      embedMaxBytes: deployment.embedMaxBytes,
-      embedTotalBytes: deployment.embedTotalBytes,
+      ...limits,
       downloadBaseUrl: this.config.downloadBaseUrl,
       emailDomain: this.config.emailDomain,
     });
