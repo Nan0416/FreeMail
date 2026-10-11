@@ -167,7 +167,8 @@ const sentStatusSchema = z
   .enum(['sending', 'sent', 'send_failed'])
   .optional()
   .describe(
-    'Sent mail only. "sending": recorded, SES not yet answered (or the update was lost). ' +
+    'Sent mail only. "sending": outcome not recorded — still sending, or SES may already have ' +
+      'delivered it; do not resend without checking. ' +
       '"sent": SES accepted it for delivery. "send_failed": SES rejected it; it was not delivered.',
   );
 
