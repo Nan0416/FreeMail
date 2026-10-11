@@ -8,7 +8,12 @@
  * folder) — each `sk='<iso>#<id>'` so the read slice lists any partition newest-first and
  * merges sent + received into one timeline.
  */
-import type { EmailListFilter, SendEmailResponse, SentStatus } from '@freemail/shared';
+import type {
+  DeliveryEvent,
+  EmailListFilter,
+  SendEmailResponse,
+  SentStatus,
+} from '@freemail/shared';
 import type { EmailListIndexAttribute } from '@freemail/shared/storage';
 
 /** Partition holding sent messages. */
@@ -106,6 +111,8 @@ export interface CreateSentEmailInput {
    * transition. Absent before SES accepts it, and on rows from before it was recorded.
    */
   readonly messageIdHeader?: string;
+  /** SES's reports after accepting it, appended as they arrive (SNS may repeat one). */
+  readonly deliveryEvents?: readonly DeliveryEvent[];
 }
 
 /** Nothing to report: the conditional put either landed or threw. */
@@ -136,6 +143,24 @@ export interface UpdateSentEmailStatusInput {
 
 /** Nothing to report: the conditional update either landed or threw. */
 export interface UpdateSentEmailStatusOutput {}
+
+/**
+ * Record SES reports about a sent message: append the events, and move the status on when they
+ * warrant it — `delivered` only from `sending`/`sent`, `bounced` from anything but a failed
+ * send, `send_failed` (a reject) from `sending`/`sent` — so a late or repeated report never
+ * walks a status back.
+ */
+export interface UpdateSentEmailDeliveryInput {
+  readonly id: string;
+  readonly sentAt: string;
+  readonly events: readonly DeliveryEvent[];
+  readonly status?: Extract<SentStatus, 'delivered' | 'bounced' | 'send_failed'>;
+}
+
+/** Whether the message's row was there to update (a report about mail it never recorded isn't). */
+export interface UpdateSentEmailDeliveryOutput {
+  readonly found: boolean;
+}
 
 /**
  * SES scan verdicts, normalized. `PASS` is the ONLY affirmative-clean value —
@@ -370,6 +395,11 @@ export interface EmailsDao {
    * plain `SET`, it never moves the row (the sort key derives from the unchanged `sentAt`).
    */
   updateSentEmailStatus(input: UpdateSentEmailStatusInput): Promise<UpdateSentEmailStatusOutput>;
+
+  /** Append SES's delivery reports to a sent message and advance its status (see the input). */
+  updateSentEmailDelivery(
+    input: UpdateSentEmailDeliveryInput,
+  ): Promise<UpdateSentEmailDeliveryOutput>;
 
   /** Record a received message, idempotently. */
   createInboundEmail(input: CreateInboundEmailInput): Promise<CreateInboundEmailOutput>;

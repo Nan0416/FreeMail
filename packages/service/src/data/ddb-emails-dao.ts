@@ -26,6 +26,8 @@ import { EMAIL_LIST_INDEX_ATTRIBUTES, EMAIL_LIST_INDEX_NAME } from '@freemail/sh
 import { getLogger } from '../utils/logger.js';
 import { CONDITIONAL_CHECK_FAILED, EmailEntity, isConditionalCheckFailed } from './entities.js';
 import type {
+  UpdateSentEmailDeliveryInput,
+  UpdateSentEmailDeliveryOutput,
   CreateIdempotencyRecordInput,
   CreateIdempotencyRecordOutput,
   DeleteIdempotencyRecordInput,
@@ -168,18 +170,87 @@ export class DdbEmailsDao implements EmailsDao {
       values[':error'] = input.error;
       sets.push('#error = :error');
     }
-    await this.doc.send(
-      new UpdateCommand({
-        TableName: this.tableName,
-        Key: { pk: EmailEntity.SENT_PARTITION, sk: `${input.sentAt}#${input.id}` },
-        UpdateExpression: `SET ${sets.join(', ')}`,
-        ExpressionAttributeNames: names,
-        ExpressionAttributeValues: values,
-        // The row was just written by putSent; guard against a vanished/absent row.
-        ConditionExpression: 'attribute_exists(pk)',
-      }),
-    );
+    const key = { pk: EmailEntity.SENT_PARTITION, sk: `${input.sentAt}#${input.id}` };
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: key,
+          UpdateExpression: `SET ${sets.join(', ')}`,
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: { ...values, ':sending': 'sending' },
+          // The row was just written by putSent; guard against a vanished/absent row — and never
+          // walk a status back: SES's report of the delivery may already have moved it on.
+          ConditionExpression: 'attribute_exists(pk) AND #status = :sending',
+        }),
+      );
+    } catch (err) {
+      if (!isConditionalCheckFailed(err) || sets.length === 1) {
+        throw err;
+      }
+      // A report got there first: keep its status, record the rest.
+      delete names['#status'];
+      delete values[':status'];
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: key,
+          UpdateExpression: `SET ${sets.slice(1).join(', ')}`,
+          ExpressionAttributeNames: names,
+          ExpressionAttributeValues: values,
+          ConditionExpression: 'attribute_exists(pk)',
+        }),
+      );
+    }
     return {};
+  }
+
+  async updateSentEmailDelivery(
+    input: UpdateSentEmailDeliveryInput,
+  ): Promise<UpdateSentEmailDeliveryOutput> {
+    const key = { pk: EmailEntity.SENT_PARTITION, sk: `${input.sentAt}#${input.id}` };
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: key,
+          UpdateExpression: 'SET #events = list_append(if_not_exists(#events, :empty), :events)',
+          ExpressionAttributeNames: { '#events': 'deliveryEvents' },
+          ExpressionAttributeValues: { ':empty': [], ':events': input.events },
+          // Only a message we recorded: never create a stray row from a report.
+          ConditionExpression: 'attribute_exists(pk)',
+        }),
+      );
+    } catch (err) {
+      if (isConditionalCheckFailed(err)) {
+        return { found: false };
+      }
+      throw err;
+    }
+    if (input.status !== undefined) {
+      const from = STATUS_ADVANCES_FROM[input.status];
+      try {
+        await this.doc.send(
+          new UpdateCommand({
+            TableName: this.tableName,
+            Key: key,
+            UpdateExpression: 'SET #status = :status',
+            ExpressionAttributeNames: { '#status': 'status' },
+            ExpressionAttributeValues: {
+              ':status': input.status,
+              ...Object.fromEntries(from.map((status, index) => [`:from${index}`, status])),
+            },
+            ConditionExpression: `#status IN (${from.map((_s, index) => `:from${index}`).join(', ')})`,
+          }),
+        );
+      } catch (err) {
+        // The status is already at or past this one: nothing to move.
+        if (!isConditionalCheckFailed(err)) {
+          throw err;
+        }
+      }
+    }
+    return { found: true };
   }
 
   async createInboundEmail(input: CreateInboundEmailInput): Promise<CreateInboundEmailOutput> {
@@ -554,3 +625,13 @@ function toIdempotencyRecord(key: string, item: Record<string, unknown>): Idempo
     ttl: Number(item.ttl),
   };
 }
+
+/** The statuses each delivery outcome may replace — a status never moves backwards. */
+const STATUS_ADVANCES_FROM: Record<
+  UpdateSentEmailDeliveryInput['status'] & string,
+  readonly string[]
+> = {
+  delivered: ['sending', 'sent'],
+  bounced: ['sending', 'sent', 'delivered'],
+  send_failed: ['sending', 'sent'],
+};

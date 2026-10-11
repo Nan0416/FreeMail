@@ -195,10 +195,28 @@ export type EmailListFilter = EmailDirection | 'failed';
  * Delivery status of a sent message (present on `sent` rows only). Set write-before-send:
  * `sending` the instant the message is archived + recorded, then `sent` once SES accepts it
  * (a `sesMessageId` exists) or `send_failed` if SES rejects it — so a failed send is visible
- * in the mailbox instead of vanishing. Absent on inbound rows (and on any legacy sent row
- * written before this field existed).
+ * in the mailbox instead of vanishing. SES's later reports then move it on: `delivered` once a
+ * receiving server accepted it, `bounced` once any recipient's copy bounced (which outranks
+ * `delivered`), `send_failed` if SES rejected it after all. Absent on inbound rows (and on any
+ * legacy sent row written before this field existed).
  */
-export type SentStatus = 'sending' | 'sent' | 'send_failed';
+export type SentStatus = 'sending' | 'sent' | 'delivered' | 'bounced' | 'send_failed';
+
+/**
+ * What happened to a sent message after SES accepted it, as SES reported it: the receiving
+ * server took it (`delivered`), refused it or SES gave up (`bounced`), a recipient marked it
+ * as spam (`complained`), delivery is being retried (`delayed`), or SES refused to send it
+ * after all (`rejected` — e.g. a virus). Per recipient, in the order the reports arrived.
+ */
+export interface DeliveryEvent {
+  readonly type: 'delivered' | 'bounced' | 'complained' | 'delayed' | 'rejected';
+  /** When SES reports it happened, ISO-8601 UTC. */
+  readonly at: string;
+  /** The recipients it is about (empty when SES names none, e.g. a reject). */
+  readonly recipients: readonly string[];
+  /** For a bounce, delay, complaint, or reject: SES's reason, condensed. */
+  readonly detail?: string;
+}
 
 /**
  * A normalized SES scan verdict on a received message. `PASS` is the only
@@ -275,6 +293,11 @@ export interface EmailDetail {
   readonly date: string;
   /** Sent only: delivery status (`sending`/`sent`/`send_failed`). Absent on inbound + legacy rows. */
   readonly status?: SentStatus;
+  /**
+   * Sent only: what SES reported after accepting it — deliveries, bounces, complaints, delays —
+   * oldest first. Absent until a report arrives (and on mail sent before they were recorded).
+   */
+  readonly deliveryEvents?: readonly DeliveryEvent[];
   /** Inbound only: the message's own `Date:` header (attacker-controlled), if present. */
   readonly headerDate?: string;
   /** Plain-text body — present for sent mail and exposable received mail. */
