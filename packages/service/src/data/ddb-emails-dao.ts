@@ -419,7 +419,8 @@ export class DdbEmailsDao implements EmailsDao {
           UpdateExpression:
             'SET #fp = :fp, #state = :pending, #created = :created, #ttl = :ttl, #claim = :claim ' +
             'REMOVE #response',
-          ConditionExpression: '#ttl = :oldTtl',
+          // Its own earlier attempt (an SDK retry after a lost response) also counts as won.
+          ConditionExpression: '#ttl = :oldTtl OR #claim = :claim',
           ExpressionAttributeNames: { ...IDEMPOTENCY_NAMES, '#response': 'response' },
           ExpressionAttributeValues: { ...claimValues(input), ':oldTtl': old.ttl },
         }),

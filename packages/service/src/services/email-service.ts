@@ -264,9 +264,7 @@ export class EmailService {
     if (claim.created) {
       return undefined;
     }
-    const check = this.canReadMailbox
-      ? 'check the Sent list (list_emails with direction "sent")'
-      : 'check whether it arrived';
+    const check = this.canReadMailbox ? 'check the Sent folder' : 'check whether it arrived';
     if (claim.existing.requestFingerprint !== fingerprint) {
       throw emailErrors.invalidRequest(
         '"idempotencyKey" was already used for a different message in the last 24 hours. If ' +
@@ -438,17 +436,21 @@ export class EmailService {
       attempt.sesCalled();
       messageId = (await this.ses.send({ from, to, cc, bcc, raw })).messageId;
     } catch (error) {
-      if (isClientFault(error)) {
+      if (refusedBySes(error)) {
+        // SES refused the message: mark the archived row send_failed so the failure is visible
+        // in the mailbox, then surface the error to the caller (delivery did not happen).
         attempt.sesRefused();
+        await this.recordTerminalStatus({
+          id,
+          sentAt,
+          status: 'send_failed',
+          error: describeError(error),
+        });
+      } else {
+        // A timeout or a 5xx: SES may have sent it. The row stays `sending` — "status not
+        // recorded" — rather than claiming a failure that may not be one; logged to reconcile.
+        console.error('SES send outcome unknown', { emailId: id, sentAt }, error);
       }
-      // SES rejected the message: mark the archived row send_failed so the failure is visible
-      // in the mailbox, then surface the error to the caller (delivery did not happen).
-      await this.recordTerminalStatus({
-        id,
-        sentAt,
-        status: 'send_failed',
-        error: describeError(error),
-      });
       throw error;
     }
 
@@ -773,9 +775,18 @@ class DeliveryAttempt {
   }
 }
 
-/** True for an AWS SDK error the service attributes to the request (it did nothing with it). */
-function isClientFault(error: unknown): boolean {
-  return (error as { $fault?: unknown } | null)?.$fault === 'client';
+/**
+ * True when SES certainly did not send: it attributed the failure to the request (a client
+ * fault — rejected, throttled, invalid) on the only attempt. After an SDK retry, an earlier
+ * attempt may have timed out after SES had already sent.
+ */
+function refusedBySes(error: unknown): boolean {
+  const failure = error as {
+    readonly $fault?: unknown;
+    readonly $metadata?: { readonly attempts?: number };
+  } | null;
+  const attempts = failure?.$metadata?.attempts;
+  return failure?.$fault === 'client' && (attempts === undefined || attempts <= 1);
 }
 
 /** A send that passed every check — what {@link EmailService.deliver} sends. */
