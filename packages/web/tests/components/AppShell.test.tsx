@@ -295,7 +295,7 @@ describe('AppShell — compose', () => {
 });
 
 describe('AppShell — drafts', () => {
-  function seedDrafts(...subjects: string[]): void {
+  function seedDrafts(subjects: readonly string[], html = '<p>hi</p>'): void {
     const drafts = subjects.map((subject, i) => ({
       id: `d${i + 1}`,
       from: 'me@x.com',
@@ -303,7 +303,7 @@ describe('AppShell — drafts', () => {
       cc: '',
       bcc: '',
       subject,
-      html: '<p>hi</p>',
+      html,
       updatedAt: '2026-10-10T00:00:00.000Z',
     }));
     window.localStorage.setItem('freemail.drafts.v1', JSON.stringify(drafts));
@@ -330,7 +330,7 @@ describe('AppShell — drafts', () => {
   }
 
   it('discarding the open draft from the list closes its window, and it stays discarded', async () => {
-    seedDrafts('Plans');
+    seedDrafts(['Plans']);
     renderWithApp(<AppShell inboundEnabled />, mockApi([[]]));
     const dialog = await openDraft('Plans');
     fireEvent.change(within(dialog).getByLabelText('Subject'), { target: { value: 'Plans v2' } });
@@ -348,8 +348,67 @@ describe('AppShell — drafts', () => {
     ).toBeInTheDocument();
   });
 
+  it('discards a new message that auto-saved into Drafts while still open', async () => {
+    renderWithApp(<AppShell inboundEnabled />, mockApi([[]]));
+    fireEvent.keyDown(window, { key: 'c' });
+    const dialog = await screen.findByRole('dialog', { name: 'New message' });
+    fireEvent.change(within(dialog).getByLabelText('Subject'), { target: { value: 'Fresh' } });
+    await waitFor(() => expect(storedSubjects()).toEqual(['Fresh']), { timeout: 2000 });
+
+    fireEvent.click(screen.getByRole('button', { name: /Drafts/ }));
+    await screen.findByRole('list', { name: 'Drafts' });
+    discardFromList('Fresh');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(storedSubjects()).toEqual([]);
+  });
+
+  it('keeps Undo for an open draft whose fields were all cleared', async () => {
+    seedDrafts(['Plans'], '');
+    renderWithApp(<AppShell inboundEnabled />, mockApi([[]]));
+    const dialog = await openDraft('Plans');
+    fireEvent.change(within(dialog).getByLabelText('To'), { target: { value: '' } });
+    fireEvent.change(within(dialog).getByLabelText('Subject'), { target: { value: '' } });
+
+    discardFromList('Plans');
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(storedSubjects()).toEqual([]);
+    // The window holds nothing, so Undo restores the copy the list showed.
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
+    expect(storedSubjects()).toEqual(['Plans']);
+  });
+
+  it('refuses to discard the open draft while it is sending', async () => {
+    seedDrafts(['Plans']);
+    const listApi = mockApi([[]]);
+    let release: () => void = () => {};
+    const fetchMock = vi.fn<typeof fetch>(async (url, init) => {
+      if (pathOf(url) === '/emails' && init?.method === 'POST') {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return json(200, { id: 'm1', messageId: 'ses-1', sentAt: '2026-10-10T00:00:00.000Z' });
+      }
+      return listApi(url, init);
+    });
+    renderWithApp(<AppShell inboundEnabled />, fetchMock);
+    const dialog = await openDraft('Plans');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(callsTo(fetchMock, '/emails', 'POST')).toHaveLength(1));
+
+    discardFromList('Plans');
+
+    expect(await screen.findByText('This message is being sent')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Plans' })).toBeInTheDocument();
+    expect(storedSubjects()).toEqual(['Plans']);
+    release();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(storedSubjects()).toEqual([]);
+  });
+
   it('discarding another draft leaves the open window alone', async () => {
-    seedDrafts('Plans', 'Old');
+    seedDrafts(['Plans', 'Old']);
     renderWithApp(<AppShell inboundEnabled />, mockApi([[]]));
     await openDraft('Plans');
 
