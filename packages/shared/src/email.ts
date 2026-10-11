@@ -10,9 +10,23 @@
  * delivered as `GET /d/{token}` download links.
  */
 
-/** An attachment to send: a finished upload, referenced by the id its upload returned. */
-export interface EmailAttachmentRef {
+/** An attachment to send: a finished upload, or a file already stored on a message. */
+export type EmailAttachmentRef = UploadAttachmentRef | StoredAttachmentRef;
+
+/** A finished upload, referenced by the id its upload returned. */
+export interface UploadAttachmentRef {
   readonly uploadId: string;
+}
+
+/**
+ * An attachment of a message already in the mailbox — received or sent — to forward as is.
+ * The server copies the stored file; nothing is downloaded or uploaded again.
+ */
+export interface StoredAttachmentRef {
+  /** The message's id, as the list and read API return it. */
+  readonly emailId: string;
+  /** The attachment's id from that message's `attachments`. */
+  readonly attachmentId: string;
 }
 
 /** Ask for a presigned URL to upload one attachment straight to S3. */

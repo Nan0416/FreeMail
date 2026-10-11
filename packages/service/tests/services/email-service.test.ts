@@ -1014,3 +1014,320 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
     expect((await setup.service.sendEmail(request())).threaded).toBeUndefined();
   });
 });
+
+describe('EmailService.sendEmail — forwarding stored attachments', () => {
+  const IN_SK = '2026-07-16T09:00:00.000Z#ses-in-2';
+
+  /** A received message carrying a small PDF and a large zip, stored under attachments/inbound/. */
+  function received(): GetEmailOutput {
+    return {
+      direction: 'inbound',
+      pk: 'INBOUND',
+      sk: IN_SK,
+      id: 'ses-in-2',
+      sesMessageId: 'ses-in-2',
+      from: 'friend@other.com',
+      to: ['me@example.com'],
+      cc: [],
+      subject: 'Docs',
+      receivedAt: '2026-07-16T09:00:00.000Z',
+      hasAttachments: true,
+      attachmentCount: 2,
+      attachments: [
+        {
+          id: '2',
+          filename: 'report.pdf',
+          contentType: 'application/pdf',
+          sizeBytes: 1000,
+          s3Key: 'attachments/inbound/ses-in-2/2',
+        },
+        {
+          id: '3',
+          filename: 'big.zip',
+          contentType: 'application/zip',
+          sizeBytes: 8 * MB,
+          s3Key: 'attachments/inbound/ses-in-2/3',
+        },
+      ],
+      spamVerdict: 'PASS',
+      virusVerdict: 'PASS',
+      parseStatus: 'ok',
+      quarantined: false,
+      rawS3Key: 'inbound/ses-in-2',
+      sizeBytes: 9 * MB,
+    };
+  }
+
+  function forwarding(over: Partial<EmailServiceDeps> = {}) {
+    const emails = new FakeEmails();
+    emails.stored.set(`INBOUND|${IN_SK}`, received());
+    const uploads = new FakeUploadStore();
+    uploads.objects.set('attachments/inbound/ses-in-2/2', {
+      meta: { filename: 'x', contentType: 'x', sizeBytes: 1000 },
+      bytes: Buffer.from('%PDF-forwarded'),
+    });
+    uploads.objects.set('attachments/inbound/ses-in-2/3', {
+      meta: { filename: 'x', contentType: 'x', sizeBytes: 8 * MB },
+    });
+    return { ...makeService({ emailsDao: emails, uploads, ...over }), emails, uploads };
+  }
+
+  const ref = (attachmentId: string) => ({
+    emailId: encodeEmailRef({ pk: 'INBOUND', sk: IN_SK }),
+    attachmentId,
+  });
+
+  it('copies the stored file to the sent message, embedding a small one from its own bytes', async () => {
+    const setup = forwarding();
+
+    await setup.service.sendEmail(request({ attachments: [ref('2')] }));
+
+    expect(setup.uploads.copies).toEqual([
+      { source: 'attachments/inbound/ses-in-2/2', dest: 'attachments/sent/id-1/0' },
+    ]);
+    expect(setup.mimeInputs[0].attachments).toEqual([
+      {
+        filename: 'report.pdf',
+        contentType: 'application/pdf',
+        contentBase64: Buffer.from('%PDF-forwarded').toString('base64'),
+      },
+    ]);
+    // Embedded from the copy just made, not the source (which could vanish meanwhile).
+    expect(setup.uploads.reads).toEqual(['attachments/sent/id-1/0']);
+    // The row's descriptor is the recorded one, pointing at the sent copy.
+    expect(setup.emails.records[0].attachments).toEqual([
+      {
+        id: '0',
+        filename: 'report.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 1000,
+        s3Key: 'attachments/sent/id-1/0',
+      },
+    ]);
+  });
+
+  it('links a large forwarded file, and keeps uploads and forwards in request order', async () => {
+    const setup = forwarding();
+    const upload = setup.uploads.add(1, 'notes.txt', 'text/plain', Buffer.from('hi'));
+
+    await setup.service.sendEmail(
+      request({ attachments: [ref('3'), { uploadId: upload }, ref('2')] }),
+    );
+
+    expect(setup.uploads.copies.map((c) => c.source)).toEqual([
+      'attachments/inbound/ses-in-2/3',
+      `uploads/${upload}`,
+      'attachments/inbound/ses-in-2/2',
+    ]);
+    // The 8 MB zip is linked; the two small files are embedded, in order.
+    expect(setup.mimeInputs[0].attachments.map((a) => a.filename)).toEqual([
+      'notes.txt',
+      'report.pdf',
+    ]);
+    expect(setup.tokens.created.map((t) => t.filename)).toEqual(['big.zip']);
+    // The forwarded PDF (third, index 2) is embedded from its new copy, like the first test's.
+    expect(setup.uploads.reads).toEqual(expect.arrayContaining(['attachments/sent/id-1/2']));
+  });
+
+  it.each([
+    ['an attachment the message does not have', { ...ref('9') }, 'no such attachment'],
+    ['a malformed message id', { emailId: 'garbage', attachmentId: '2' }, 'not a message id'],
+    [
+      'a message that does not exist',
+      {
+        emailId: encodeEmailRef({ pk: 'SENT', sk: '2020-01-01T00:00:00.000Z#x' }),
+        attachmentId: '0',
+      },
+      'names no message',
+    ],
+    ['a half-formed reference', { emailId: 'x' }, 'must be { "uploadId" }'],
+  ])('refuses %s, sending nothing', async (_label, attachment, message) => {
+    const setup = forwarding();
+
+    await expect(
+      setup.service.sendEmail(
+        request({ attachments: [attachment as unknown as { uploadId: string }] }),
+      ),
+    ).rejects.toMatchObject({ code: 'invalid_request', message: expect.stringContaining(message) });
+    expect(setup.ses.calls).toHaveLength(0);
+    expect(setup.uploads.copies).toEqual([]);
+  });
+
+  it('refuses to forward where the mailbox cannot be read, without touching the table', async () => {
+    const setup = forwarding({ canReadMailbox: false });
+
+    await expect(
+      setup.service.sendEmail(request({ attachments: [ref('2')] })),
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: expect.stringContaining('receiving'),
+    });
+    expect(setup.emails.gets).toEqual([]);
+  });
+
+  it('says the stored file is gone if it vanished before the copy', async () => {
+    const setup = forwarding();
+    setup.uploads.objects.delete('attachments/inbound/ses-in-2/2');
+
+    await expect(
+      setup.service.sendEmail(request({ attachments: [ref('2')] })),
+    ).rejects.toMatchObject({ message: expect.stringContaining('no longer stored') });
+  });
+});
+
+describe('EmailService.sendEmail — forwarding: which messages', () => {
+  const SK = '2026-07-16T09:00:00.000Z#m1';
+
+  function withRow(row: GetEmailOutput) {
+    const emails = new FakeEmails();
+    emails.stored.set(`${row.pk}|${row.sk}`, row);
+    const uploads = new FakeUploadStore();
+    uploads.objects.set('attachments/sent/old/0', {
+      meta: { filename: 'x', contentType: 'x', sizeBytes: 10 },
+      bytes: Buffer.from('sent-file!'),
+    });
+    uploads.objects.set('attachments/inbound/m1/2', {
+      meta: { filename: 'x', contentType: 'x', sizeBytes: 10 },
+      bytes: Buffer.from('in-file!!!'),
+    });
+    return { ...makeService({ emailsDao: emails, uploads }), emails, uploads };
+  }
+
+  function inbound(over: Record<string, unknown>): GetEmailOutput {
+    return {
+      direction: 'inbound',
+      pk: 'INBOUND',
+      sk: SK,
+      id: 'm1',
+      sesMessageId: 'm1',
+      from: 'a@b.com',
+      to: ['me@example.com'],
+      cc: [],
+      subject: 's',
+      receivedAt: '2026-07-16T09:00:00.000Z',
+      hasAttachments: true,
+      attachmentCount: 1,
+      attachments: [
+        {
+          id: '2',
+          filename: 'f.txt',
+          contentType: 'text/plain',
+          sizeBytes: 10,
+          s3Key: 'attachments/inbound/m1/2',
+        },
+      ],
+      spamVerdict: 'PASS',
+      virusVerdict: 'PASS',
+      parseStatus: 'ok',
+      quarantined: false,
+      rawS3Key: 'inbound/m1',
+      sizeBytes: 100,
+      ...over,
+    } as GetEmailOutput;
+  }
+
+  const ref = (pk: string, attachmentId = '2') => ({
+    emailId: encodeEmailRef({ pk, sk: SK }),
+    attachmentId,
+  });
+
+  const sentRow = (over: Record<string, unknown> = {}): GetEmailOutput =>
+    ({
+      direction: 'sent',
+      pk: 'SENT',
+      sk: SK,
+      id: 'old',
+      from: 'me@example.com',
+      to: ['x@y.com'],
+      cc: [],
+      bcc: [],
+      subject: 's',
+      sentAt: '2026-07-16T09:00:00.000Z',
+      attachmentCount: 1,
+      sizeBytes: 10,
+      ...over,
+    }) as GetEmailOutput;
+
+  it('forwards a file from one of our own sent messages', async () => {
+    const setup = withRow(
+      sentRow({
+        status: 'sent',
+        attachments: [
+          {
+            id: '0',
+            filename: 'plan.txt',
+            contentType: 'text/plain',
+            sizeBytes: 10,
+            s3Key: 'attachments/sent/old/0',
+          },
+        ],
+      }),
+    );
+
+    await setup.service.sendEmail(request({ attachments: [ref('SENT', '0')] }));
+
+    expect(setup.uploads.copies[0]).toEqual({
+      source: 'attachments/sent/old/0',
+      dest: 'attachments/sent/id-1/0',
+    });
+  });
+
+  it('finds nothing to forward on a sent row from before attachments were recorded', async () => {
+    const setup = withRow(sentRow());
+
+    await expect(
+      setup.service.sendEmail(request({ attachments: [ref('SENT', '0')] })),
+    ).rejects.toMatchObject({ message: expect.stringContaining('no such attachment') });
+  });
+
+  it.each([
+    [
+      'an Errors-folder message',
+      inbound({ pk: 'FAILED', virusVerdict: 'FAIL', failed: true }),
+      'FAILED',
+      'no attachments to forward',
+    ],
+    [
+      'a message whose content was withheld, even with a stale descriptor',
+      inbound({ parseStatus: 'parse_failed' }),
+      'INBOUND',
+      'no attachments to forward',
+    ],
+    [
+      'a message flagged as spam',
+      inbound({ spamVerdict: 'FAIL', quarantined: true }),
+      'INBOUND',
+      'spam',
+    ],
+  ])('refuses to forward from %s', async (_label, row, pk, message) => {
+    const setup = withRow(row);
+
+    await expect(
+      setup.service.sendEmail(request({ attachments: [ref(pk)] })),
+    ).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: expect.stringContaining(message),
+    });
+    expect(setup.uploads.copies).toEqual([]);
+  });
+
+  it('reads a message once however many of its files are forwarded', async () => {
+    const setup = withRow(inbound({}));
+
+    await setup.service.sendEmail(request({ attachments: [ref('INBOUND'), ref('INBOUND')] }));
+
+    expect(setup.emails.gets).toHaveLength(1);
+    expect(setup.uploads.copies).toHaveLength(2);
+  });
+
+  it('counts forwarded files and uploads together against the attachment cap', async () => {
+    const setup = withRow(inbound({}));
+    const refs = Array.from({ length: 21 }, (_v, i) =>
+      i % 2 === 0 ? ref('INBOUND') : { uploadId: uploadId(i) },
+    );
+
+    await expect(
+      setup.service.sendEmail(request({ attachments: refs as { uploadId: string }[] })),
+    ).rejects.toMatchObject({ message: expect.stringContaining('at most 20 attachments') });
+  });
+});

@@ -898,6 +898,70 @@ describe('list_emails search', () => {
   });
 });
 
+describe('send_email forwarding', () => {
+  interface ArraySchema {
+    readonly items?: {
+      readonly anyOf?: readonly { readonly properties?: Record<string, unknown> }[];
+      readonly properties?: Record<string, unknown>;
+    };
+  }
+
+  it('accepts { emailId, attachmentId } only when the read tools exist', async () => {
+    const sendOnly = await connect(vi.fn());
+    const withRead = await connectRead(fakeReadService({}));
+    const attachments = async (client: Client) =>
+      (await client.listTools()).tools.find((t) => t.name === 'send_email')?.inputSchema.properties
+        ?.attachments as ArraySchema;
+
+    const plain = await attachments(sendOnly);
+    expect(plain.items?.anyOf).toBeUndefined();
+    expect(Object.keys((plain.items?.properties as Record<string, unknown>) ?? {})).toEqual([
+      'uploadId',
+    ]);
+
+    const either = await attachments(withRead);
+    expect(either.items?.anyOf?.map((option) => Object.keys(option.properties ?? {}))).toEqual([
+      ['uploadId'],
+      ['emailId', 'attachmentId'],
+    ]);
+  });
+
+  it('passes a stored reference to the email service', async () => {
+    const send = vi.fn().mockResolvedValue({ id: 'e1', messageId: 'm1', sentAt: 't' });
+    const client = await connectWith({
+      emailService: { sendEmail: send } as unknown as EmailService,
+      readService: fakeReadService({}),
+      inboundEnabled: true,
+    });
+
+    await client.callTool({
+      name: 'send_email',
+      arguments: {
+        from: 'me@example.com',
+        to: ['a@b.com'],
+        text: 'fyi',
+        attachments: [{ emailId: 'H', attachmentId: '2' }],
+      },
+    });
+
+    expect(send).toHaveBeenCalledWith(
+      expect.objectContaining({ attachments: [{ emailId: 'H', attachmentId: '2' }] }),
+    );
+  });
+
+  it('tells the agent how to forward', async () => {
+    const client = await connectRead(fakeReadService({}));
+    const tools = (await client.listTools()).tools;
+
+    expect(tools.find((t) => t.name === 'send_email')?.description).toContain(
+      'forwarded as is, with nothing downloaded or uploaded',
+    );
+    expect(tools.find((t) => t.name === 'get_email')?.description).toContain(
+      'to forward one, list { emailId: this id, attachmentId }',
+    );
+  });
+});
+
 describe('list_emails empty pages', () => {
   it('says more remains when a filtered page matched nothing but has a cursor', async () => {
     const client = await connectRead(
@@ -918,5 +982,25 @@ describe('list_emails empty pages', () => {
     expect(textOf(await client.callTool({ name: 'list_emails', arguments: {} }))).toBe(
       'No emails.',
     );
+  });
+});
+
+describe('send_email forwarding without inbound', () => {
+  it('rejects a stored reference at call time when there are no read tools', async () => {
+    const send = vi.fn();
+    const client = await connect(send);
+
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: {
+        from: 'me@example.com',
+        to: ['a@b.com'],
+        text: 'fyi',
+        attachments: [{ emailId: 'H', attachmentId: '2' }],
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(send).not.toHaveBeenCalled();
   });
 });

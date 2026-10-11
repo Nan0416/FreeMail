@@ -42,6 +42,22 @@ describe('buildPrefill', () => {
     );
   });
 
+  it("carries the original's attachments into a forward, by reference", () => {
+    const withFiles = {
+      ...INBOUND,
+      attachments: [{ id: '2', filename: 'a.pdf', contentType: 'application/pdf', sizeBytes: 9 }],
+    };
+    expect(buildPrefill(withFiles, 'forward', '').forwardAttachments).toEqual([
+      { emailId: 'h1', attachmentId: '2', filename: 'a.pdf', sizeBytes: 9 },
+    ]);
+    expect(buildPrefill(withFiles, 'reply', '').forwardAttachments).toBeUndefined();
+    expect(buildPrefill(INBOUND, 'forward', '').forwardAttachments).toBeUndefined();
+    // Mail flagged as spam: the server won't forward its files, so they aren't offered.
+    expect(
+      buildPrefill({ ...withFiles, quarantined: true }, 'forward', '').forwardAttachments,
+    ).toBeUndefined();
+  });
+
   it('forwards with no recipients and a forwarded-message header', () => {
     const p = buildPrefill(INBOUND, 'forward', 'me@mine.dev');
     expect(p.to).toBe('');

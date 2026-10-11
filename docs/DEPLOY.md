@@ -242,6 +242,8 @@ Attachment bytes never travel through the API. Sending a file is two steps:
 1. **Create an upload** — `POST /attachments/uploads` with `{ "filename", "contentType", "sizeBytes" }` (the web app does this for you; agents use the MCP tool `create_attachment_upload`). The response carries an `uploadId` and a presigned `uploadUrl`.
 2. **PUT the file to `uploadUrl`** — straight to S3, with no credentials beyond the URL itself. The URL is valid for **15 minutes** and only for exactly the declared size. Then reference the file in the send: `"attachments": [{ "uploadId": "…" }]`.
 
+To forward a file that is already on a message in the mailbox, skip both steps: reference it as `{ "emailId": "…", "attachmentId": "…" }` (the message id and the attachment's id from `GET /emails/{id}`), and the server copies it. Files of mail flagged as spam, or in the Errors folder, cannot be forwarded.
+
 When the message is sent, each upload is copied to permanent storage and then:
 
 - **Small files are embedded** in the outgoing MIME — each file up to **3 MB**, and up to **10 MB embedded per message** in total. Files are considered in order; one that would push the embedded total past 10 MB is linked instead, and a smaller one after it can still be embedded.
@@ -278,7 +280,7 @@ Agents send email through the MCP server — no browser, no cookies:
 }
 ```
 
-To attach a file, first call **`create_attachment_upload`** with `{ "filename", "contentType", "sizeBytes" }`, PUT the file's bytes to the returned `uploadUrl` (an ordinary HTTPS PUT, no API key needed), then pass `"attachments": [{ "uploadId": "<from the tool>" }]` to `send_email`. File bytes are never sent through MCP.
+To attach a file, first call **`create_attachment_upload`** with `{ "filename", "contentType", "sizeBytes" }`, PUT the file's bytes to the returned `uploadUrl` (an ordinary HTTPS PUT, no API key needed), then pass `"attachments": [{ "uploadId": "<from the tool>" }]` to `send_email`. To forward a file that is already on a message in the mailbox (inbound enabled), pass `{ "emailId", "attachmentId" }` from `get_email` instead — the server copies it, nothing is downloaded or uploaded. File bytes are never sent through MCP.
 
 The MCP server is stateless (Streamable HTTP), so no session setup is required. **`send_email`** and **`create_attachment_upload`** are always available; when **inbound is enabled**, the read tools **`list_emails`**, **`get_email`**, and **`get_email_attachment_url`** are also registered, so agents can read received mail and mint short-lived presigned attachment download URLs. Received email is untrusted external content — the read tools return it marked as data (with a `trust` field and a delimited text frame), not as instructions to the agent. With inbound disabled, only `send_email` and `create_attachment_upload` are offered.
 

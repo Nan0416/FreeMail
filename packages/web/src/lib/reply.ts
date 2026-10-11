@@ -3,6 +3,14 @@ import { formatLongDate } from './format.js';
 
 export type ReplyMode = 'reply' | 'replyAll' | 'forward';
 
+/** A file on a stored message, carried into a forward: the server copies it, nothing is re-sent. */
+export interface ForwardedAttachment {
+  readonly emailId: string;
+  readonly attachmentId: string;
+  readonly filename: string;
+  readonly sizeBytes: number;
+}
+
 export interface ComposePrefill {
   readonly from: string;
   readonly to: string;
@@ -11,6 +19,8 @@ export interface ComposePrefill {
   readonly html: string;
   /** For a reply: the id of the message answered, so the send threads it. Absent on forward. */
   readonly inReplyTo?: string;
+  /** For a forward: the original's attachments, sent along unless removed. */
+  readonly forwardAttachments?: readonly ForwardedAttachment[];
 }
 
 function escapeHtml(value: string): string {
@@ -121,6 +131,17 @@ export function buildPrefill(
       cc: '',
       subject: withPrefix(email.subject, 'Fwd'),
       html: `<p></p>${header}${quoted}`,
+      // The server refuses to forward the files of mail flagged as spam: don't offer them.
+      ...(email.attachments.length > 0 && !email.quarantined
+        ? {
+            forwardAttachments: email.attachments.map((attachment) => ({
+              emailId: email.id,
+              attachmentId: attachment.id,
+              filename: attachment.filename,
+              sizeBytes: attachment.sizeBytes,
+            })),
+          }
+        : {}),
     };
   }
 

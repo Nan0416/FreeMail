@@ -228,12 +228,16 @@ function optionalAttachments(body: Record<string, unknown>): EmailAttachmentRef[
       throw emailErrors.invalidRequest(`"attachments[${index}]" must be an object.`);
     }
     const record = item as Record<string, unknown>;
-    if (typeof record.uploadId !== 'string') {
-      throw emailErrors.invalidRequest(
-        `"attachments[${index}]" must be { "uploadId": ... } — create an upload first.`,
-      );
+    if (typeof record.uploadId === 'string') {
+      return { uploadId: record.uploadId };
     }
-    return { uploadId: record.uploadId };
+    if (typeof record.emailId === 'string' && typeof record.attachmentId === 'string') {
+      return { emailId: record.emailId, attachmentId: record.attachmentId };
+    }
+    throw emailErrors.invalidRequest(
+      `"attachments[${index}]" must be { "uploadId": ... } (create an upload first) or ` +
+        '{ "emailId": ..., "attachmentId": ... } (a file already on a message).',
+    );
   });
 }
 

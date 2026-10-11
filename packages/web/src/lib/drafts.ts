@@ -1,11 +1,13 @@
 import { useSyncExternalStore } from 'react';
+import type { ForwardedAttachment } from './reply.js';
 
 /**
  * Drafts live in THIS browser only. The API has no drafts endpoint, so a draft is a
  * convenience copy in `localStorage`: it never reaches the server until it is sent, does
- * not follow you to another device, and attachments are not kept (a `File` cannot be
- * persisted). Every storage access is guarded — a private window or blocked site data
- * makes storage throw, and the app must still work, just without drafts.
+ * not follow you to another device, and attached files are not kept (a `File` cannot be
+ * persisted) — though a forward's references to the original's attachments are. Every
+ * storage access is guarded — a private window or blocked site data makes storage throw, and
+ * the app must still work, just without drafts.
  */
 export interface Draft {
   readonly id: string;
@@ -20,6 +22,8 @@ export interface Draft {
   readonly html: string;
   /** For a reply: the id of the message answered, so sending the draft still threads it. */
   readonly inReplyTo?: string;
+  /** For a forward: the original's attachments still attached — references, so they persist. */
+  readonly forwardAttachments?: readonly ForwardedAttachment[];
   /** ISO-8601. */
   readonly updatedAt: string;
 }
