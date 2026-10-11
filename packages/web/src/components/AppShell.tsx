@@ -5,11 +5,11 @@ import { toast } from 'sonner';
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from '@/components/ui/sheet';
 import { useAuth } from '../auth/auth-context.js';
 import { useMailbox } from '../hooks/use-mailbox.js';
-import { getLastSender, useDrafts, type Draft } from '../lib/drafts.js';
+import { deleteDraft, getLastSender, saveDraft, useDrafts, type Draft } from '../lib/drafts.js';
 import { applyListView, DEFAULT_VIEW, type ListView } from '../lib/mail-filter.js';
 import { buildPrefill, type ReplyMode } from '../lib/reply.js';
 import { cn } from '@/lib/utils';
-import type { ComposeInit } from './ComposeWindow.js';
+import type { ComposeHandle, ComposeInit } from './ComposeWindow.js';
 import { DraftList } from './DraftList.js';
 import { EmailReader } from './EmailReader.js';
 import { Kbd } from './Kbd.js';
@@ -139,6 +139,21 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
       }),
     [openCompose],
   );
+
+  const composeWindow = useRef<ComposeHandle>(null);
+
+  // The draft open in the compose window is discarded there: the window closes without
+  // saving, or it would save the draft straight back.
+  const discardDraft = useCallback((draft: Draft) => {
+    if (composeWindow.current?.draftId === draft.id) {
+      composeWindow.current.discard();
+      return;
+    }
+    deleteDraft(draft.id);
+    toast('Draft discarded', {
+      action: { label: 'Undo', onClick: () => saveDraft(draft) },
+    });
+  }, []);
 
   const reply = useCallback(
     (email: EmailDetail, mode: ReplyMode) => {
@@ -282,7 +297,12 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
             )}
           >
             {folder === 'drafts' ? (
-              <DraftList drafts={drafts} onOpen={openDraft} onOpenNav={() => setNavOpen(true)} />
+              <DraftList
+                drafts={drafts}
+                onOpen={openDraft}
+                onDiscard={discardDraft}
+                onOpenNav={() => setNavOpen(true)}
+              />
             ) : (
               spec && (
                 <MessageList
@@ -326,6 +346,7 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
       {compose && (
         <Suspense fallback={null}>
           <ComposeWindow
+            ref={composeWindow}
             key={compose.key}
             init={compose.init}
             onClose={() => {

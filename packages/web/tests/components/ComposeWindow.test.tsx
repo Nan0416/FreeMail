@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { UploadTransport } from '../../src/api/client.js';
 import { ComposeWindow, type ComposeInit } from '../../src/components/ComposeWindow.js';
@@ -436,6 +436,83 @@ describe('ComposeWindow — attachments', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('could not be uploaded');
     expect(callsTo(compose.fetchImpl, '/emails')).toHaveLength(0);
     expect(compose.onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('ComposeWindow — dropping files', () => {
+  /** A dragged item as the browser hands it over; `jsdom` has no `DataTransfer`. */
+  function item(file: File, isDirectory = false) {
+    return { kind: 'file', getAsFile: () => file, webkitGetAsEntry: () => ({ isDirectory }) };
+  }
+
+  function filesDrag(...items: ReturnType<typeof item>[]) {
+    return { types: ['Files'], items, dropEffect: 'none' };
+  }
+
+  function attachments(): string[] {
+    const list = screen.queryByRole('list', { name: 'Attachments' });
+    return list
+      ? within(list)
+          .getAllByRole('listitem')
+          .map((li) => li.textContent ?? '')
+      : [];
+  }
+
+  it('attaches files dropped on the window', () => {
+    renderCompose({ from: 'me@x.com' });
+    const drag = filesDrag(
+      item(new File(['hello'], 'notes.txt', { type: 'text/plain' })),
+      item(new File(['jpeg'], 'photo.jpg', { type: 'image/jpeg' })),
+    );
+
+    fireEvent.dragEnter(screen.getByLabelText('Subject'), { dataTransfer: drag });
+    const target = screen.getByText('Drop files to attach');
+    fireEvent.dragOver(target, { dataTransfer: drag });
+    expect(drag.dropEffect).toBe('copy');
+    fireEvent.drop(target, { dataTransfer: drag });
+
+    expect(screen.queryByText('Drop files to attach')).not.toBeInTheDocument();
+    expect(attachments()).toEqual([
+      expect.stringContaining('notes.txt'),
+      expect.stringContaining('photo.jpg'),
+    ]);
+  });
+
+  it('leaves out a dropped folder, and says why', async () => {
+    renderCompose({ from: 'me@x.com' });
+    const drag = filesDrag(
+      item(new File([''], 'Photos'), true),
+      item(new File(['hello'], 'notes.txt', { type: 'text/plain' })),
+    );
+
+    fireEvent.dragEnter(screen.getByRole('dialog'), { dataTransfer: drag });
+    fireEvent.drop(screen.getByText('Drop files to attach'), { dataTransfer: drag });
+
+    expect(attachments()).toEqual([expect.stringContaining('notes.txt')]);
+    expect(await screen.findByText('Folders can’t be attached')).toBeInTheDocument();
+  });
+
+  it('drops the target when the drag leaves, and never shows it for dragged text', () => {
+    renderCompose({ from: 'me@x.com' });
+    fireEvent.dragEnter(screen.getByRole('dialog'), { dataTransfer: filesDrag() });
+    fireEvent.dragLeave(screen.getByText('Drop files to attach'));
+    expect(screen.queryByText('Drop files to attach')).not.toBeInTheDocument();
+
+    fireEvent.dragEnter(screen.getByRole('dialog'), {
+      dataTransfer: { types: ['text/plain'], items: [] },
+    });
+    expect(screen.queryByText('Drop files to attach')).not.toBeInTheDocument();
+  });
+
+  it('refuses a file dropped beside the window, which would open in the tab', () => {
+    renderCompose({ from: 'me@x.com' });
+    const drag = filesDrag(item(new File(['hello'], 'notes.txt')));
+
+    // `fireEvent` returns false when the event's default was prevented.
+    expect(fireEvent.dragOver(document.body, { dataTransfer: drag })).toBe(false);
+    expect(drag.dropEffect).toBe('none');
+    expect(fireEvent.drop(document.body, { dataTransfer: drag })).toBe(false);
+    expect(attachments()).toEqual([]);
   });
 });
 

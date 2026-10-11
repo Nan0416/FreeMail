@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Placeholder } from '@tiptap/extensions';
@@ -46,6 +46,14 @@ export interface ComposeWindowProps {
   readonly onAttachmentCountChange?: (count: number) => void;
 }
 
+/** What the app can do to the open window from outside it. */
+export interface ComposeHandle {
+  /** The browser draft this window saves to. */
+  readonly draftId: string;
+  /** Discard the draft and close, exactly as the window's own Discard does. */
+  discard(): void;
+}
+
 type WindowMode = 'normal' | 'minimized' | 'maximized';
 
 const AUTOSAVE_MS = 800;
@@ -68,541 +76,635 @@ interface FinishedUpload {
 /**
  * A docked compose window: bottom-right on desktop, full-screen on phones, and a large
  * centred sheet when maximized. Edits auto-save to a browser-local draft (see
- * `lib/drafts.ts`); closing keeps the draft, discarding deletes it (with undo).
+ * `lib/drafts.ts`); closing keeps the draft, discarding deletes it (with undo). Files attach
+ * from the picker or by dropping them on the window.
  */
-export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
-  const auth = useAuth();
-  const draftId = useRef(props.init.draftId ?? newDraftId());
-  const [from, setFrom] = useState(props.init.from);
-  const [fromName, setFromName] = useState(props.init.fromName ?? '');
-  const [to, setTo] = useState(props.init.to ?? '');
-  const [cc, setCc] = useState(props.init.cc ?? '');
-  const [bcc, setBcc] = useState(props.init.bcc ?? '');
-  const [showCcBcc, setShowCcBcc] = useState(Boolean(props.init.cc || props.init.bcc));
-  const [subject, setSubject] = useState(props.init.subject ?? '');
-  const [html, setHtml] = useState(props.init.html ?? '');
-  const [text, setText] = useState('');
-  const [files, setFiles] = useState<File[]>([]);
-  const [forwarded, setForwarded] = useState<readonly ForwardedAttachment[]>(
-    props.init.forwardAttachments ?? [],
-  );
-  const [mode, setMode] = useState<WindowMode>('normal');
-  const [showToolbar, setShowToolbar] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  /** While attachments upload: the bytes sent so far for each file. Empty otherwise. */
-  const [uploadProgress, setUploadProgress] = useState<ReadonlyMap<File, number>>(new Map());
-  // The re-entrancy guard. `busy` drives the UI but only lands on the next render, so
-  // a second ⌘↵ in the same tick would still see it false and send twice.
-  const sending = useRef(false);
-  /** Files already uploaded from this window, so a retried send doesn't upload them again. */
-  const uploaded = useRef(new WeakMap<File, FinishedUpload>());
-  const [savedAt, setSavedAt] = useState<Date | null>(props.init.draftId ? new Date() : null);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const toInput = useRef<HTMLInputElement>(null);
-  // Set once sent or discarded, so the unmount-save does not resurrect the draft.
-  const finished = useRef(false);
+export const ComposeWindow = forwardRef<ComposeHandle, ComposeWindowProps>(
+  function ComposeWindow(props, ref) {
+    const auth = useAuth();
+    const draftId = useRef(props.init.draftId ?? newDraftId());
+    const [from, setFrom] = useState(props.init.from);
+    const [fromName, setFromName] = useState(props.init.fromName ?? '');
+    const [to, setTo] = useState(props.init.to ?? '');
+    const [cc, setCc] = useState(props.init.cc ?? '');
+    const [bcc, setBcc] = useState(props.init.bcc ?? '');
+    const [showCcBcc, setShowCcBcc] = useState(Boolean(props.init.cc || props.init.bcc));
+    const [subject, setSubject] = useState(props.init.subject ?? '');
+    const [html, setHtml] = useState(props.init.html ?? '');
+    const [text, setText] = useState('');
+    const [files, setFiles] = useState<File[]>([]);
+    const [forwarded, setForwarded] = useState<readonly ForwardedAttachment[]>(
+      props.init.forwardAttachments ?? [],
+    );
+    const [mode, setMode] = useState<WindowMode>('normal');
+    /** Files are being dragged over the window. */
+    const [dropping, setDropping] = useState(false);
+    const [showToolbar, setShowToolbar] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    /** While attachments upload: the bytes sent so far for each file. Empty otherwise. */
+    const [uploadProgress, setUploadProgress] = useState<ReadonlyMap<File, number>>(new Map());
+    // The re-entrancy guard. `busy` drives the UI but only lands on the next render, so
+    // a second ⌘↵ in the same tick would still see it false and send twice.
+    const sending = useRef(false);
+    /** Files already uploaded from this window, so a retried send doesn't upload them again. */
+    const uploaded = useRef(new WeakMap<File, FinishedUpload>());
+    const [savedAt, setSavedAt] = useState<Date | null>(props.init.draftId ? new Date() : null);
+    const fileInput = useRef<HTMLInputElement>(null);
+    const toInput = useRef<HTMLInputElement>(null);
+    // Set once sent or discarded, so the unmount-save does not resurrect the draft.
+    const finished = useRef(false);
 
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ link: { openOnClick: false, autolink: true } }),
-      Placeholder.configure({ placeholder: 'Write your message…' }),
-    ],
-    content: props.init.html ?? '',
-    onCreate: (event) => setText(event.editor.getText()),
-    onUpdate: (event) => {
-      setHtml(event.editor.getHTML());
-      setText(event.editor.getText());
-    },
-  });
+    const editor = useEditor({
+      extensions: [
+        StarterKit.configure({ link: { openOnClick: false, autolink: true } }),
+        Placeholder.configure({ placeholder: 'Write your message…' }),
+      ],
+      content: props.init.html ?? '',
+      onCreate: (event) => setText(event.editor.getText()),
+      onUpdate: (event) => {
+        setHtml(event.editor.getHTML());
+        setText(event.editor.getText());
+      },
+    });
 
-  const hasContent =
-    [to, cc, bcc, subject].some((v) => v.trim() !== '') ||
-    text.trim() !== '' ||
-    files.length > 0 ||
-    forwarded.length > 0;
+    const hasContent =
+      [to, cc, bcc, subject].some((v) => v.trim() !== '') ||
+      text.trim() !== '' ||
+      files.length > 0 ||
+      forwarded.length > 0;
 
-  const snapshot = (): Draft => ({
-    id: draftId.current,
-    from,
-    ...(fromName.trim() ? { fromName } : {}),
-    to,
-    cc,
-    bcc,
-    subject,
-    html,
-    ...(props.init.inReplyTo ? { inReplyTo: props.init.inReplyTo } : {}),
-    ...(forwarded.length > 0 ? { forwardAttachments: forwarded } : {}),
-    updatedAt: new Date().toISOString(),
-  });
-  const latest = useRef(snapshot);
-  latest.current = snapshot;
-  const contentRef = useRef(hasContent);
-  contentRef.current = hasContent;
+    const snapshot = (): Draft => ({
+      id: draftId.current,
+      from,
+      ...(fromName.trim() ? { fromName } : {}),
+      to,
+      cc,
+      bcc,
+      subject,
+      html,
+      ...(props.init.inReplyTo ? { inReplyTo: props.init.inReplyTo } : {}),
+      ...(forwarded.length > 0 ? { forwardAttachments: forwarded } : {}),
+      updatedAt: new Date().toISOString(),
+    });
+    const latest = useRef(snapshot);
+    latest.current = snapshot;
+    const contentRef = useRef(hasContent);
+    contentRef.current = hasContent;
 
-  // Debounced auto-save while there is something worth keeping.
-  useEffect(() => {
-    if (!hasContent || finished.current) {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      saveDraft(latest.current());
-      setSavedAt(new Date());
-    }, AUTOSAVE_MS);
-    return () => window.clearTimeout(timer);
-  }, [from, fromName, to, cc, bcc, subject, html, forwarded, hasContent]);
-
-  useEffect(() => {
-    props.onAttachmentCountChange?.(files.length);
-  }, [files.length, props.onAttachmentCountChange]);
-
-  // Flush on unmount (window closed, or replaced by another compose).
-  useEffect(
-    () => () => {
-      if (!finished.current && contentRef.current) {
+    // Debounced auto-save while there is something worth keeping.
+    useEffect(() => {
+      if (!hasContent || finished.current) {
+        return;
+      }
+      const timer = window.setTimeout(() => {
         saveDraft(latest.current());
-      }
-    },
-    [],
-  );
+        setSavedAt(new Date());
+      }, AUTOSAVE_MS);
+      return () => window.clearTimeout(timer);
+    }, [from, fromName, to, cc, bcc, subject, html, forwarded, hasContent]);
 
-  // Focus the first field that needs input, once the editor exists. `init` is fixed for
-  // the life of the window, so this runs on open only.
-  useEffect(() => {
-    if (!props.init.to) {
-      toInput.current?.focus();
-    } else {
-      editor?.commands.focus('start');
-    }
-  }, [editor, props.init.to]);
+    useEffect(() => {
+      props.onAttachmentCountChange?.(files.length);
+    }, [files.length, props.onAttachmentCountChange]);
 
-  function close(): void {
-    if (hasContent) {
-      saveDraft(snapshot());
-      toast('Draft saved', { description: 'Find it in Drafts.' });
-    }
-    finished.current = true;
-    props.onClose();
-  }
+    // Flush on unmount (window closed, or replaced by another compose).
+    useEffect(
+      () => () => {
+        if (!finished.current && contentRef.current) {
+          saveDraft(latest.current());
+        }
+      },
+      [],
+    );
 
-  function discard(): void {
-    const kept = snapshot();
-    finished.current = true;
-    deleteDraft(draftId.current);
-    props.onClose();
-    if (hasContent) {
-      toast('Draft discarded', {
-        action: { label: 'Undo', onClick: () => saveDraft(kept) },
-      });
-    }
-  }
-
-  async function send(): Promise<void> {
-    if (sending.current) {
-      return;
-    }
-    setError(null);
-    const recipients = {
-      to: parseRecipients(to),
-      cc: parseRecipients(cc),
-      bcc: parseRecipients(bcc),
-    };
-    if (from.trim() === '') {
-      setError('Add the address to send from.');
-      return;
-    }
-    if (recipients.to.length + recipients.cc.length + recipients.bcc.length === 0) {
-      setError('Add at least one recipient.');
-      return;
-    }
-    // Read the body from the editor itself: the mirrored `text` state lags one tick
-    // behind it (the editor reports its initial content asynchronously).
-    const bodyHtml = editor?.getHTML() ?? html;
-    const bodyText = editor?.getText({ blockSeparator: '\n\n' }) ?? text;
-    if (bodyText.trim().length === 0) {
-      setError('The message is empty.');
-      return;
-    }
-    if (forwarded.length + files.length > MAX_ATTACHMENTS) {
-      setError(`At most ${MAX_ATTACHMENTS} attachments are allowed.`);
-      return;
-    }
-    const empty = files.find((file) => file.size === 0);
-    if (empty) {
-      setError(`"${empty.name}" is empty — remove it or attach another file.`);
-      return;
-    }
-    const tooLarge = files.find((file) => file.size > MAX_UPLOAD_BYTES);
-    if (tooLarge) {
-      setError(
-        `"${tooLarge.name}" is ${formatBytes(tooLarge.size)} — the limit is ` +
-          `${MAX_UPLOAD_BYTES / (1024 * 1024)} MB per attachment.`,
-      );
-      return;
-    }
-
-    sending.current = true;
-    setBusy(true);
-    try {
-      // Each file goes straight to S3 (a presigned PUT), several at once; the send references
-      // it by upload id. A file an earlier attempt already uploaded is not uploaded again.
-      const uploadIds = new Map<File, string>();
-      const pending: File[] = [];
-      for (const file of files) {
-        const previous = uploaded.current.get(file);
-        if (previous && Date.now() - previous.uploadedAt < UPLOAD_REUSE_MS) {
-          uploadIds.set(file, previous.uploadId);
-        } else {
-          pending.push(file);
+    // A file dropped anywhere but the window would open in the tab, replacing the app and
+    // losing what is attached, so while a message is open such a drop is refused.
+    useEffect(() => {
+      function refuseDrop(event: DragEvent): void {
+        const data = event.dataTransfer;
+        if (data && !event.defaultPrevented && carriesFiles(data)) {
+          event.preventDefault();
+          data.dropEffect = 'none';
         }
       }
-      if (files.length > 0) {
-        setUploadProgress(
-          new Map(files.map((file) => [file, uploadIds.has(file) ? file.size : 0])),
-        );
-      }
-      await forEachConcurrently(pending, UPLOAD_CONCURRENCY, async (file) => {
-        const upload = await auth.client.createUpload({
-          filename: file.name,
-          contentType: file.type || 'application/octet-stream',
-          sizeBytes: file.size,
-        });
-        await auth.client.putUpload(upload.uploadUrl, file, (loadedBytes) =>
-          setUploadProgress((prev) => new Map(prev).set(file, loadedBytes)),
-        );
-        uploaded.current.set(file, { uploadId: upload.uploadId, uploadedAt: Date.now() });
-        uploadIds.set(file, upload.uploadId);
-      });
-      setUploadProgress(new Map());
-      // Forwarded files first (the server copies them), then new files in the order they were
-      // attached, whatever order the uploads finished in.
-      const attachments: EmailAttachmentRef[] = forwarded.map((attachment) => ({
-        emailId: attachment.emailId,
-        attachmentId: attachment.attachmentId,
-      }));
-      for (const file of files) {
-        const uploadId = uploadIds.get(file);
-        if (uploadId) {
-          attachments.push({ uploadId });
-        }
-      }
-      const request: SendEmailRequest = {
-        from: from.trim(),
-        ...(fromName.trim() ? { fromName: fromName.trim() } : {}),
-        ...(recipients.to.length ? { to: recipients.to } : {}),
-        ...(recipients.cc.length ? { cc: recipients.cc } : {}),
-        ...(recipients.bcc.length ? { bcc: recipients.bcc } : {}),
-        // A reply always sends its subject, so one cleared on purpose is not refilled with
-        // "Re: …" by the server.
-        ...(subject.trim() || props.init.inReplyTo ? { subject } : {}),
-        // Both parts: HTML for capable clients, plain text as the alternative.
-        html: bodyHtml,
-        text: bodyText,
-        ...(attachments.length ? { attachments } : {}),
-        ...(props.init.inReplyTo ? { inReplyTo: props.init.inReplyTo } : {}),
+      window.addEventListener('dragover', refuseDrop);
+      window.addEventListener('drop', refuseDrop);
+      return () => {
+        window.removeEventListener('dragover', refuseDrop);
+        window.removeEventListener('drop', refuseDrop);
       };
-      await auth.client.sendEmail(request);
-      setLastSender({ address: request.from, name: fromName.trim() });
+    }, []);
+
+    // Focus the first field that needs input, once the editor exists. `init` is fixed for
+    // the life of the window, so this runs on open only.
+    useEffect(() => {
+      if (!props.init.to) {
+        toInput.current?.focus();
+      } else {
+        editor?.commands.focus('start');
+      }
+    }, [editor, props.init.to]);
+
+    function close(): void {
+      if (hasContent) {
+        saveDraft(snapshot());
+        toast('Draft saved', { description: 'Find it in Drafts.' });
+      }
+      finished.current = true;
+      props.onClose();
+    }
+
+    function discard(): void {
+      const kept = snapshot();
       finished.current = true;
       deleteDraft(draftId.current);
-      toast.success('Message sent');
       props.onClose();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to send the message.');
-    } finally {
-      sending.current = false;
-      setBusy(false);
-      setUploadProgress(new Map());
+      if (hasContent) {
+        toast('Draft discarded', {
+          action: { label: 'Undo', onClick: () => saveDraft(kept) },
+        });
+      }
     }
-  }
 
-  const title = subject.trim() || 'New message';
-  let uploadTotal = 0;
-  let uploadSent = 0;
-  for (const [file, sent] of uploadProgress) {
-    uploadTotal += file.size;
-    uploadSent += Math.min(sent, file.size);
-  }
-  const uploading = uploadTotal > 0;
+    useImperativeHandle(ref, () => ({ draftId: draftId.current, discard }));
 
-  if (mode === 'minimized') {
-    return (
-      <div className="fixed right-4 bottom-0 z-40 w-72 max-md:right-0 max-md:w-full">
-        <div className="flex h-10 items-center gap-1 rounded-t-lg border border-b-0 bg-foreground pr-1 pl-3 text-background shadow-lg">
-          <button
-            type="button"
-            onClick={() => setMode('normal')}
-            className="min-w-0 flex-1 truncate text-left text-[13px] font-medium focus-visible:underline focus-visible:outline-none"
-          >
-            {title}
-          </button>
-          <WindowButton label="Restore" onClick={() => setMode('normal')} dark>
-            <Maximize2 />
-          </WindowButton>
-          <WindowButton label="Close" onClick={close} dark>
-            <X />
-          </WindowButton>
-        </div>
-      </div>
-    );
-  }
+    function attachDropped(data: DataTransfer): void {
+      const dropped = droppedFiles(data);
+      setFiles((prev) => [...prev, ...dropped.files]);
+      if (dropped.folders > 0) {
+        toast('Folders can’t be attached', {
+          description: 'Attach the files inside it, or zip it first.',
+        });
+      }
+    }
 
-  const maximized = mode === 'maximized';
+    async function send(): Promise<void> {
+      if (sending.current) {
+        return;
+      }
+      setError(null);
+      const recipients = {
+        to: parseRecipients(to),
+        cc: parseRecipients(cc),
+        bcc: parseRecipients(bcc),
+      };
+      if (from.trim() === '') {
+        setError('Add the address to send from.');
+        return;
+      }
+      if (recipients.to.length + recipients.cc.length + recipients.bcc.length === 0) {
+        setError('Add at least one recipient.');
+        return;
+      }
+      // Read the body from the editor itself: the mirrored `text` state lags one tick
+      // behind it (the editor reports its initial content asynchronously).
+      const bodyHtml = editor?.getHTML() ?? html;
+      const bodyText = editor?.getText({ blockSeparator: '\n\n' }) ?? text;
+      if (bodyText.trim().length === 0) {
+        setError('The message is empty.');
+        return;
+      }
+      if (forwarded.length + files.length > MAX_ATTACHMENTS) {
+        setError(`At most ${MAX_ATTACHMENTS} attachments are allowed.`);
+        return;
+      }
+      const empty = files.find((file) => file.size === 0);
+      if (empty) {
+        setError(`"${empty.name}" is empty — remove it or attach another file.`);
+        return;
+      }
+      const tooLarge = files.find((file) => file.size > MAX_UPLOAD_BYTES);
+      if (tooLarge) {
+        setError(
+          `"${tooLarge.name}" is ${formatBytes(tooLarge.size)} — the limit is ` +
+            `${MAX_UPLOAD_BYTES / (1024 * 1024)} MB per attachment.`,
+        );
+        return;
+      }
 
-  return (
-    <>
-      {maximized && (
-        <div
-          aria-hidden
-          className="fixed inset-0 z-40 bg-foreground/20 animate-in fade-in-0"
-          onClick={() => setMode('normal')}
-        />
-      )}
-      <section
-        role="dialog"
-        aria-label={title}
-        onKeyDown={(e) => {
-          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-            e.preventDefault();
-            void send();
-          } else if (e.key === 'Escape' && !e.defaultPrevented) {
-            e.preventDefault();
-            setMode(maximized ? 'normal' : 'minimized');
+      sending.current = true;
+      setBusy(true);
+      try {
+        // Each file goes straight to S3 (a presigned PUT), several at once; the send references
+        // it by upload id. A file an earlier attempt already uploaded is not uploaded again.
+        const uploadIds = new Map<File, string>();
+        const pending: File[] = [];
+        for (const file of files) {
+          const previous = uploaded.current.get(file);
+          if (previous && Date.now() - previous.uploadedAt < UPLOAD_REUSE_MS) {
+            uploadIds.set(file, previous.uploadId);
+          } else {
+            pending.push(file);
           }
-        }}
-        className={cn(
-          'fixed z-50 flex flex-col overflow-hidden border bg-background shadow-2xl shadow-black/10 animate-in fade-in-0 slide-in-from-bottom-2 duration-150',
-          maximized
-            ? 'inset-6 m-auto h-[min(860px,calc(100vh-3rem))] w-[min(1000px,calc(100vw-3rem))] rounded-lg'
-            : 'right-4 bottom-0 h-[min(600px,calc(100vh-4rem))] w-[540px] rounded-t-lg',
-          'max-md:inset-0 max-md:h-full max-md:w-full max-md:rounded-none',
+        }
+        if (files.length > 0) {
+          setUploadProgress(
+            new Map(files.map((file) => [file, uploadIds.has(file) ? file.size : 0])),
+          );
+        }
+        await forEachConcurrently(pending, UPLOAD_CONCURRENCY, async (file) => {
+          const upload = await auth.client.createUpload({
+            filename: file.name,
+            contentType: file.type || 'application/octet-stream',
+            sizeBytes: file.size,
+          });
+          await auth.client.putUpload(upload.uploadUrl, file, (loadedBytes) =>
+            setUploadProgress((prev) => new Map(prev).set(file, loadedBytes)),
+          );
+          uploaded.current.set(file, { uploadId: upload.uploadId, uploadedAt: Date.now() });
+          uploadIds.set(file, upload.uploadId);
+        });
+        setUploadProgress(new Map());
+        // Forwarded files first (the server copies them), then new files in the order they were
+        // attached, whatever order the uploads finished in.
+        const attachments: EmailAttachmentRef[] = forwarded.map((attachment) => ({
+          emailId: attachment.emailId,
+          attachmentId: attachment.attachmentId,
+        }));
+        for (const file of files) {
+          const uploadId = uploadIds.get(file);
+          if (uploadId) {
+            attachments.push({ uploadId });
+          }
+        }
+        const request: SendEmailRequest = {
+          from: from.trim(),
+          ...(fromName.trim() ? { fromName: fromName.trim() } : {}),
+          ...(recipients.to.length ? { to: recipients.to } : {}),
+          ...(recipients.cc.length ? { cc: recipients.cc } : {}),
+          ...(recipients.bcc.length ? { bcc: recipients.bcc } : {}),
+          // A reply always sends its subject, so one cleared on purpose is not refilled with
+          // "Re: …" by the server.
+          ...(subject.trim() || props.init.inReplyTo ? { subject } : {}),
+          // Both parts: HTML for capable clients, plain text as the alternative.
+          html: bodyHtml,
+          text: bodyText,
+          ...(attachments.length ? { attachments } : {}),
+          ...(props.init.inReplyTo ? { inReplyTo: props.init.inReplyTo } : {}),
+        };
+        await auth.client.sendEmail(request);
+        setLastSender({ address: request.from, name: fromName.trim() });
+        finished.current = true;
+        deleteDraft(draftId.current);
+        toast.success('Message sent');
+        props.onClose();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : 'Failed to send the message.');
+      } finally {
+        sending.current = false;
+        setBusy(false);
+        setUploadProgress(new Map());
+      }
+    }
+
+    const title = subject.trim() || 'New message';
+    let uploadTotal = 0;
+    let uploadSent = 0;
+    for (const [file, sent] of uploadProgress) {
+      uploadTotal += file.size;
+      uploadSent += Math.min(sent, file.size);
+    }
+    const uploading = uploadTotal > 0;
+
+    if (mode === 'minimized') {
+      return (
+        <div className="fixed right-4 bottom-0 z-40 w-72 max-md:right-0 max-md:w-full">
+          <div className="flex h-10 items-center gap-1 rounded-t-lg border border-b-0 bg-foreground pr-1 pl-3 text-background shadow-lg">
+            <button
+              type="button"
+              onClick={() => setMode('normal')}
+              className="min-w-0 flex-1 truncate text-left text-[13px] font-medium focus-visible:underline focus-visible:outline-none"
+            >
+              {title}
+            </button>
+            <WindowButton label="Restore" onClick={() => setMode('normal')} dark>
+              <Maximize2 />
+            </WindowButton>
+            <WindowButton label="Close" onClick={close} dark>
+              <X />
+            </WindowButton>
+          </div>
+        </div>
+      );
+    }
+
+    const maximized = mode === 'maximized';
+
+    return (
+      <>
+        {maximized && (
+          <div
+            aria-hidden
+            className="fixed inset-0 z-40 bg-foreground/20 animate-in fade-in-0"
+            onClick={() => setMode('normal')}
+          />
         )}
-      >
-        <header className="flex h-10 shrink-0 items-center gap-1 border-b bg-sidebar pr-1 pl-4">
-          <h2 className="min-w-0 flex-1 truncate text-[13px] font-medium">{title}</h2>
-          <WindowButton
-            label="Minimize"
-            onClick={() => setMode('minimized')}
-            className="max-md:hidden"
-          >
-            <Minus />
-          </WindowButton>
-          <WindowButton
-            label={maximized ? 'Exit full screen' : 'Full screen'}
-            onClick={() => setMode(maximized ? 'normal' : 'maximized')}
-            className="max-md:hidden"
-          >
-            {maximized ? <Minimize2 /> : <Maximize2 />}
-          </WindowButton>
-          <WindowButton label="Close" onClick={close}>
-            <X />
-          </WindowButton>
-        </header>
-
-        <div className="shrink-0 divide-y px-4 text-[13px]">
-          <Field label="From" htmlFor="compose-from">
-            <input
-              id="compose-from"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              placeholder="you@your-domain.com"
-              autoComplete="email"
-              className={fieldInput}
-            />
-            <input
-              aria-label="Sender name"
-              value={fromName}
-              onChange={(e) => setFromName(e.target.value)}
-              placeholder="Name (optional)"
-              className={cn(
-                fieldInput,
-                'max-w-40 text-right text-muted-foreground focus:text-foreground',
-              )}
-            />
-          </Field>
-          <Field label="To" htmlFor="compose-to">
-            <input
-              id="compose-to"
-              ref={toInput}
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              placeholder="Recipients, comma-separated"
-              className={fieldInput}
-            />
-            {!showCcBcc && (
-              <button
-                type="button"
-                onClick={() => setShowCcBcc(true)}
-                className="shrink-0 rounded px-1 text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              >
-                Cc Bcc
-              </button>
-            )}
-          </Field>
-          {showCcBcc && (
-            <>
-              <Field label="Cc" htmlFor="compose-cc">
-                <input
-                  id="compose-cc"
-                  value={cc}
-                  onChange={(e) => setCc(e.target.value)}
-                  className={fieldInput}
-                />
-              </Field>
-              <Field label="Bcc" htmlFor="compose-bcc">
-                <input
-                  id="compose-bcc"
-                  value={bcc}
-                  onChange={(e) => setBcc(e.target.value)}
-                  className={fieldInput}
-                />
-              </Field>
-            </>
+        <section
+          role="dialog"
+          aria-label={title}
+          onKeyDown={(e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+              e.preventDefault();
+              void send();
+            } else if (e.key === 'Escape' && !e.defaultPrevented) {
+              e.preventDefault();
+              setMode(maximized ? 'normal' : 'minimized');
+            }
+          }}
+          onDragEnter={(e) => {
+            if (!busy && carriesFiles(e.dataTransfer)) {
+              e.preventDefault();
+              setDropping(true);
+            }
+          }}
+          className={cn(
+            'fixed z-50 flex flex-col overflow-hidden border bg-background shadow-2xl shadow-black/10 animate-in fade-in-0 slide-in-from-bottom-2 duration-150',
+            maximized
+              ? 'inset-6 m-auto h-[min(860px,calc(100vh-3rem))] w-[min(1000px,calc(100vw-3rem))] rounded-lg'
+              : 'right-4 bottom-0 h-[min(600px,calc(100vh-4rem))] w-[540px] rounded-t-lg',
+            'max-md:inset-0 max-md:h-full max-md:w-full max-md:rounded-none',
           )}
-          <Field label="Subject" htmlFor="compose-subject" hideLabel>
-            <input
-              id="compose-subject"
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              placeholder="Subject"
-              className={cn(fieldInput, 'font-medium')}
-            />
-          </Field>
-        </div>
+        >
+          <header className="flex h-10 shrink-0 items-center gap-1 border-b bg-sidebar pr-1 pl-4">
+            <h2 className="min-w-0 flex-1 truncate text-[13px] font-medium">{title}</h2>
+            <WindowButton
+              label="Minimize"
+              onClick={() => setMode('minimized')}
+              className="max-md:hidden"
+            >
+              <Minus />
+            </WindowButton>
+            <WindowButton
+              label={maximized ? 'Exit full screen' : 'Full screen'}
+              onClick={() => setMode(maximized ? 'normal' : 'maximized')}
+              className="max-md:hidden"
+            >
+              {maximized ? <Minimize2 /> : <Maximize2 />}
+            </WindowButton>
+            <WindowButton label="Close" onClick={close}>
+              <X />
+            </WindowButton>
+          </header>
 
-        <div className="min-h-0 flex-1 overflow-y-auto border-t px-4 py-3">
-          {editor && <RichTextBody editor={editor} className="h-full" />}
-        </div>
-
-        {forwarded.length + files.length > 0 && (
-          <ul aria-label="Attachments" className="flex shrink-0 flex-wrap gap-1.5 px-4 pb-2">
-            {forwarded.map((attachment) => (
-              <li
-                key={`fwd-${attachment.emailId}-${attachment.attachmentId}`}
-                className="relative flex max-w-56 items-center gap-1.5 overflow-hidden rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs"
-              >
-                <Paperclip className="size-3 shrink-0 text-muted-foreground" />
-                <span className="truncate">{attachment.filename}</span>
-                <span className="shrink-0 text-muted-foreground tabular-nums">
-                  {formatBytes(attachment.sizeBytes)}
-                </span>
+          <div className="shrink-0 divide-y px-4 text-[13px]">
+            <Field label="From" htmlFor="compose-from">
+              <input
+                id="compose-from"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                placeholder="you@your-domain.com"
+                autoComplete="email"
+                className={fieldInput}
+              />
+              <input
+                aria-label="Sender name"
+                value={fromName}
+                onChange={(e) => setFromName(e.target.value)}
+                placeholder="Name (optional)"
+                className={cn(
+                  fieldInput,
+                  'max-w-40 text-right text-muted-foreground focus:text-foreground',
+                )}
+              />
+            </Field>
+            <Field label="To" htmlFor="compose-to">
+              <input
+                id="compose-to"
+                ref={toInput}
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                placeholder="Recipients, comma-separated"
+                className={fieldInput}
+              />
+              {!showCcBcc && (
                 <button
                   type="button"
-                  aria-label={`Remove forwarded ${attachment.filename}`}
-                  disabled={busy}
-                  onClick={() => setForwarded((prev) => prev.filter((item) => item !== attachment))}
-                  className="grid size-4 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                  onClick={() => setShowCcBcc(true)}
+                  className="shrink-0 rounded px-1 text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 >
-                  <X className="size-3" />
+                  Cc Bcc
                 </button>
-              </li>
-            ))}
-            {files.map((file, index) => {
-              const sent = uploadProgress.get(file);
-              const percent =
-                sent === undefined ? null : percentOf(Math.min(sent, file.size), file.size);
-              return (
+              )}
+            </Field>
+            {showCcBcc && (
+              <>
+                <Field label="Cc" htmlFor="compose-cc">
+                  <input
+                    id="compose-cc"
+                    value={cc}
+                    onChange={(e) => setCc(e.target.value)}
+                    className={fieldInput}
+                  />
+                </Field>
+                <Field label="Bcc" htmlFor="compose-bcc">
+                  <input
+                    id="compose-bcc"
+                    value={bcc}
+                    onChange={(e) => setBcc(e.target.value)}
+                    className={fieldInput}
+                  />
+                </Field>
+              </>
+            )}
+            <Field label="Subject" htmlFor="compose-subject" hideLabel>
+              <input
+                id="compose-subject"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                placeholder="Subject"
+                className={cn(fieldInput, 'font-medium')}
+              />
+            </Field>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto border-t px-4 py-3">
+            {editor && <RichTextBody editor={editor} className="h-full" />}
+          </div>
+
+          {forwarded.length + files.length > 0 && (
+            <ul aria-label="Attachments" className="flex shrink-0 flex-wrap gap-1.5 px-4 pb-2">
+              {forwarded.map((attachment) => (
                 <li
-                  key={`${file.name}-${index}`}
+                  key={`fwd-${attachment.emailId}-${attachment.attachmentId}`}
                   className="relative flex max-w-56 items-center gap-1.5 overflow-hidden rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs"
                 >
                   <Paperclip className="size-3 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{file.name}</span>
+                  <span className="truncate">{attachment.filename}</span>
                   <span className="shrink-0 text-muted-foreground tabular-nums">
-                    {percent === null ? formatBytes(file.size) : `${percent}%`}
+                    {formatBytes(attachment.sizeBytes)}
                   </span>
                   <button
                     type="button"
-                    aria-label={`Remove ${file.name}`}
+                    aria-label={`Remove forwarded ${attachment.filename}`}
                     disabled={busy}
-                    onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
+                    onClick={() =>
+                      setForwarded((prev) => prev.filter((item) => item !== attachment))
+                    }
                     className="grid size-4 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
                   >
                     <X className="size-3" />
                   </button>
-                  {percent !== null && (
-                    <span
-                      role="progressbar"
-                      aria-label={`Uploading ${file.name}`}
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={percent}
-                      className="absolute inset-x-0 bottom-0 h-0.5 bg-primary/15"
-                    >
-                      <span
-                        className="block h-full bg-primary transition-[width] duration-200 ease-out motion-reduce:transition-none"
-                        style={{ width: `${percent}%` }}
-                      />
-                    </span>
-                  )}
                 </li>
-              );
-            })}
-          </ul>
-        )}
+              ))}
+              {files.map((file, index) => {
+                const sent = uploadProgress.get(file);
+                const percent =
+                  sent === undefined ? null : percentOf(Math.min(sent, file.size), file.size);
+                return (
+                  <li
+                    key={`${file.name}-${index}`}
+                    className="relative flex max-w-56 items-center gap-1.5 overflow-hidden rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs"
+                  >
+                    <Paperclip className="size-3 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{file.name}</span>
+                    <span className="shrink-0 text-muted-foreground tabular-nums">
+                      {percent === null ? formatBytes(file.size) : `${percent}%`}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${file.name}`}
+                      disabled={busy}
+                      onClick={() => setFiles((prev) => prev.filter((_, i) => i !== index))}
+                      className="grid size-4 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                    >
+                      <X className="size-3" />
+                    </button>
+                    {percent !== null && (
+                      <span
+                        role="progressbar"
+                        aria-label={`Uploading ${file.name}`}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={percent}
+                        className="absolute inset-x-0 bottom-0 h-0.5 bg-primary/15"
+                      >
+                        <span
+                          className="block h-full bg-primary transition-[width] duration-200 ease-out motion-reduce:transition-none"
+                          style={{ width: `${percent}%` }}
+                        />
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
 
-        {editor && showToolbar && (
-          <div className="shrink-0 border-t px-3 py-1">
-            <FormattingToolbar editor={editor} />
-          </div>
-        )}
+          {editor && showToolbar && (
+            <div className="shrink-0 border-t px-3 py-1">
+              <FormattingToolbar editor={editor} />
+            </div>
+          )}
 
-        <footer className="flex shrink-0 items-center gap-1 border-t px-3 py-2">
-          <Button
-            size="sm"
-            onClick={() => void send()}
-            disabled={busy}
-            className="px-4 tabular-nums"
-          >
-            {!busy
-              ? 'Send'
-              : uploading
-                ? `Uploading ${percentOf(uploadSent, uploadTotal)}%`
-                : 'Sending…'}
-          </Button>
-          <span className="ml-1 hidden text-[11px] text-muted-foreground sm:inline">⌘↵</span>
-          <WindowButton
-            label={showToolbar ? 'Hide formatting' : 'Show formatting'}
-            onClick={() => setShowToolbar((v) => !v)}
-            className={cn('ml-2', showToolbar && 'text-foreground')}
-          >
-            <Type />
-          </WindowButton>
-          <WindowButton
-            label="Attach files"
-            onClick={() => fileInput.current?.click()}
-            disabled={busy}
-          >
-            <Paperclip />
-          </WindowButton>
-          <input
-            ref={fileInput}
-            type="file"
-            multiple
-            hidden
-            aria-label="Attach files"
-            onChange={(e) => {
-              const picked = Array.from(e.target.files ?? []);
-              setFiles((prev) => [...prev, ...picked]);
-              e.target.value = '';
-            }}
-          />
-          <div className="ml-auto flex min-w-0 items-center gap-2">
-            {error ? (
-              <p role="alert" className="truncate text-xs text-destructive">
-                {error}
-              </p>
-            ) : (
-              savedAt && <span className="truncate text-xs text-muted-foreground">Draft saved</span>
-            )}
-            <WindowButton label="Discard draft" onClick={discard}>
-              <Trash2 />
+          <footer className="flex shrink-0 items-center gap-1 border-t px-3 py-2">
+            <Button
+              size="sm"
+              onClick={() => void send()}
+              disabled={busy}
+              className="px-4 tabular-nums"
+            >
+              {!busy
+                ? 'Send'
+                : uploading
+                  ? `Uploading ${percentOf(uploadSent, uploadTotal)}%`
+                  : 'Sending…'}
+            </Button>
+            <span className="ml-1 hidden text-[11px] text-muted-foreground sm:inline">⌘↵</span>
+            <WindowButton
+              label={showToolbar ? 'Hide formatting' : 'Show formatting'}
+              onClick={() => setShowToolbar((v) => !v)}
+              className={cn('ml-2', showToolbar && 'text-foreground')}
+            >
+              <Type />
             </WindowButton>
-          </div>
-        </footer>
-      </section>
-    </>
-  );
+            <WindowButton
+              label="Attach files"
+              onClick={() => fileInput.current?.click()}
+              disabled={busy}
+            >
+              <Paperclip />
+            </WindowButton>
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              hidden
+              aria-label="Attach files"
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                setFiles((prev) => [...prev, ...picked]);
+                e.target.value = '';
+              }}
+            />
+            <div className="ml-auto flex min-w-0 items-center gap-2">
+              {error ? (
+                <p role="alert" className="truncate text-xs text-destructive">
+                  {error}
+                </p>
+              ) : (
+                savedAt && (
+                  <span className="truncate text-xs text-muted-foreground">Draft saved</span>
+                )
+              )}
+              <WindowButton label="Discard draft" onClick={discard}>
+                <Trash2 />
+              </WindowButton>
+            </div>
+          </footer>
+
+          {dropping && (
+            // Covers the whole window, its content inert, so dragging across the fields
+            // underneath doesn't flicker the drop target off and on.
+            <div
+              onDragOver={(e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+              }}
+              onDragLeave={() => setDropping(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDropping(false);
+                attachDropped(e.dataTransfer);
+              }}
+              className="absolute inset-0 z-10 bg-background/90 p-2 animate-in fade-in-0 duration-100"
+            >
+              <div className="pointer-events-none flex h-full flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed border-primary/40 text-[13px] font-medium">
+                <Paperclip className="size-5 text-muted-foreground" />
+                Drop files to attach
+              </div>
+            </div>
+          )}
+        </section>
+      </>
+    );
+  },
+);
+
+/** Whether a drag carries files, rather than text or a link. */
+function carriesFiles(data: DataTransfer): boolean {
+  return Array.from(data.types).includes('Files');
+}
+
+/**
+ * The files in a drop, and how many folders were left out: a folder arrives as a `File`
+ * that cannot be read, so it would only fail at upload.
+ */
+function droppedFiles(data: DataTransfer): { files: File[]; folders: number } {
+  const files: File[] = [];
+  let folders = 0;
+  for (const item of Array.from(data.items)) {
+    const file = item.kind === 'file' ? item.getAsFile() : null;
+    if (!file) {
+      continue;
+    }
+    if (item.webkitGetAsEntry()?.isDirectory) {
+      folders += 1;
+    } else {
+      files.push(file);
+    }
+  }
+  return { files, folders };
 }
 
 /** Whole percent, rounded down so 100% means done. */
