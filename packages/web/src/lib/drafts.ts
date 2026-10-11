@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react';
+import type { ForwardedAttachment } from './reply.js';
 
 /**
  * Drafts live in THIS browser only. The API has no drafts endpoint, so a draft is a
@@ -20,6 +21,8 @@ export interface Draft {
   readonly html: string;
   /** For a reply: the id of the message answered, so sending the draft still threads it. */
   readonly inReplyTo?: string;
+  /** For a forward: the original's attachments still attached — references, so they persist. */
+  readonly forwardAttachments?: readonly ForwardedAttachment[];
   /** ISO-8601. */
   readonly updatedAt: string;
 }

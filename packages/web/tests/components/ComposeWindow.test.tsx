@@ -104,6 +104,30 @@ describe('ComposeWindow — sending', () => {
     }
   });
 
+  it("forwards the original's attachments by reference, minus any removed", async () => {
+    const compose = renderCompose({
+      from: 'me@x.com',
+      to: 'a@y.com',
+      subject: 'Fwd: Docs',
+      html: '<p>see below</p>',
+      forwardAttachments: [
+        { emailId: 'H', attachmentId: '2', filename: 'keep.pdf', sizeBytes: 900 },
+        { emailId: 'H', attachmentId: '3', filename: 'drop.zip', sizeBytes: 9_000_000 },
+      ],
+    });
+    expect(screen.getByText('keep.pdf')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove drop.zip' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => expect(compose.onClose).toHaveBeenCalled());
+    const [[, init]] = callsTo(compose.fetchImpl, '/emails', 'POST');
+    expect(JSON.parse(String(init?.body)).attachments).toEqual([
+      { emailId: 'H', attachmentId: '2' },
+    ]);
+    // Nothing was uploaded for a forwarded file.
+    expect(callsTo(compose.fetchImpl, '/attachments/uploads')).toHaveLength(0);
+  });
+
   it('surfaces a send failure and keeps the window open', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (url) =>
       pathOf(url) === '/me'

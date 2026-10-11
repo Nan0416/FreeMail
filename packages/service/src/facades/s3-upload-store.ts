@@ -43,11 +43,12 @@ export interface UploadStore {
   /** What was uploaded at `key`, or null when nothing was (never uploaded, or expired). */
   head(key: string): Promise<UploadedObject | null>;
   /**
-   * Copy an upload to its permanent key, stored as a non-inline download. False when nothing is
-   * at `sourceKey` (it expired since its HEAD).
+   * Copy an upload — or a stored attachment being forwarded — to a sent message's permanent key,
+   * stored as a non-inline download. False when nothing is at `sourceKey` (it expired since its
+   * HEAD).
    */
   copy(sourceKey: string, destKey: string): Promise<boolean>;
-  /** The bytes at `key` (for embedding a small attachment). */
+  /** The bytes at `key` — an upload or a forwarded attachment — for embedding a small one. */
   getBytes(key: string): Promise<Buffer>;
 }
 

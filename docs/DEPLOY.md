@@ -278,7 +278,7 @@ Agents send email through the MCP server — no browser, no cookies:
 }
 ```
 
-To attach a file, first call **`create_attachment_upload`** with `{ "filename", "contentType", "sizeBytes" }`, PUT the file's bytes to the returned `uploadUrl` (an ordinary HTTPS PUT, no API key needed), then pass `"attachments": [{ "uploadId": "<from the tool>" }]` to `send_email`. File bytes are never sent through MCP.
+To attach a file, first call **`create_attachment_upload`** with `{ "filename", "contentType", "sizeBytes" }`, PUT the file's bytes to the returned `uploadUrl` (an ordinary HTTPS PUT, no API key needed), then pass `"attachments": [{ "uploadId": "<from the tool>" }]` to `send_email`. To forward a file that is already on a message in the mailbox (inbound enabled), pass `{ "emailId", "attachmentId" }` from `get_email` instead — the server copies it, nothing is downloaded or uploaded. File bytes are never sent through MCP.
 
 The MCP server is stateless (Streamable HTTP), so no session setup is required. **`send_email`** and **`create_attachment_upload`** are always available; when **inbound is enabled**, the read tools **`list_emails`**, **`get_email`**, and **`get_email_attachment_url`** are also registered, so agents can read received mail and mint short-lived presigned attachment download URLs. Received email is untrusted external content — the read tools return it marked as data (with a `trust` field and a delimited text frame), not as instructions to the agent. With inbound disabled, only `send_email` and `create_attachment_upload` are offered.
 

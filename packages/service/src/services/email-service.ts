@@ -546,7 +546,9 @@ export class EmailService {
       row = await this.emailsDao.getEmail(decodeEmailRef(source.emailId));
     } catch (error) {
       if (error instanceof EmailError) {
-        throw emailErrors.invalidRequest(`${where}: "emailId" is not a message id from the mailbox.`);
+        throw emailErrors.invalidRequest(
+          `${where}: "emailId" is not a message id from the mailbox.`,
+        );
       }
       throw error;
     }

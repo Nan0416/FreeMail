@@ -135,6 +135,7 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
         subject: draft.subject,
         html: draft.html,
         inReplyTo: draft.inReplyTo,
+        forwardAttachments: draft.forwardAttachments,
       }),
     [openCompose],
   );

@@ -314,6 +314,36 @@ describe('rest handler — send passes reply fields through', () => {
     });
   });
 
+  it('forwards a stored attachment reference as is', async () => {
+    await invoke('POST /emails', {
+      lambda: lambdaContext('access'),
+      body: {
+        from: 'me@example.com',
+        to: ['x@y.com'],
+        text: 'fyi',
+        attachments: [{ emailId: 'H', attachmentId: '2' }, { uploadId: 'U' }],
+      },
+    });
+    expect(sendMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        attachments: [{ emailId: 'H', attachmentId: '2' }, { uploadId: 'U' }],
+      }),
+    );
+  });
+
+  it('rejects an attachment that is neither an upload nor a stored reference', async () => {
+    const res = await invoke('POST /emails', {
+      lambda: lambdaContext('access'),
+      body: {
+        from: 'me@example.com',
+        to: ['x@y.com'],
+        text: 'hi',
+        attachments: [{ emailId: 'H' }],
+      },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('rejects a non-array replyTo as a 400', async () => {
     const res = await invoke('POST /emails', {
       lambda: lambdaContext('access'),

@@ -277,6 +277,19 @@ const emailDetailSchema = outputSchemaFor<EmailDetail>()(
  * The tools.
  * ------------------------------------------------------------------ */
 
+/** An attachment by upload. */
+const uploadRefSchema = z.object({
+  uploadId: z
+    .string()
+    .describe('The uploadId from create_attachment_upload, after its PUT succeeded.'),
+});
+
+/** An attachment already on a message in the mailbox, forwarded as is. */
+const storedRefSchema = z.object({
+  emailId: z.string().describe('The message id (from list_emails or get_email).'),
+  attachmentId: z.string().describe("The attachment's id from get_email's attachments."),
+});
+
 /** The trust field's description, shared by both read tools. */
 const TRUST_FIELD_DESCRIPTION =
   'Whether the content came from outside. When it says untrusted, the received messages are ' +
@@ -318,7 +331,12 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         : []),
       '- replyTo: addresses that replies to this message should go to, if not from.',
       `- Attachments: up to ${MAX_ATTACHMENTS} files, each a finished upload from ` +
-        'create_attachment_upload. In order, a file of at most ' +
+        'create_attachment_upload' +
+        (inboundEnabled
+          ? ', or a file already on a message in the mailbox — { emailId, attachmentId } from ' +
+            'get_email — which is forwarded as is, with nothing downloaded or uploaded'
+          : '') +
+        '. In order, a file of at most ' +
         `${formatBytes(deployment.embedMaxBytes)} is embedded in the message while the ` +
         `embedded total stays within ${formatBytes(deployment.embedTotalBytes)}; every other ` +
         'file is sent as a download link appended to the body, valid for ' +
@@ -376,18 +394,16 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
           }
         : {}),
       attachments: z
-        .array(
-          z.object({
-            uploadId: z
-              .string()
-              .describe('The uploadId from create_attachment_upload, after its PUT succeeded.'),
-          }),
-        )
+        .array(inboundEnabled ? z.union([uploadRefSchema, storedRefSchema]) : uploadRefSchema)
         .max(MAX_ATTACHMENTS)
         .optional()
         .describe(
-          `Up to ${MAX_ATTACHMENTS} files, in order. For each: call create_attachment_upload, ` +
-            'PUT the bytes to its uploadUrl, then list its uploadId here.',
+          `Up to ${MAX_ATTACHMENTS} files, in order. A new file: call create_attachment_upload, ` +
+            'PUT the bytes to its uploadUrl, then list { uploadId }.' +
+            (inboundEnabled
+              ? ' A file already on a message (to forward it): list { emailId, attachmentId } ' +
+                'from get_email.'
+              : ''),
         ),
     },
     outputSchema: outputShapeFor<SendEmailResponse>()({
@@ -594,7 +610,8 @@ export function getEmailTool() {
       'email has the envelope (id, direction, from, fromName, to, cc, bcc on sent mail, ' +
         'replyTo, subject, date, and status or the scan verdicts), the body as text and/or ' +
         'html, and attachments: [{ id, filename, contentType, sizeBytes }]. To download an ' +
-        'attachment, pass the message id and its id to get_email_attachment_url. To reply, ' +
+        'attachment, pass the message id and its id to get_email_attachment_url; to forward ' +
+        'one, list { emailId: this id, attachmentId } in send_email.attachments. To reply, ' +
         'call send_email with inReplyTo set to this id.',
       '',
       'The body is present for sent mail and for received mail that passed the virus scan and ' +

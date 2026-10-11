@@ -18,6 +18,7 @@ import { forEachConcurrently } from '../lib/concurrency.js';
 import { deleteDraft, newDraftId, saveDraft, setLastSender, type Draft } from '../lib/drafts.js';
 import { formatBytes } from '../lib/format.js';
 import { parseRecipients } from '../lib/people.js';
+import type { ForwardedAttachment } from '../lib/reply.js';
 import { cn } from '@/lib/utils';
 import { FormattingToolbar, RichTextBody } from './RichTextEditor.js';
 
@@ -34,6 +35,8 @@ export interface ComposeInit {
   readonly html?: string;
   /** For a reply: the id of the message answered (threads the send). */
   readonly inReplyTo?: string;
+  /** For a forward: the original's attachments, sent by reference unless removed. */
+  readonly forwardAttachments?: readonly ForwardedAttachment[];
 }
 
 export interface ComposeWindowProps {
@@ -80,6 +83,9 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   const [html, setHtml] = useState(props.init.html ?? '');
   const [text, setText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  const [forwarded, setForwarded] = useState<readonly ForwardedAttachment[]>(
+    props.init.forwardAttachments ?? [],
+  );
   const [mode, setMode] = useState<WindowMode>('normal');
   const [showToolbar, setShowToolbar] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -111,7 +117,10 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   });
 
   const hasContent =
-    [to, cc, bcc, subject].some((v) => v.trim() !== '') || text.trim() !== '' || files.length > 0;
+    [to, cc, bcc, subject].some((v) => v.trim() !== '') ||
+    text.trim() !== '' ||
+    files.length > 0 ||
+    forwarded.length > 0;
 
   const snapshot = (): Draft => ({
     id: draftId.current,
@@ -123,6 +132,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     subject,
     html,
     ...(props.init.inReplyTo ? { inReplyTo: props.init.inReplyTo } : {}),
+    ...(forwarded.length > 0 ? { forwardAttachments: forwarded } : {}),
     updatedAt: new Date().toISOString(),
   });
   const latest = useRef(snapshot);
@@ -140,7 +150,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
       setSavedAt(new Date());
     }, AUTOSAVE_MS);
     return () => window.clearTimeout(timer);
-  }, [from, fromName, to, cc, bcc, subject, html, hasContent]);
+  }, [from, fromName, to, cc, bcc, subject, html, forwarded, hasContent]);
 
   useEffect(() => {
     props.onAttachmentCountChange?.(files.length);
@@ -213,7 +223,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
       setError('The message is empty.');
       return;
     }
-    if (files.length > MAX_ATTACHMENTS) {
+    if (forwarded.length + files.length > MAX_ATTACHMENTS) {
       setError(`At most ${MAX_ATTACHMENTS} attachments are allowed.`);
       return;
     }
@@ -264,8 +274,12 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
         uploadIds.set(file, upload.uploadId);
       });
       setUploadProgress(new Map());
-      // In the order they were attached, whatever order the uploads finished in.
-      const attachments: EmailAttachmentRef[] = [];
+      // Forwarded files first (the server copies them), then new files in the order they were
+      // attached, whatever order the uploads finished in.
+      const attachments: EmailAttachmentRef[] = forwarded.map((attachment) => ({
+        emailId: attachment.emailId,
+        attachmentId: attachment.attachmentId,
+      }));
       for (const file of files) {
         const uploadId = uploadIds.get(file);
         if (uploadId) {
@@ -460,8 +474,29 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
           {editor && <RichTextBody editor={editor} className="h-full" />}
         </div>
 
-        {files.length > 0 && (
+        {forwarded.length + files.length > 0 && (
           <ul aria-label="Attachments" className="flex shrink-0 flex-wrap gap-1.5 px-4 pb-2">
+            {forwarded.map((attachment) => (
+              <li
+                key={`fwd-${attachment.emailId}-${attachment.attachmentId}`}
+                className="relative flex max-w-56 items-center gap-1.5 overflow-hidden rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs"
+              >
+                <Paperclip className="size-3 shrink-0 text-muted-foreground" />
+                <span className="truncate">{attachment.filename}</span>
+                <span className="shrink-0 text-muted-foreground tabular-nums">
+                  {formatBytes(attachment.sizeBytes)}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Remove ${attachment.filename}`}
+                  disabled={busy}
+                  onClick={() => setForwarded((prev) => prev.filter((item) => item !== attachment))}
+                  className="grid size-4 shrink-0 place-items-center rounded text-muted-foreground hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
+                >
+                  <X className="size-3" />
+                </button>
+              </li>
+            ))}
             {files.map((file, index) => {
               const sent = uploadProgress.get(file);
               const percent =
