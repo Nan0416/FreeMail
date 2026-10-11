@@ -15,8 +15,8 @@ function api() {
 }
 
 function renderCompose(init: ComposeInit, fetchImpl = api(), onClose = vi.fn()) {
-  renderWithApp(<ComposeWindow init={init} onClose={onClose} />, fetchImpl);
-  return { fetchImpl, onClose };
+  const view = renderWithApp(<ComposeWindow init={init} onClose={onClose} />, fetchImpl);
+  return { fetchImpl, onClose, unmount: view.unmount };
 }
 
 function storedDrafts(): { id: string; subject: string }[] {
@@ -524,6 +524,44 @@ describe('ComposeWindow — dropping files', () => {
     dropOnWindow(filesDrag(item(null)));
     expect(attachments()).toEqual([]);
     expect(await screen.findByText('Nothing to attach')).toBeInTheDocument();
+  });
+
+  it('attaches a file dropped on the body without inserting its link there', () => {
+    renderCompose({ from: 'me@x.com', html: '<p>Hello</p>' });
+    const paragraph = document.querySelector('.ProseMirror p')!;
+    // A file dragged from a web page carries its address as text too.
+    const drag = {
+      ...filesDrag(item(new File(['png'], 'cat.png', { type: 'image/png' }))),
+      types: ['Files', 'text/uri-list', 'text/plain'],
+      getData: (type: string) => (type === 'text/html' ? '' : 'https://example.com/cat.png'),
+    };
+    // jsdom has no layout: say what is under the pointer, so the editor handles the drop.
+    const under = vi.spyOn(document, 'elementFromPoint').mockReturnValue(paragraph);
+    try {
+      fireEvent.drop(paragraph, { dataTransfer: drag });
+    } finally {
+      under.mockRestore();
+    }
+    expect(document.querySelector('.ProseMirror')).toHaveTextContent('Hello');
+    expect(document.querySelector('.ProseMirror')).not.toHaveTextContent('example.com');
+    expect(attachments()).toEqual([expect.stringContaining('cat.png')]);
+  });
+
+  it('clears a drag whose leave went missing at the next click', () => {
+    renderCompose({ from: 'me@x.com' });
+    fireEvent.dragEnter(document.body, { dataTransfer: filesDrag() });
+    expect(screen.getByText(TARGET)).toBeInTheDocument();
+    fireEvent.pointerDown(screen.getByText(TARGET));
+    expect(screen.queryByText(TARGET)).not.toBeInTheDocument();
+    expect(document.documentElement).not.toHaveAttribute('data-file-drag');
+  });
+
+  it('lets iframes take the pointer again if the window closes mid-drag', () => {
+    const view = renderCompose({ from: 'me@x.com' });
+    fireEvent.dragEnter(document.body, { dataTransfer: filesDrag() });
+    expect(document.documentElement).toHaveAttribute('data-file-drag');
+    view.unmount();
+    expect(document.documentElement).not.toHaveAttribute('data-file-drag');
   });
 
   it('never shows the drop target for dragged text', () => {

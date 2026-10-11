@@ -198,7 +198,8 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   // the app and losing what is attached. A drag enters and leaves every element it crosses,
   // so it has left the page once each element entered has been left (Safari gives no
   // `relatedTarget` to tell). Meanwhile `data-file-drag` lets the drag pass through iframes
-  // (a message being read, see index.css), whose drag events never reach this window.
+  // (a message being read, see index.css), whose drag events never reach this window. Should
+  // a leave go missing, the next click (no pointer events fire mid-drag) clears it all.
   useEffect(() => {
     const root = document.documentElement;
     let entered: EventTarget[] = [];
@@ -221,26 +222,33 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     }
     function onDragLeave(event: DragEvent): void {
       entered = entered.filter(
-        (target) => target !== event.target && target instanceof Node && root.contains(target),
+        (target) => target !== event.target && target instanceof Node && target.isConnected,
       );
       if (entered.length === 0) {
         setDragging(false);
       }
     }
-    function onDrop(event: DragEvent): void {
-      refuse(event);
+    function reset(): void {
       entered = [];
       setDragging(false);
+    }
+    function onDrop(event: DragEvent): void {
+      refuse(event);
+      reset();
     }
     window.addEventListener('dragenter', onDragEnter);
     window.addEventListener('dragleave', onDragLeave);
     window.addEventListener('dragover', refuse);
     window.addEventListener('drop', onDrop);
+    window.addEventListener('dragend', reset);
+    window.addEventListener('pointerdown', reset, true);
     return () => {
       window.removeEventListener('dragenter', onDragEnter);
       window.removeEventListener('dragleave', onDragLeave);
       window.removeEventListener('dragover', refuse);
       window.removeEventListener('drop', onDrop);
+      window.removeEventListener('dragend', reset);
+      window.removeEventListener('pointerdown', reset, true);
       root.removeAttribute('data-file-drag');
     };
   }, []);
@@ -472,6 +480,11 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
           }
         }}
         // The drop zone; the page-wide drag tracking is in the effect above.
+        onDragEnter={(e) => {
+          if (carriesFiles(e.dataTransfer)) {
+            e.preventDefault();
+          }
+        }}
         onDragOver={(e) => {
           if (carriesFiles(e.dataTransfer)) {
             e.preventDefault();
