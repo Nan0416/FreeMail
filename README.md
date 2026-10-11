@@ -143,7 +143,7 @@ For Claude Code, save this as `.mcp.json` in your project. Claude Code expands `
 }
 ```
 
-> The MCP server currently offers **`send_email` only**. Reading email from an agent (`list_emails`/`get_email`) is roadmap ([#13](https://github.com/Nan0416/FreeMail/issues/13)); humans read in the web app.
+The server also sends MCP `instructions` and per-tool descriptions written for the agent: they name your sending domain, the attachment limits, how long each URL lives, and what every tool returns, so an agent can use the tools without reading these docs.
 
 ## Development
 

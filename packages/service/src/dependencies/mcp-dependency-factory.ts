@@ -7,6 +7,11 @@
  * request. Absent is the honest representation, and `buildMcpServer` advertises the read
  * tools only when it is present.
  */
+import {
+  DEFAULT_EMBED_ATTACHMENT_BYTES,
+  DEFAULT_EMBED_TOTAL_BYTES,
+  normalizeDomain,
+} from '@freemail/shared';
 import { S3Client } from '@aws-sdk/client-s3';
 import { SESv2Client } from '@aws-sdk/client-sesv2';
 import { DdbDownloadTokensDao } from '../data/ddb-download-tokens-dao.js';
@@ -17,12 +22,13 @@ import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { S3UploadStore } from '../facades/s3-upload-store.js';
 import { AttachmentService, type AttachmentUploader } from '../services/attachment-service.js';
-import { createUploadPresignClient, embedLimits } from './uploads.js';
+import { createUploadPresignClient } from './uploads.js';
 import { S3AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import { EmailReadService } from '../services/email-read-service.js';
 import { EmailService } from '../services/email-service.js';
 import { SesV2Sender } from '../facades/ses-email-facade.js';
 import type { McpConfig } from '../handlers/mcp-config.js';
+import type { McpDeploymentInfo } from '../mcp/tool-definitions.js';
 
 export interface McpDependencies {
   readonly emailService: EmailService;
@@ -34,6 +40,8 @@ export interface McpDependencies {
   /** Present only when inbound is enabled — see the note above. */
   readonly readService: EmailReadService | undefined;
   readonly inboundEnabled: boolean;
+  /** The sender domain and the attachment limits in force — what the tool descriptions state. */
+  readonly deployment: McpDeploymentInfo;
 }
 
 export class McpDependencyFactory {
@@ -46,6 +54,13 @@ export class McpDependencyFactory {
   build(): McpDependencies {
     const doc = createDocumentClient();
     const s3 = new S3Client({});
+
+    // The limits the send path enforces, resolved once so the tool text states the same numbers.
+    const deployment: McpDeploymentInfo = {
+      emailDomain: normalizeDomain(this.config.emailDomain),
+      embedMaxBytes: this.config.embedMaxBytes ?? DEFAULT_EMBED_ATTACHMENT_BYTES,
+      embedTotalBytes: this.config.embedTotalBytes ?? DEFAULT_EMBED_TOTAL_BYTES,
+    };
 
     const emailsDao = new DdbEmailsDao(doc, this.config.emailsTable);
     const downloadTokensDao = new DdbDownloadTokensDao(doc, this.config.downloadTokensTable);
@@ -69,13 +84,20 @@ export class McpDependencyFactory {
       bodies: bodyStore,
       tokensDao: downloadTokensDao,
       uploads: uploadStore,
-      ...embedLimits(this.config),
+      embedMaxBytes: deployment.embedMaxBytes,
+      embedTotalBytes: deployment.embedTotalBytes,
       downloadBaseUrl: this.config.downloadBaseUrl,
       emailDomain: this.config.emailDomain,
     });
 
     if (!this.config.inboundEnabled) {
-      return { emailService, attachmentService, readService: undefined, inboundEnabled: false };
+      return {
+        emailService,
+        attachmentService,
+        readService: undefined,
+        inboundEnabled: false,
+        deployment,
+      };
     }
 
     return {
@@ -88,6 +110,7 @@ export class McpDependencyFactory {
         rawMime: new S3InboundObjectStore(s3, this.config.mailBucket),
       }),
       inboundEnabled: true,
+      deployment,
     };
   }
 }

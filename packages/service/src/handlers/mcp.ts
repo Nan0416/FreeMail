@@ -55,6 +55,7 @@ function buildHandler(): ApiGatewayHandler {
     emailService: deps.emailService,
     attachmentService: deps.attachmentService,
     inboundEnabled: deps.inboundEnabled,
+    deployment: deps.deployment,
     ...(deps.readService ? { readService: deps.readService } : {}),
   };
 

@@ -61,7 +61,7 @@ export interface SendEmailRequest {
 
 /** Result of a successful send. */
 export interface SendEmailResponse {
-  /** FreeMail's own id for the sent message (keys the metadata row). */
+  /** The sent message's opaque id — the same handle `GET /emails/{id}` and the list use. */
   readonly id: string;
   /** The message id SES assigned. */
   readonly messageId: string;
