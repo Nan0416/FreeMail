@@ -17,6 +17,7 @@
 import {
   ATTACHMENT_URL_TTL_SECONDS,
   DOWNLOAD_TOKEN_TTL_SECONDS,
+  IDEMPOTENCY_KEY_TTL_SECONDS,
   MAX_ATTACHMENTS,
   MAX_EMAIL_PAGE_SIZE,
   MAX_LIST_FILTER_CHARS,
@@ -330,6 +331,11 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
           ]
         : []),
       '- replyTo: addresses that replies to this message should go to, if not from.',
+      '- Retrying safely: pass an idempotencyKey you generate (a UUID, say) and reuse it when ' +
+        'you retry the same message after a timeout or an unclear result. Within ' +
+        `${formatDuration(IDEMPOTENCY_KEY_TTL_SECONDS)}, a repeat with the same key and the same ` +
+        'content sends nothing and returns the first result with replayed: true; the same key ' +
+        'with different content is refused. Without a key, every call sends.',
       `- Attachments: up to ${MAX_ATTACHMENTS} files, each a finished upload from ` +
         'create_attachment_upload' +
         (inboundEnabled
@@ -374,6 +380,14 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         .optional()
         .describe('Plain-text body. At least one of text or html is required.'),
       html: z.string().optional().describe('HTML body. At least one of text or html is required.'),
+      idempotencyKey: z
+        .string()
+        .regex(/^[A-Za-z0-9._:-]{1,128}$/)
+        .optional()
+        .describe(
+          'Optional key that makes retries safe (1–128 of letters, digits, ".", "_", ":", "-"). ' +
+            'Reuse it only to retry the same message.',
+        ),
       replyTo: z
         .array(z.string())
         .max(MAX_REPLY_TO_ADDRESSES)
@@ -422,6 +436,13 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
         .describe(
           'Only when inReplyTo was given: false means the reply went out unthreaded, because ' +
             'the original has no usable Message-ID.',
+        ),
+      replayed: z
+        .boolean()
+        .optional()
+        .describe(
+          'True when nothing new was sent: an earlier call with the same idempotencyKey sent ' +
+            'this message, and this is its result.',
         ),
     }),
     annotations: {

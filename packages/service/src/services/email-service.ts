@@ -18,6 +18,7 @@ import {
   DEFAULT_EMBED_ATTACHMENT_BYTES,
   DEFAULT_EMBED_TOTAL_BYTES,
   DOWNLOAD_TOKEN_TTL_SECONDS,
+  IDEMPOTENCY_KEY_TTL_SECONDS,
   MAX_ATTACHMENTS,
   MAX_RAW_MESSAGE_BYTES,
   MAX_UPLOAD_BYTES,
@@ -50,6 +51,7 @@ import type { SesSender } from '../facades/ses-email-facade.js';
 import { isValidUploadId, uploadKey } from './attachment-service.js';
 import { bodyKey, estimateRowBytes, storeEmailBody } from './email-body-storage.js';
 import { replyReferences, replySubject, sesMessageIdHeader } from '../utils/threading.js';
+import { isValidIdempotencyKey, requestFingerprint } from '../utils/idempotency.js';
 
 /** A send, exactly as REST and MCP both receive it. */
 export type SendEmailServiceRequest = SendEmailRequest;
@@ -187,9 +189,127 @@ export class EmailService {
     const thread =
       request.inReplyTo === undefined ? undefined : await this.resolveThread(request.inReplyTo);
     const subject = request.subject ?? (thread ? replySubject(thread.subject) : '');
-    const threadHeaders = thread?.headers;
 
     const attachments = await this.resolveAttachments(request.attachments);
+
+    const message: PreparedMessage = {
+      from,
+      ...(fromName !== undefined ? { fromName } : {}),
+      to,
+      cc,
+      bcc,
+      recipients,
+      replyTo,
+      subject,
+      ...(text !== undefined ? { text } : {}),
+      ...(html !== undefined ? { html } : {}),
+      ...(thread ? { thread } : {}),
+      attachments,
+    };
+    // Everything above only read and checked; from here on a send has side effects. A send
+    // with an idempotency key claims it first — or returns the earlier send's response.
+    if (request.idempotencyKey === undefined) {
+      return this.deliver(message);
+    }
+    const key = request.idempotencyKey;
+    const replay = await this.claimIdempotencyKey(key, request);
+    if (replay !== undefined) {
+      return replay;
+    }
+    let response: SendEmailResponse;
+    try {
+      response = await this.deliver(message);
+    } catch (error) {
+      // SES never accepted it (deliver throws only before or at the SES call): free the key, so
+      // the caller's retry sends rather than being refused.
+      await this.releaseIdempotencyKey(key);
+      throw error;
+    }
+    await this.completeIdempotencyKey(key, response);
+    return response;
+  }
+
+  /**
+   * Claim `key` for this request. Returns the earlier response when the same request already
+   * went out under it; throws when the key belongs to a different request, or to a send that is
+   * still in flight (or was interrupted mid-way — then only the Sent list can say).
+   */
+  private async claimIdempotencyKey(
+    key: unknown,
+    request: SendEmailServiceRequest,
+  ): Promise<SendEmailResponse | undefined> {
+    if (!isValidIdempotencyKey(key)) {
+      throw emailErrors.invalidRequest(
+        '"idempotencyKey" must be 1–128 characters of letters, digits, ".", "_", ":", or "-".',
+      );
+    }
+    const nowMs = this.now().getTime();
+    const fingerprint = requestFingerprint(request);
+    const claim = await this.emailsDao.createIdempotencyRecord({
+      key,
+      requestFingerprint: fingerprint,
+      createdAt: new Date(nowMs).toISOString(),
+      ttl: Math.floor(nowMs / 1000) + IDEMPOTENCY_KEY_TTL_SECONDS,
+    });
+    if (claim.created) {
+      return undefined;
+    }
+    if (claim.existing.requestFingerprint !== fingerprint) {
+      throw emailErrors.invalidRequest(
+        '"idempotencyKey" was already used for a different message in the last 24 hours. ' +
+          'Use a new key for a new message.',
+      );
+    }
+    if (claim.existing.state === 'sent' && claim.existing.response !== undefined) {
+      return { ...claim.existing.response, replayed: true };
+    }
+    throw emailErrors.invalidRequest(
+      'A send with this idempotencyKey is still in progress, or was interrupted. Check the ' +
+        'Sent list before sending again, and use a new key if you do.',
+    );
+  }
+
+  /** Free a claimed key whose send never reached SES. Best-effort: logged, never thrown. */
+  private async releaseIdempotencyKey(key: string): Promise<void> {
+    try {
+      await this.emailsDao.deleteIdempotencyRecord({ key });
+    } catch (error) {
+      console.error('Failed to release an idempotency key', { key }, error);
+    }
+  }
+
+  /**
+   * Record a claimed key's response, so a retry replays it. Best-effort: the mail is out, so a
+   * failure here must not fail the send — the key just stays `pending`, and a retry is refused
+   * with a pointer to the Sent list instead of sending twice.
+   */
+  private async completeIdempotencyKey(key: string, response: SendEmailResponse): Promise<void> {
+    try {
+      await this.emailsDao.updateIdempotencyRecord({ key, response });
+    } catch (error) {
+      console.error('Failed to record an idempotent send', { key, id: response.id }, error);
+    }
+  }
+
+  /**
+   * Send a validated message: copy its attachments to their permanent keys, archive and record
+   * it, and hand it to SES. Throws only before SES accepts the message (or when SES rejects it);
+   * after acceptance nothing it does can fail the send.
+   */
+  private async deliver(message: PreparedMessage): Promise<SendEmailResponse> {
+    const from = message.from;
+    const fromName = message.fromName;
+    const to = message.to;
+    const cc = message.cc;
+    const bcc = message.bcc;
+    const recipients = message.recipients;
+    const replyTo = message.replyTo;
+    const subject = message.subject;
+    const text = message.text;
+    const html = message.html;
+    const thread = message.thread;
+    const threadHeaders = thread?.headers;
+    const attachments = message.attachments;
 
     // Allocate the id up front: it namespaces the attachments' permanent keys and correlates
     // the token rows, and it must appear in the (best-effort) metadata row later.
@@ -568,6 +688,24 @@ export class EmailService {
       sizeBytes: descriptor.sizeBytes,
     };
   }
+}
+
+/** A send that passed every check — what {@link EmailService.deliver} sends. */
+interface PreparedMessage {
+  readonly from: string;
+  readonly fromName?: string;
+  readonly to: readonly string[];
+  readonly cc: readonly string[];
+  readonly bcc: readonly string[];
+  /** to + cc + bcc. */
+  readonly recipients: readonly string[];
+  readonly replyTo: readonly string[];
+  readonly subject: string;
+  readonly text?: string;
+  readonly html?: string;
+  /** Set when replying. */
+  readonly thread?: ReplyThread;
+  readonly attachments: readonly ResolvedAttachment[];
 }
 
 /** What a reply carries from the message it answers. */

@@ -344,6 +344,14 @@ describe('rest handler — send passes reply fields through', () => {
     expect(res.statusCode).toBe(400);
   });
 
+  it('passes an idempotency key through', async () => {
+    await invoke('POST /emails', {
+      lambda: lambdaContext('access'),
+      body: { from: 'me@example.com', to: ['x@y.com'], text: 'hi', idempotencyKey: 'k-1' },
+    });
+    expect(sendMock).toHaveBeenLastCalledWith(expect.objectContaining({ idempotencyKey: 'k-1' }));
+  });
+
   it('rejects a non-array replyTo as a 400', async () => {
     const res = await invoke('POST /emails', {
       lambda: lambdaContext('access'),

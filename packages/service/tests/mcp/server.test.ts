@@ -961,3 +961,46 @@ describe('send_email forwarding', () => {
     );
   });
 });
+
+describe('send_email idempotency', () => {
+  it('advertises the key with its pattern and explains retries', async () => {
+    const client = await connect(vi.fn());
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'send_email');
+
+    expect(tool?.inputSchema.properties?.idempotencyKey).toMatchObject({
+      type: 'string',
+      pattern: '^[A-Za-z0-9._:-]{1,128}$',
+    });
+    expect(tool?.description).toContain('Retrying safely');
+    expect(tool?.description).toContain('Within 1 day');
+    expect(tool?.annotations?.idempotentHint).toBe(false);
+  });
+
+  it('says plainly when a call replayed an earlier send', async () => {
+    const send = vi
+      .fn()
+      .mockResolvedValue({ id: 'e1', messageId: 'm1', sentAt: 't', replayed: true });
+    const client = await connect(send);
+
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: { from: 'me@example.com', to: ['a@b.com'], text: 'hi', idempotencyKey: 'k' },
+    });
+
+    expect(result.structuredContent).toMatchObject({ replayed: true });
+    expect(textOf(result)).toContain('Not sent again');
+  });
+
+  it('rejects a malformed key before the service runs', async () => {
+    const send = vi.fn();
+    const client = await connect(send);
+
+    const result = await client.callTool({
+      name: 'send_email',
+      arguments: { from: 'me@example.com', to: ['a@b.com'], text: 'hi', idempotencyKey: 'a b' },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(send).not.toHaveBeenCalled();
+  });
+});

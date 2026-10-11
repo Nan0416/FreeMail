@@ -25,6 +25,8 @@ class FakeDoc {
   readonly commands: (PutCommand | UpdateCommand)[] = [];
   /** When set, `send` rejects with a named error (e.g. the conditional-check failure). */
   failWith?: string;
+  /** What a successful `send` resolves with (e.g. an update's old `Attributes`). */
+  response: Record<string, unknown> = {};
   send(command: PutCommand | UpdateCommand): Promise<unknown> {
     this.commands.push(command);
     if (this.failWith) {
@@ -32,7 +34,7 @@ class FakeDoc {
       err.name = this.failWith;
       return Promise.reject(err);
     }
-    return Promise.resolve({});
+    return Promise.resolve(this.response);
   }
 }
 
@@ -743,5 +745,91 @@ describe('DdbEmailsDao.listEmailSummaries — date range', () => {
 
     expect(result.emails).toEqual([]);
     expect(doc.queries).toHaveLength(0);
+  });
+});
+
+describe('DdbEmailsDao — send idempotency records', () => {
+  const claim = {
+    key: 'k-1',
+    requestFingerprint: 'fp',
+    createdAt: '2026-10-10T00:00:00.000Z',
+    ttl: 1760140800,
+  };
+
+  it('claims a key in one atomic write that keeps an existing record and returns it', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    expect(await dao.createIdempotencyRecord(claim)).toEqual({ created: true });
+
+    const input = doc.commands[0]?.input as {
+      Key?: unknown;
+      UpdateExpression?: string;
+      ReturnValues?: string;
+    };
+    expect(input.Key).toEqual({ pk: 'SEND_KEY', sk: 'k-1' });
+    expect(input.UpdateExpression).toContain('#fp = if_not_exists(#fp, :fp)');
+    expect(input.UpdateExpression).toContain('#ttl = if_not_exists(#ttl, :ttl)');
+    expect(input.ReturnValues).toBe('ALL_OLD');
+  });
+
+  it('reports the earlier record when the key was already claimed', async () => {
+    const doc = new FakeDoc();
+    doc.response = {
+      Attributes: {
+        pk: 'SEND_KEY',
+        sk: 'k-1',
+        requestFingerprint: 'fp-0',
+        state: 'sent',
+        response: { id: 'h', messageId: 'm', sentAt: 't' },
+        createdAt: '2026-10-09T00:00:00.000Z',
+        ttl: 1760054400,
+      },
+    };
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    expect(await dao.createIdempotencyRecord(claim)).toEqual({
+      created: false,
+      existing: {
+        key: 'k-1',
+        requestFingerprint: 'fp-0',
+        state: 'sent',
+        response: { id: 'h', messageId: 'm', sentAt: 't' },
+        createdAt: '2026-10-09T00:00:00.000Z',
+        ttl: 1760054400,
+      },
+    });
+  });
+
+  it('records the response on completion', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.updateIdempotencyRecord({
+      key: 'k-1',
+      response: { id: 'h', messageId: 'm', sentAt: 't' },
+    });
+
+    const input = doc.commands[0]?.input as {
+      Key?: unknown;
+      ExpressionAttributeValues?: Record<string, unknown>;
+    };
+    expect(input.Key).toEqual({ pk: 'SEND_KEY', sk: 'k-1' });
+    expect(input.ExpressionAttributeValues).toMatchObject({
+      ':sent': 'sent',
+      ':response': { id: 'h', messageId: 'm', sentAt: 't' },
+    });
+  });
+
+  it('releases only a pending claim, and treats a completed one as already settled', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+    await dao.deleteIdempotencyRecord({ key: 'k-1' });
+    expect((doc.commands[0]?.input as { ConditionExpression?: string }).ConditionExpression).toBe(
+      '#state = :pending',
+    );
+
+    doc.failWith = 'ConditionalCheckFailedException';
+    await expect(dao.deleteIdempotencyRecord({ key: 'k-1' })).resolves.toEqual({});
   });
 });

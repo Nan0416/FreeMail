@@ -11,6 +11,7 @@
  */
 import { DescribeTableCommand } from '@aws-sdk/client-dynamodb';
 import {
+  DeleteCommand,
   DynamoDBDocumentClient,
   GetCommand,
   type GetCommandOutput,
@@ -18,12 +19,20 @@ import {
   QueryCommand,
   type QueryCommandOutput,
   UpdateCommand,
+  type UpdateCommandOutput,
 } from '@aws-sdk/lib-dynamodb';
 import type { EmailListFilter } from '@freemail/shared';
 import { EMAIL_LIST_INDEX_NAME } from '@freemail/shared/storage';
 import { getLogger } from '../utils/logger.js';
-import { CONDITIONAL_CHECK_FAILED, EmailEntity } from './entities.js';
+import { CONDITIONAL_CHECK_FAILED, EmailEntity, isConditionalCheckFailed } from './entities.js';
 import type {
+  CreateIdempotencyRecordInput,
+  CreateIdempotencyRecordOutput,
+  DeleteIdempotencyRecordInput,
+  DeleteIdempotencyRecordOutput,
+  IdempotencyRecord,
+  UpdateIdempotencyRecordInput,
+  UpdateIdempotencyRecordOutput,
   CreateInboundEmailInput,
   CreateInboundEmailOutput,
   CreateSentEmailInput,
@@ -348,6 +357,89 @@ export class DdbEmailsDao implements EmailsDao {
       startKey = out.LastEvaluatedKey;
     } while (startKey !== undefined && items.length < input.limit);
     return items;
+  }
+
+  async createIdempotencyRecord(
+    input: CreateIdempotencyRecordInput,
+  ): Promise<CreateIdempotencyRecordOutput> {
+    // One atomic write: each field is set only where the record doesn't exist yet, and the old
+    // record (if any) comes back as ALL_OLD — no read, no read grant. A fresh claim returns no
+    // attributes; a repeat returns the earlier claim untouched.
+    const out = (await this.doc.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: EmailEntity.idempotencyKey(input.key),
+        UpdateExpression:
+          'SET #fp = if_not_exists(#fp, :fp), #state = if_not_exists(#state, :pending), ' +
+          '#created = if_not_exists(#created, :created), #ttl = if_not_exists(#ttl, :ttl)',
+        ExpressionAttributeNames: {
+          '#fp': 'requestFingerprint',
+          '#state': 'state',
+          '#created': 'createdAt',
+          '#ttl': 'ttl',
+        },
+        ExpressionAttributeValues: {
+          ':fp': input.requestFingerprint,
+          ':pending': 'pending',
+          ':created': input.createdAt,
+          ':ttl': input.ttl,
+        },
+        ReturnValues: 'ALL_OLD',
+      }),
+    )) as UpdateCommandOutput;
+    const old = out.Attributes;
+    if (old === undefined || old.requestFingerprint === undefined) {
+      return { created: true };
+    }
+    const existing: IdempotencyRecord = {
+      key: input.key,
+      requestFingerprint: String(old.requestFingerprint),
+      state: old.state === 'sent' ? 'sent' : 'pending',
+      ...(old.response !== undefined
+        ? { response: old.response as IdempotencyRecord['response'] }
+        : {}),
+      createdAt: String(old.createdAt),
+      ttl: Number(old.ttl),
+    };
+    return { created: false, existing };
+  }
+
+  async updateIdempotencyRecord(
+    input: UpdateIdempotencyRecordInput,
+  ): Promise<UpdateIdempotencyRecordOutput> {
+    await this.doc.send(
+      new UpdateCommand({
+        TableName: this.tableName,
+        Key: EmailEntity.idempotencyKey(input.key),
+        UpdateExpression: 'SET #state = :sent, #response = :response',
+        ExpressionAttributeNames: { '#state': 'state', '#response': 'response' },
+        ExpressionAttributeValues: { ':sent': 'sent', ':response': input.response },
+        ConditionExpression: 'attribute_exists(pk)',
+      }),
+    );
+    return {};
+  }
+
+  async deleteIdempotencyRecord(
+    input: DeleteIdempotencyRecordInput,
+  ): Promise<DeleteIdempotencyRecordOutput> {
+    try {
+      await this.doc.send(
+        new DeleteCommand({
+          TableName: this.tableName,
+          Key: EmailEntity.idempotencyKey(input.key),
+          // Never drop a completed send's record: a retry must replay it, not send again.
+          ConditionExpression: '#state = :pending',
+          ExpressionAttributeNames: { '#state': 'state' },
+          ExpressionAttributeValues: { ':pending': 'pending' },
+        }),
+      );
+    } catch (err) {
+      if (!isConditionalCheckFailed(err)) {
+        throw err;
+      }
+    }
+    return {};
   }
 
   async getEmail(input: GetEmailInput): Promise<GetEmailOutput | null> {

@@ -123,7 +123,10 @@ export async function handleSendEmail(
         {
           type: 'text',
           text:
-            `Sent email ${result.id} (SES message ${result.messageId}) at ${result.sentAt}.` +
+            (result.replayed
+              ? `Not sent again: this idempotencyKey already sent email ${result.id} (SES message ` +
+                `${result.messageId}) at ${result.sentAt}.`
+              : `Sent email ${result.id} (SES message ${result.messageId}) at ${result.sentAt}.`) +
             (result.threaded === false
               ? ' It is NOT threaded: the original has no usable Message-ID, so it starts a new ' +
                 'conversation.'

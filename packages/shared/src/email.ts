@@ -81,6 +81,13 @@ export interface SendEmailRequest {
   readonly inReplyTo?: string;
   /** `Reply-To` addresses: where the recipients' replies should go, if not `from`. */
   readonly replyTo?: readonly string[];
+  /**
+   * A caller-chosen key (1–128 of letters, digits, `._:-`) that makes a retry safe: within
+   * {@link IDEMPOTENCY_KEY_TTL_SECONDS}, sending the same request with the same key returns the
+   * first send's response (`replayed: true`) instead of sending again. The same key on a
+   * different request is refused.
+   */
+  readonly idempotencyKey?: string;
 }
 
 /** Result of a successful send. */
@@ -97,7 +104,12 @@ export interface SendEmailResponse {
    * before FreeMail recorded it, or a send SES never accepted), so it went out unthreaded.
    */
   readonly threaded?: boolean;
+  /** True when an earlier send with the same `idempotencyKey` produced this response. */
+  readonly replayed?: boolean;
 }
+
+/** How long a send's `idempotencyKey` is remembered. */
+export const IDEMPOTENCY_KEY_TTL_SECONDS = 24 * 60 * 60;
 
 /** Max size of one uploaded attachment. Larger than any provider accepts embedded, so it is linked. */
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
