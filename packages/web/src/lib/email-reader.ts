@@ -139,8 +139,17 @@ export function sentStatusNotice(email: EmailDetail): string | null {
   if (email.status === 'send_failed') {
     return 'This message failed to send and was not delivered.';
   }
+  if (email.status === 'bounced') {
+    const bounced = (email.deliveryEvents ?? []).filter((event) => event.type === 'bounced');
+    const who = bounced.flatMap((event) => event.recipients);
+    const reason = bounced.find((event) => event.detail)?.detail;
+    return (
+      `This message bounced${who.length ? ` for ${who.join(', ')}` : ''}` +
+      `${reason ? `: ${reason}` : ''}.`
+    );
+  }
   if (email.status === 'sending') {
-    return 'This message is still sending (or its delivery status was not recorded).';
+    return 'This message is still sending, or its outcome is unknown — it may have gone out.';
   }
   return null;
 }

@@ -1049,3 +1049,49 @@ describe('send_email forwarding without inbound', () => {
     expect(send).not.toHaveBeenCalled();
   });
 });
+
+describe('get_email delivery reports', () => {
+  it('lists each report in the text, and advertises the statuses', async () => {
+    const email: EmailDetail = {
+      id: 'ref-sent-9',
+      direction: 'sent',
+      from: 'me@example.com',
+      to: ['a@x.com', 'b@x.com'],
+      cc: [],
+      bcc: [],
+      subject: 'Hi',
+      date: '2026-07-17T00:00:00.000Z',
+      status: 'bounced',
+      deliveryEvents: [
+        { type: 'delivered', at: '2026-07-17T00:00:03.000Z', recipients: ['a@x.com'] },
+        {
+          type: 'bounced',
+          at: '2026-07-17T00:00:04.000Z',
+          recipients: ['b@x.com'],
+          detail: 'Permanent/General: 550 user unknown',
+        },
+      ],
+      attachments: [],
+      hasAttachments: false,
+      attachmentCount: 0,
+      sizeBytes: 50,
+    };
+    const client = await connectRead(
+      fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }),
+    );
+
+    const result = await client.callTool({ name: 'get_email', arguments: { id: 'ref-sent-9' } });
+
+    expect(result.isError).toBeFalsy();
+    const text = textOf(result);
+    expect(text).toContain('Status: bounced');
+    expect(text).toContain('Delivery: delivered a@x.com at 2026-07-17T00:00:03.000Z');
+    expect(text).toContain(
+      'Delivery: bounced b@x.com at 2026-07-17T00:00:04.000Z (Permanent/General: 550 user unknown)',
+    );
+    const tools = (await client.listTools()).tools;
+    expect(tools.find((t) => t.name === 'send_email')?.description).toContain(
+      'its status becomes "delivered" or "bounced"',
+    );
+  });
+});

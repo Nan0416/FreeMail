@@ -314,6 +314,11 @@ describe('EmailService.sendEmail', () => {
       sk: '2026-07-17T12:00:00.000Z#id-1',
     });
     expect(setup.ses.calls).toHaveLength(1);
+    // Tagged so SES's delivery reports can find this row: its id and send time (epoch ms).
+    expect(setup.ses.calls[0]?.tags).toEqual({
+      'freemail-id': 'id-1',
+      'freemail-sent': String(Date.parse('2026-07-17T12:00:00.000Z')),
+    });
     expect(setup.ses.calls[0]).toMatchObject({
       from: 'me@example.com',
       to: ['a@x.com'],

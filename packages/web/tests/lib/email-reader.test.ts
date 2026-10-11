@@ -159,3 +159,40 @@ describe('sentStatusNotice', () => {
     );
   });
 });
+
+describe('sentStatusNotice — delivery reports', () => {
+  const sent = {
+    id: 's1',
+    direction: 'sent' as const,
+    from: 'me@x.com',
+    to: ['a@y.com', 'b@y.com'],
+    cc: [],
+    subject: 'Hi',
+    date: '2026-07-17T00:00:00.000Z',
+    attachments: [],
+    hasAttachments: false,
+    attachmentCount: 0,
+    sizeBytes: 1,
+  };
+
+  it('says who it bounced for, and why', () => {
+    expect(
+      sentStatusNotice({
+        ...sent,
+        status: 'bounced',
+        deliveryEvents: [
+          { type: 'delivered', at: 't1', recipients: ['a@y.com'] },
+          { type: 'bounced', at: 't2', recipients: ['b@y.com'], detail: 'Permanent/General' },
+        ],
+      }),
+    ).toBe('This message bounced for b@y.com: Permanent/General.');
+  });
+
+  it('shows nothing for a delivered message', () => {
+    expect(sentStatusNotice({ ...sent, status: 'delivered' })).toBeNull();
+  });
+
+  it('does not claim a failure for an unknown outcome', () => {
+    expect(sentStatusNotice({ ...sent, status: 'sending' })).toContain('may have gone out');
+  });
+});

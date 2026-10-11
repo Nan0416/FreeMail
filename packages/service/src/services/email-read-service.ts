@@ -20,6 +20,7 @@ import type { Readable } from 'node:stream';
 import {
   ATTACHMENT_URL_TTL_SECONDS,
   type AttachmentDownloadResponse,
+  type DeliveryEvent,
   type EmailAttachmentInfo,
   type EmailDetail,
   type EmailListFilter,
@@ -461,6 +462,9 @@ export class EmailReadService {
         subject: row.subject,
         date: row.sentAt,
         ...(row.status !== undefined ? { status: row.status } : {}),
+        ...(row.deliveryEvents !== undefined && row.deliveryEvents.length > 0
+          ? { deliveryEvents: distinctEvents(row.deliveryEvents) }
+          : {}),
         ...body,
         rawAvailable: this.rawDownload(row) !== undefined,
         attachments: rowAttachments(row).map(publicDescriptor),
@@ -537,6 +541,22 @@ export class EmailReadService {
       ? { key: row.rawS3Key, presigner: this.presigner }
       : undefined;
   }
+}
+
+/**
+ * SNS delivers a report at least once, so the row can hold repeats: keep the first of each, in
+ * arrival order.
+ */
+function distinctEvents(events: readonly DeliveryEvent[]): DeliveryEvent[] {
+  const seen = new Set<string>();
+  return events.filter((event) => {
+    const key = JSON.stringify([event.type, event.at, event.recipients, event.detail]);
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 /** A row's stored attachment descriptors; a sent row from before they were recorded has none. */

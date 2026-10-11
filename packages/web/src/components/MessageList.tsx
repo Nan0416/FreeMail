@@ -300,6 +300,7 @@ function MessageRow(props: {
           </span>
           <QuarantineTag email={props.email} />
           {props.email.status === 'send_failed' && <RowTag tone="destructive">Failed</RowTag>}
+          {props.email.status === 'bounced' && <RowTag tone="destructive">Bounced</RowTag>}
           {props.email.status === 'sending' && <RowTag tone="muted">Sending</RowTag>}
         </span>
       </button>

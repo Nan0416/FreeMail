@@ -54,6 +54,7 @@ import type { SesSender } from '../facades/ses-email-facade.js';
 import { isValidUploadId, uploadKey } from './attachment-service.js';
 import { bodyKey, estimateRowBytes, storeEmailBody } from './email-body-storage.js';
 import { replyReferences, replySubject, sesMessageIdHeader } from '../utils/threading.js';
+import { deliveryTags } from '../utils/delivery-tags.js';
 import { isValidIdempotencyKey, requestFingerprint } from '../utils/idempotency.js';
 
 /** A send, exactly as REST and MCP both receive it. */
@@ -434,7 +435,8 @@ export class EmailService {
     let messageId: string;
     try {
       attempt.sesCalled();
-      messageId = (await this.ses.send({ from, to, cc, bcc, raw })).messageId;
+      messageId = (await this.ses.send({ from, to, cc, bcc, raw, tags: deliveryTags(id, nowDate) }))
+        .messageId;
     } catch (error) {
       if (refusedBySes(error)) {
         // SES refused the message: mark the archived row send_failed so the failure is visible

@@ -260,6 +260,12 @@ function renderDetailText(email: EmailDetail, nonce: () => string): string {
     if (email.status) {
       lines.push(`Status: ${email.status}`);
     }
+    for (const event of email.deliveryEvents ?? []) {
+      const who = event.recipients.length ? ` ${event.recipients.join(', ')}` : '';
+      lines.push(
+        `Delivery: ${event.type}${who} at ${event.at}${event.detail ? ` (${event.detail})` : ''}`,
+      );
+    }
     lines.push(`To: ${email.to.join(', ') || '(none)'}`);
     if (email.cc.length) {
       lines.push(`Cc: ${email.cc.join(', ')}`);

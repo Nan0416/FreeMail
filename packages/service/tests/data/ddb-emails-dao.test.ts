@@ -174,8 +174,13 @@ describe('DdbEmailsDao', () => {
       '#status': 'status',
       '#mid': 'sesMessageId',
     });
-    expect(input?.ExpressionAttributeValues).toEqual({ ':status': 'sent', ':mid': 'ses-msg-1' });
-    expect(input?.ConditionExpression).toBe('attribute_exists(pk)');
+    expect(input?.ExpressionAttributeValues).toEqual({
+      ':status': 'sent',
+      ':mid': 'ses-msg-1',
+      ':sending': 'sending',
+    });
+    // Only from 'sending': a delivery report that got there first is never walked back.
+    expect(input?.ConditionExpression).toBe('attribute_exists(pk) AND #status = :sending');
   });
 
   it('updateSentStatus → send_failed: SETs status + error', async () => {
@@ -195,6 +200,7 @@ describe('DdbEmailsDao', () => {
     expect(input?.ExpressionAttributeValues).toEqual({
       ':status': 'send_failed',
       ':error': 'SES rejected: throttled',
+      ':sending': 'sending',
     });
   });
 
@@ -945,5 +951,105 @@ describe('DdbEmailsDao — idempotency claims: retries and expiry', () => {
       created: false,
       existing: { state: 'pending' },
     });
+  });
+});
+
+describe('DdbEmailsDao — delivery reports', () => {
+  const report = {
+    id: 'e1',
+    sentAt: '2026-10-10T12:00:00.000Z',
+    events: [
+      { type: 'delivered' as const, at: '2026-10-10T12:00:03.000Z', recipients: ['a@x.com'] },
+    ],
+  };
+
+  it('appends the events to an existing row, then advances the status only forward', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    expect(await dao.updateSentEmailDelivery({ ...report, status: 'bounced' })).toEqual({
+      found: true,
+    });
+
+    const append = doc.commands[0]?.input as {
+      Key?: unknown;
+      UpdateExpression?: string;
+      ConditionExpression?: string;
+    };
+    expect(append.Key).toEqual({ pk: 'SENT', sk: '2026-10-10T12:00:00.000Z#e1' });
+    expect(append.UpdateExpression).toBe(
+      'SET #events = list_append(if_not_exists(#events, :empty), :events)',
+    );
+    expect(append.ConditionExpression).toBe('attribute_exists(pk)');
+    const status = doc.commands[1]?.input as {
+      ConditionExpression?: string;
+      ExpressionAttributeValues?: Record<string, unknown>;
+    };
+    expect(status.ConditionExpression).toBe('#status IN (:from0, :from1, :from2)');
+    expect(status.ExpressionAttributeValues).toEqual({
+      ':status': 'bounced',
+      ':from0': 'sending',
+      ':from1': 'sent',
+      ':from2': 'delivered',
+    });
+  });
+
+  it('never moves a delivered message past a bounce (delivered only from sending/sent)', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.updateSentEmailDelivery({ ...report, status: 'delivered' });
+
+    expect(
+      (doc.commands[1]?.input as { ExpressionAttributeValues?: Record<string, unknown> })
+        .ExpressionAttributeValues,
+    ).toEqual({ ':status': 'delivered', ':from0': 'sending', ':from1': 'sent' });
+  });
+
+  it('reports a row that is not there, and writes nothing more', async () => {
+    const doc = new FakeDoc();
+    doc.failWith = 'ConditionalCheckFailedException';
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    expect(await dao.updateSentEmailDelivery({ ...report, status: 'delivered' })).toEqual({
+      found: false,
+    });
+    expect(doc.commands).toHaveLength(1);
+  });
+});
+
+describe('DdbEmailsDao.updateSentEmailStatus — never walks a status back', () => {
+  it("marks sent only from 'sending', and still records the SES ids when a report got there first", async () => {
+    const doc = new FakeDoc();
+    let calls = 0;
+    const send = doc.send.bind(doc);
+    doc.send = (command) => {
+      calls += 1;
+      if (calls === 1) {
+        doc.commands.push(command);
+        const err = new Error('conditional check failed');
+        err.name = 'ConditionalCheckFailedException';
+        return Promise.reject(err);
+      }
+      return send(command);
+    };
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await dao.updateSentEmailStatus({
+      id: 'e1',
+      sentAt: '2026-10-10T12:00:00.000Z',
+      status: 'sent',
+      sesMessageId: 's1',
+      messageIdHeader: '<s1@email.amazonses.com>',
+    });
+
+    const first = doc.commands[0]?.input as { ConditionExpression?: string };
+    expect(first.ConditionExpression).toBe('attribute_exists(pk) AND #status = :sending');
+    const second = doc.commands[1]?.input as {
+      UpdateExpression?: string;
+      ExpressionAttributeNames?: Record<string, string>;
+    };
+    expect(second.UpdateExpression).toBe('SET #mid = :mid, #msgid = :msgid');
+    expect(Object.values(second.ExpressionAttributeNames ?? {})).not.toContain('status');
   });
 });

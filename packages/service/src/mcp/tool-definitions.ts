@@ -30,6 +30,7 @@ import {
   UPLOAD_URL_TTL_SECONDS,
   type AttachmentDownloadResponse,
   type CreateAttachmentUploadResponse,
+  type DeliveryEvent,
   type EmailAttachmentInfo,
   type EmailDetail,
   type EmailListItem,
@@ -163,13 +164,29 @@ const parseStatusSchema = z
       'folder.',
   );
 
+const addressListSchema = z.array(z.string()).readonly();
+
 const sentStatusSchema = z
-  .enum(['sending', 'sent', 'send_failed'])
+  .enum(['sending', 'sent', 'delivered', 'bounced', 'send_failed'])
   .optional()
   .describe(
-    'Sent mail only. "sending": recorded, SES not yet answered (or the update was lost). ' +
-      '"sent": SES accepted it for delivery. "send_failed": SES rejected it; it was not delivered.',
+    'Sent mail only. "sending": recorded, but SES\'s answer was not (still sending, or the ' +
+      'outcome is unknown — it may have gone out). "sent": SES accepted it for delivery. ' +
+      '"delivered": a receiving mail server accepted it. "bounced": it bounced for at least one ' +
+      'recipient (see deliveryEvents). "send_failed": SES refused it; it was not sent.',
   );
+
+const deliveryEventSchema = outputSchemaFor<DeliveryEvent>()(
+  z.object({
+    type: z.enum(['delivered', 'bounced', 'complained', 'delayed', 'rejected']),
+    at: z.string().describe('When SES reports it happened, ISO-8601 UTC.'),
+    recipients: addressListSchema,
+    detail: z
+      .string()
+      .optional()
+      .describe("SES's reason for a bounce, delay, complaint, or reject, condensed."),
+  }),
+);
 
 const quarantinedSchema = z
   .boolean()
@@ -183,8 +200,6 @@ const failedSchema = z
     'True for an Errors-folder message: no body, and no attachment can be downloaded ' +
       "(attachmentCount still counts the original's).",
   );
-
-const addressListSchema = z.array(z.string()).readonly();
 
 const emailListItemSchema = outputSchemaFor<EmailListItem>()(
   z.object({
@@ -240,6 +255,14 @@ const emailDetailSchema = outputSchemaFor<EmailDetail>()(
     subject: z.string(),
     date: z.string().describe('Received or sent time, ISO-8601 UTC.'),
     status: sentStatusSchema,
+    deliveryEvents: z
+      .array(deliveryEventSchema)
+      .readonly()
+      .optional()
+      .describe(
+        'Sent mail only: what SES reported after accepting it, per recipient, oldest first. ' +
+          'Absent until a report arrives.',
+      ),
     headerDate: z
       .string()
       .optional()
@@ -364,7 +387,9 @@ export function sendEmailTool(deployment: McpDeploymentInfo, inboundEnabled: boo
       }; messageId is the SES message id. Success means SES accepted the message for delivery, ` +
         'not that it reached the inbox. If SES rejects it, the tool returns an error' +
         (inboundEnabled
-          ? ' and the message stays in the Sent list with status "send_failed".'
+          ? ' and the message stays in the Sent list with status "send_failed". To learn ' +
+            'whether it arrived, get_email it a little later: its status becomes "delivered" or ' +
+            '"bounced", with per-recipient deliveryEvents.'
           : '.'),
     ].join('\n'),
     inputSchema: {
@@ -533,7 +558,8 @@ export function listEmailsTool(deployment: McpDeploymentInfo) {
       'Returns { trust, emails, nextCursor? }. Each row is an envelope and a short preview, not ' +
         'the body: id (pass to get_email), direction ("inbound" or "sent"), from, fromName, to, ' +
         'cc, subject, snippet, date (ISO-8601 UTC, received or sent time), hasAttachments, and ' +
-        'attachmentCount. Sent rows add status ("sending", "sent", or "send_failed"). Received ' +
+        'attachmentCount. Sent rows add status ("sending", "sent", "delivered", "bounced", or ' +
+        '"send_failed"). Received ' +
         'rows add spamVerdict, virusVerdict, parseStatus, and quarantined (true when SES flagged ' +
         'the message as spam or its content was withheld).',
       '',
@@ -648,6 +674,10 @@ export function getEmailTool() {
         'attachment, pass the message id and its id to get_email_attachment_url; to forward ' +
         'one, list { emailId: this id, attachmentId } in send_email.attachments. To reply, ' +
         'call send_email with inReplyTo set to this id.',
+      '',
+      'For sent mail, status and deliveryEvents say what happened after SES accepted it: ' +
+        'delivered, bounced (with the reason), a spam complaint, or a delay — reported by SES, ' +
+        'usually within seconds to minutes of sending.',
       '',
       'The body is present for sent mail and for received mail that passed the virus scan and ' +
         'parsed. Errors-folder messages (failed: true) have no body, and none of their ' +
