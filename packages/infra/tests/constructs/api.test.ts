@@ -98,7 +98,10 @@ describe('ApiConstruct', () => {
     template.hasResourceProperties('AWS::ApiGatewayV2::Api', {
       DisableExecuteApiEndpoint: true,
     });
-    expect(() => template.hasOutput('ApiEndpoint', {})).toThrow();
+    expect(template.findOutputs('ApiEndpoint')).toEqual({});
+    // `httpApi.url` / `defaultStage.url` still return the dead host without throwing, so no
+    // synthesized value may name it (Lambda permissions' `arn:…:execute-api:` ARNs are fine).
+    expect(JSON.stringify(template.toJSON())).not.toMatch(/\.execute-api\./);
   });
 
   it('locks credentialed CORS to the ONE canonical app origin (#47)', () => {
