@@ -10,8 +10,12 @@
  * `parseFreeMailConfig` is intentionally fail-loud: a malformed config is a deploy-time
  * footgun, so we reject it with a clear message rather than silently defaulting.
  */
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { isSubdomainOrEqual, normalizeDomain } from './domain.js';
+
+/** The deploy config's filename, at the repo root (see `@freemail/infra`'s `configPath`). */
+export const CONFIG_FILENAME = 'freemail-config.json';
 
 /** The only supported region — inbound SES + CloudFront ACM certs both require us-east-1. */
 export const DEFAULT_REGION = 'us-east-1';
@@ -266,4 +270,30 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
         }
       : {}),
   };
+}
+
+/**
+ * Read, JSON-parse, and validate a FreeMail deploy config file, failing loud. The one
+ * loader: the CDK app reads the config through it at synth and `freemail validate` checks
+ * it, so a config that validates is one the deploy can load.
+ */
+export function loadFreeMailConfig(path: string): FreeMailConfig {
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    throw new Error(
+      `FreeMail: no config found at ${path}. Run \`npx freemail init\` to create one, ` +
+        `or copy ${CONFIG_FILENAME.replace('.json', '.template.json')} and fill it in.`,
+    );
+  }
+
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`FreeMail: config at ${path} is not valid JSON: ${(error as Error).message}`);
+  }
+
+  return parseFreeMailConfig(json);
 }

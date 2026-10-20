@@ -8,10 +8,10 @@
  */
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { DEFAULT_REGION, parseFreeMailConfig } from '@freemail/shared/config';
+import { CONFIG_FILENAME, DEFAULT_REGION, parseFreeMailConfig } from '@freemail/shared/config';
 import type { FreeMailConfig, HostedZoneConfig } from '@freemail/shared/config';
 
-export const CONFIG_FILENAME = 'freemail-config.json';
+export { CONFIG_FILENAME };
 
 export interface InitAnswers {
   readonly hostedZone: HostedZoneConfig;

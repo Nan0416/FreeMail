@@ -1,13 +1,13 @@
 # Deploying FreeMail
 
-This guide walks through a full FreeMail deployment: configuring it with `freemail init`, deploying the stack, requesting SES production access, wiring up DNS, and the optional pieces (custom domains, inbound email). It ends with troubleshooting for the failure modes you're most likely to hit.
+This guide walks through a full FreeMail deployment: writing its config (with an agent, or with `freemail init`), deploying the stack, requesting SES production access, wiring up DNS, and the optional pieces (custom domains, inbound email). It ends with troubleshooting for the failure modes you're most likely to hit.
 
 FreeMail is **single-tenant and single-region**: one deployment is one owner, in your own AWS account, pinned to **`us-east-1`**. That region is not a default you can change — inbound SES and the CloudFront ACM certificate both require `us-east-1`, and the config parser rejects anything else.
 
 ## Contents
 
 1. [Prerequisites](#1-prerequisites)
-2. [Configure — `freemail init`](#2-configure--freemail-init)
+2. [Configure](#2-configure)
 3. [Deploy](#3-deploy)
 4. [SES production access (sandbox exit)](#4-ses-production-access-sandbox-exit)
 5. [DNS and email authentication](#5-dns-and-email-authentication)
@@ -38,9 +38,21 @@ npm run build   # tsc -b + the web SPA build (packages/web/dist)
 
 > `npm run build` also builds the React SPA. If you deploy without it, the web bucket ships a committed placeholder instead of the real app — always build before deploying.
 
-## 2. Configure — `freemail init`
+## 2. Configure
 
-`freemail init` is an interactive CLI that writes **`freemail-config.json`** at the repo root — the single source of truth the CDK app reads at synth. Run it from the repo root:
+A deployment is configured by one file, **`freemail-config.json`** at the repo root — the single source of truth the CDK app reads at synth. There are three ways to write it. All three produce the same file, and [`freemail validate`](#validate-the-config) checks it however it was written.
+
+### With an agent
+
+The repo ships a prompt for coding agents: [`.claude/skills/freemail-init/SKILL.md`](../.claude/skills/freemail-init/SKILL.md). In Claude Code, run **`/freemail-init`** in the repo (or ask it to set up FreeMail); point any other agent at that file.
+
+The agent asks you only what you decide — which AWS profile to deploy with, which domains, and whether to receive mail (with the MX acknowledgement, [§7](#7-inbound-email-optional)) — and looks the rest up with read-only AWS CLI calls: the hosted zone ID, whether the domain is already an SES identity, records in the zone that would collide with the ones FreeMail creates, an existing `FreeMailStack` in the account, and an active receipt rule set. It writes the file, runs `npx freemail validate`, and stops before deploying.
+
+It needs the `aws` CLI, signed in to the account you will deploy to.
+
+### Interactively — `freemail init`
+
+`freemail init` is an interactive CLI that writes the file. Run it from the repo root:
 
 ```sh
 npx freemail init
@@ -79,14 +91,22 @@ There is exactly **one** location: **`freemail-config.json` at the repo root**. 
 
 The file is **gitignored** (it names your domains and hosted zone). **`freemail-config.template.json`** is committed beside it as a starting point.
 
-Prefer not to use the interactive CLI? Copy the template and edit it:
+### By hand
+
+Copy the template and edit it:
 
 ```sh
 cp freemail-config.template.json freemail-config.json
 $EDITOR freemail-config.json
 ```
 
-Either way the same schema validation runs at synth.
+### Validate the config
+
+```sh
+npx freemail validate
+```
+
+Run it from the repo root. It loads `freemail-config.json` through the same loader `cdk deploy` uses, so a file that passes is one the deploy can load, and it lists every problem at once. It checks the file, not your account — it makes no AWS calls, so it cannot tell whether the hosted zone or SES identity the file names exist. The same validation runs again at synth.
 
 ## 3. Deploy
 
