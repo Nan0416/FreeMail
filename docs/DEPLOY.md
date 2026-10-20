@@ -106,7 +106,7 @@ $EDITOR freemail-config.json
 npx freemail validate
 ```
 
-Run it from the repo root. It loads `freemail-config.json` through the same loader `cdk deploy` uses, so a file that passes is one the deploy can load, and it lists every problem at once. It checks the file, not your account — it makes no AWS calls, so it cannot tell whether the hosted zone or SES identity the file names exist. The same validation runs again at synth.
+It checks the repo-root `freemail-config.json` from anywhere in the repo, through the same loader `cdk deploy` uses, so a file that passes is one the deploy can load, and it lists every problem at once. It checks the file, not your account — it makes no AWS calls, so it cannot tell whether the hosted zone or SES identity the file names exist. The same validation runs again at synth.
 
 ## 3. Deploy
 

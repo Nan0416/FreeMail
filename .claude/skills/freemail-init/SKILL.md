@@ -1,11 +1,11 @@
 ---
 name: freemail-init
-description: Write this repo's freemail-config.json, the FreeMail deploy config, by asking the user a few questions and looking up the rest in their AWS account (read-only), then check it with `npx freemail validate`. The agent counterpart of the interactive `npx freemail init`. Use when the user wants to set up, configure or reconfigure a FreeMail deployment, or create or fix freemail-config.json.
+description: Write this repo's freemail-config.json, the FreeMail deploy config, by asking the user a few questions and looking up the rest in their AWS account (read-only), then check it with `freemail validate`. The agent counterpart of the interactive `npx freemail init`. Use when the user wants to set up, configure or reconfigure a FreeMail deployment, or create or fix freemail-config.json.
 ---
 
 # Write freemail-config.json
 
-You produce one file, `freemail-config.json` at the repo root, which `cdk deploy` reads. Ask the user only what they alone can decide — the questions in steps 1, 2 and 4 — and look everything else up with read-only AWS CLI calls. You are done when `npx freemail validate` passes and you have handed off (step 6).
+You produce one file, `freemail-config.json` at the repo root, which `cdk deploy` reads. Ask the user only what they alone can decide — the questions in steps 1, 2 and 4 — and look everything else up with read-only AWS CLI calls. You are done when `freemail validate` passes and you have handed off (step 6).
 
 [`docs/DEPLOY.md`](../../../docs/DEPLOY.md) explains every field; the schema the file must satisfy is `parseFreeMailConfig` in `packages/shared/src/config.ts`.
 
@@ -13,18 +13,19 @@ You produce one file, `freemail-config.json` at the repo root, which `cdk deploy
 
 - **Read-only AWS.** Only `get-*`, `list-*` and `describe-*` calls. Never create, change or delete DNS records, SES identities, receipt rule sets or stacks, and never run `cdk bootstrap` or `cdk deploy` — deploying is the user's step.
 - **No guessed values.** Every value comes from the user's answers or from AWS output. A hosted zone ID is copied from `list-hosted-zones`, never typed from memory.
-- **The MX acknowledgement is the user's.** Set `inbound.confirmInboundMx` to `true` only after the user has said yes to replacing the domain's MX record in this conversation (step 4). Never decide it for them.
+- **The MX acknowledgement is the user's.** Set `inbound.confirmInboundMx` to `true` only after the user has said yes to pointing the domain's MX record at SES in this conversation. Never decide it for them.
 - **An existing config is not yours to overwrite.** If `freemail-config.json` exists, show it before anything else and ask whether to replace it.
 - Pass `--profile <profile>` (from step 1) and `--region us-east-1` on every AWS command. FreeMail only deploys to `us-east-1`.
+- Run the CLI as **`npx --no freemail …`**. `--no` keeps npx from downloading an unrelated `freemail` package from the npm registry when the repo's own CLI isn't installed.
 
-Before step 1: `npx freemail version` must print a version. If it prints nothing or fails, run `npm install && npm run build` from the repo root (the deploy needs that build anyway).
+Before step 1, check that `packages/cli/dist/index.js` exists. If it doesn't, run `npm install && npm run build` from the repo root (the deploy needs that build anyway).
 
 ## 1. Which AWS account
 
 Ask which AWS profile they will deploy with (`aws configure list-profiles` gives the choices). Then:
 
 - `aws sts get-caller-identity` — tell the user the account ID. If the session has expired, ask them to run `aws sso login --profile <profile>` (in Claude Code: `! aws sso login --profile <profile>`) and retry.
-- `aws cloudformation describe-stacks --stack-name FreeMailStack` — if the stack exists, this account already has a FreeMail deployment, and deploying this config **updates that deployment in place** (the stack is always `FreeMailStack`; one account holds one FreeMail). Show its `WebAppUrl` output and ask whether they mean to reconfigure it or meant another account. If they are reconfiguring, see [Reconfiguring a live deployment](#reconfiguring-a-live-deployment).
+- `aws cloudformation describe-stacks --stack-name FreeMailStack` — if the stack exists, this account already has a FreeMail deployment, and deploying this config **updates that deployment in place** (the stack is always `FreeMailStack`; one account holds one FreeMail). Show its `WebAppUrl` output and ask whether they mean to reconfigure it or meant another account. To reconfigure it, follow [Reconfiguring a live deployment](#reconfiguring-a-live-deployment) instead of steps 2–4.
 - `aws sesv2 get-account` — note `ProductionAccessEnabled`. If it is `false`, the account is in the SES sandbox; you will mention it at hand-off.
 
 ## 2. Which domains
@@ -32,14 +33,16 @@ Ask which AWS profile they will deploy with (`aws configure list-profiles` gives
 `aws route53 list-hosted-zones` — keep the public zones (`Config.PrivateZone` false). Then ask, showing those zones:
 
 - the **email domain** — what addresses look like after the `@`: a zone apex (`example.com`) or a subdomain of it (`mail.example.com`);
-- the **web app** and **API** hostnames — offer `app.<zone>` and `api.<zone>` as defaults. They must differ, and all three domains must be in the same hosted zone.
+- the **web app** and **API** hostnames — offer `app.<zone>` and `api.<zone>` as defaults. They must differ, and all three domains must be in one hosted zone.
 
-Resolve the hosted zone from the answer:
+Resolve the hosted zone from the answers:
 
-- A public zone whose name is the email domain or its nearest parent → `"hostedZone": { "mode": "import", "zoneName": "<Name without the trailing dot>", "hostedZoneId": "<Id without /hostedzone/>" }`.
-- No such zone → `{ "mode": "create", "zoneName": "<the domain to create a zone for>" }`. Tell the user what that means before going on: they must set the new zone's name servers at their domain registrar, and the first deploy hangs on certificate validation until they do ([DEPLOY.md §6](../../../docs/DEPLOY.md#6-custom-domains-required)). Get their OK.
+- **Import** the deepest public zone that contains all three domains: `"hostedZone": { "mode": "import", "zoneName": "<Name without the trailing dot>", "hostedZoneId": "<Id without /hostedzone/>" }`. If two public zones have that name, only one is live: compare `dig +short NS <zone>` with each zone's `aws route53 get-hosted-zone --id <id>` → `DelegationSet.NameServers`, and use the one that matches.
+- **Create** when no zone contains all three: `{ "mode": "create", "zoneName": "<domain>" }`, where `<domain>` is the domain the user wants FreeMail's zone to serve. Before going on, tell the user what it takes and get their OK:
+  - The new zone must be delegated before the first deploy can finish — certificate validation hangs until it is ([DEPLOY.md §6](../../../docs/DEPLOY.md#6-custom-domains-required)). For a registered domain, they set the zone's name servers at the registrar; for a subdomain, they add NS records for it in the parent domain's DNS.
+  - If the domain's DNS is already served somewhere, delegating moves all of it to the new, empty zone: its website and mail stop resolving unless those records are recreated first. For a domain in use, suggest a subdomain zone instead.
 
-For an imported zone, run `aws route53 list-resource-record-sets --hosted-zone-id <id>` once and keep the listing: steps 3 and 4 use it too. A record already at a name and type FreeMail creates makes the deploy fail ("already exists"), so check these:
+For an imported zone, run `aws route53 list-resource-record-sets --hosted-zone-id <id>` once and keep the listing: steps 3 and 4 use it too. FreeMail creates these records, and the deploy fails ("already exists") if the zone already has one at the same name and type — or a `CNAME` at the same name, which blocks every other type there:
 
 | FreeMail creates                                                                                     | When                      |
 | ---------------------------------------------------------------------------------------------------- | ------------------------- |
@@ -47,7 +50,7 @@ For an imported zone, run `aws route53 list-resource-record-sets --hosted-zone-i
 | `TXT` at the email domain, `MX` + `TXT` at `bounce.<email domain>`, `TXT` at `_dmarc.<email domain>` | `sesIdentity` is `create` |
 | `MX` at the email domain                                                                             | inbound is enabled        |
 
-Report any conflict and let the user choose: a different hostname or subdomain, or removing the record themselves.
+Report each conflict and the records involved. For a hostname, offer a different one. For a `TXT` at the email domain or `_dmarc`, the existing record usually serves another mail or verification setup, and FreeMail's record would be the only one left at that name — so recommend a dedicated email subdomain (`mail.<zone>`) first, and removing the record only if the user confirms nothing depends on it.
 
 ## 3. SES identity — look it up
 
@@ -85,7 +88,7 @@ Write `freemail-config.json` at the repo root in this shape. Leave out `attachme
 }
 ```
 
-Run `npx freemail validate` from the repo root. It loads the file the way `cdk deploy` does and lists every problem at once: fix them all and rerun until it reports the file valid. It checks the file only and makes no AWS calls, so steps 1–4 are what catch problems in the account.
+Run `npx --no freemail validate`. It checks the repo-root file through the loader `cdk deploy` uses and lists every problem at once: fix them all and rerun until it reports the file valid. It checks the file only and makes no AWS calls, so steps 1–4 are what catch problems in the account.
 
 ## 6. Hand off
 
@@ -101,4 +104,16 @@ Right after the deploy they should open the `WebAppUrl` output and sign in: on a
 
 ## Reconfiguring a live deployment
 
-When step 1 found `FreeMailStack`, many lookups find FreeMail's own resources, not conflicts: the A/AAAA records at its hostnames, its auth records, its MX, its active receipt rule set, and — if it created it — its SES identity. Start from the existing `freemail-config.json` and change only what the user asks to change. Warn them that changing a domain or the hosted zone replaces live resources, and that switching `sesIdentity` from `create` to `import` deletes the identity FreeMail created and its DNS records, which stops sending.
+When the user means to change the `FreeMailStack` that step 1 found, do not run steps 2–4 as written. Their lookups find FreeMail's own resources — the `A`/`AAAA` records at its hostnames, its auth records and MX, its active receipt rule set, its SES identity — and treating those as conflicts would take the deployment apart.
+
+1. **Start from the config the stack runs.** Use `freemail-config.json` if it exists, after checking it against the stack's outputs below. If it doesn't — the file is gitignored, so a fresh clone has none — rebuild it from the stack, read-only:
+   - From the `describe-stacks` outputs: `emailDomain` is `SesIdentityName`; `appDomain` is `WebAppUrl` and `apiDomain` is `ApiCustomDomainUrl`, each without `https://`.
+   - `hostedZoneId` is the `HostedZoneId` output; `zoneName` is `aws route53 get-hosted-zone --id <it>` → `HostedZone.Name` without the trailing dot. The mode is `create` when the stack has a `HostedZoneNameServers` output, else `import`.
+   - `sesIdentity.mode` is `create` when the stack has a `SesMailFromDomain` output, else `import`.
+   - Inbound is on when `aws cloudformation list-stack-resources --stack-name FreeMailStack` lists an `AWS::SES::ReceiptRuleSet`. Write it on only after the user confirms it stays on — that confirmation is the MX acknowledgement.
+   - Custom attachment limits appear as `EMBED_MAX_BYTES` and `EMBED_TOTAL_BYTES` in the environment of the stack's REST handler (the `AWS::Lambda::Function` whose logical ID starts with `ApiRestHandler`): `aws lambda get-function-configuration --function-name <its PhysicalResourceId>`. Neither present → leave `attachments` out.
+
+   Show the user the rebuilt config before changing anything.
+
+2. **Change only what the user asks for**, and check only what changes against steps 2–4: a new hostname's records, a new email domain's identity and records. An active receipt rule set is FreeMail's own when its `Metadata.Name` equals the `PhysicalResourceId` of the stack's `AWS::SES::ReceiptRuleSet`.
+3. **Warn before writing.** Changing a domain or the hosted zone replaces live resources, and switching `sesIdentity` from `create` to `import` deletes the identity FreeMail created and its DNS records, which stops sending.

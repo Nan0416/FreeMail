@@ -11,11 +11,32 @@
  * footgun, so we reject it with a clear message rather than silently defaulting.
  */
 import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { isSubdomainOrEqual, normalizeDomain } from './domain.js';
 
-/** The deploy config's filename, at the repo root (see `@freemail/infra`'s `configPath`). */
+/**
+ * The deploy config has exactly ONE location: `freemail-config.json` at the repo root,
+ * written by `freemail init` and gitignored (it names your domains and zone).
+ * `freemail-config.template.json` beside it is the committed starting point.
+ *
+ * Deliberately not configurable. It used to be resolvable from three places — a
+ * `-c configPath=` CDK context value, a `FREEMAIL_CONFIG` env var, then a default —
+ * which meant answering "which config did this deploy actually use?" required checking
+ * three sources in precedence order. One fixed path is one answer.
+ */
 export const CONFIG_FILENAME = 'freemail-config.json';
+
+/**
+ * Absolute path to the repo-root config file: the one the CDK app reads, `freemail init`
+ * writes and `freemail validate` checks, whatever the working directory.
+ */
+export function configPath(): string {
+  // This module is packages/shared/{src,dist}/config.*, three levels below the repo root.
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  return join(repoRoot, CONFIG_FILENAME);
+}
 
 /** The only supported region — inbound SES + CloudFront ACM certs both require us-east-1. */
 export const DEFAULT_REGION = 'us-east-1';

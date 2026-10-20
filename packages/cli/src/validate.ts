@@ -5,16 +5,15 @@
  * a config that passes here is one `cdk deploy` can load. It checks the file only: it makes
  * no AWS calls, so it cannot tell whether the hosted zone or SES identity it names exist.
  */
-import { resolve } from 'node:path';
-import { CONFIG_FILENAME, loadFreeMailConfig } from '@freemail/shared/config';
+import { configPath, loadFreeMailConfig } from '@freemail/shared/config';
 
 export interface ValidateIo {
   readonly log: (message: string) => void;
   readonly error: (message: string) => void;
 }
 
-/** Validate the config in the current directory, where `freemail init` writes it. Returns a process exit code. */
-export function runValidate(io: ValidateIo, path: string = resolve(CONFIG_FILENAME)): number {
+/** Validate the repo-root config, the file `cdk deploy` reads. Returns a process exit code. */
+export function runValidate(io: ValidateIo, path: string = configPath()): number {
   try {
     loadFreeMailConfig(path);
   } catch (error) {

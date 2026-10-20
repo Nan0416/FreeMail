@@ -1,5 +1,7 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_REGION, parseFreeMailConfig } from '../src/config.js';
+import { CONFIG_FILENAME, DEFAULT_REGION, configPath, parseFreeMailConfig } from '../src/config.js';
 
 const base = {
   hostedZone: { mode: 'create', zoneName: 'example.com' },
@@ -222,5 +224,14 @@ describe('parseFreeMailConfig — attachments', () => {
     expect(() => parseFreeMailConfig({ ...base, attachments: { embedMaxBytes: 1.5 } })).toThrow(
       /whole number/,
     );
+  });
+});
+
+describe('configPath', () => {
+  it('is the config file at the repo root, whatever the working directory', () => {
+    const path = configPath();
+    expect(path.endsWith(`/${CONFIG_FILENAME}`)).toBe(true);
+    const rootPackage = JSON.parse(readFileSync(join(dirname(path), 'package.json'), 'utf8'));
+    expect(rootPackage.name).toBe('freemail');
   });
 });
