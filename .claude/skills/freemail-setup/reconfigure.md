@@ -9,12 +9,12 @@ Do not run stages 3–5 as written. Their lookups find FreeMail's own resources 
 Use `freemail-config.json` if it exists, after checking it against the stack's outputs below. If it doesn't — the file is gitignored, so a fresh clone has none — rebuild it from the stack, read-only:
 
 - From the `describe-stacks` outputs: `emailDomain` is `SesIdentityName`; `appDomain` is `WebAppUrl` and `apiDomain` is `ApiCustomDomainUrl`, each without `https://`.
-- `hostedZoneId` is the `HostedZoneId` output; `zoneName` is `aws route53 get-hosted-zone --id <it>` → `HostedZone.Name` without the trailing dot. The mode is `create` when the stack has a `HostedZoneNameServers` output, else `import`.
+- `zoneName` is `aws route53 get-hosted-zone --id <the HostedZoneId output>` → `HostedZone.Name` without the trailing dot. The mode is `create` when the stack has a `HostedZoneNameServers` output, else `import` — and only in `import` mode does the config carry `hostedZoneId` (the `HostedZoneId` output). A created zone's config has no ID: writing one fails validation, and "fixing" that by switching to `import` would make the deploy try to delete the zone.
 - `sesIdentity.mode` is `create` when the stack has a `SesMailFromDomain` output, else `import`.
 - Inbound is on when `aws cloudformation list-stack-resources --stack-name FreeMailStack` lists an `AWS::SES::ReceiptRuleSet`. Write it on only after the user confirms it stays on — that confirmation is the MX acknowledgement.
 - Custom attachment limits appear as `EMBED_MAX_BYTES` and `EMBED_TOTAL_BYTES` in the environment of the stack's REST handler (the `AWS::Lambda::Function` whose logical ID starts with `ApiRestHandler`): `aws lambda get-function-configuration --function-name <its PhysicalResourceId>`. Neither present → leave `attachments` out.
 
-Show the user the config before changing anything, then run `npx --no freemail validate` on it.
+Show the user the config before changing anything.
 
 ## 2. Change only what the user asks for
 
@@ -24,4 +24,4 @@ Warn before writing: changing a domain or the hosted zone replaces live resource
 
 ## 3. Deploy
 
-Write the file, validate it, and continue with stage 6 of [SKILL.md](SKILL.md) (`CDKToolkit` already exists). In the diff summary, call out anything replaced or deleted before asking. Afterwards, stage 7 applies only where something changed — there is no first sign-in on a live deployment.
+Write the file, run `npx --no freemail validate` until it passes, and continue with stage 6 of [SKILL.md](SKILL.md) (`CDKToolkit` already exists). In the diff summary, call out anything replaced or deleted before asking. Afterwards, stage 7 applies only where something changed — there is no first sign-in on a live deployment.

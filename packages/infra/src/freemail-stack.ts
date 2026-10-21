@@ -87,7 +87,8 @@ export class FreeMailStack extends Stack {
     if (props.config.hostedZone.mode === 'create' && dns.nameServers) {
       new CfnOutput(this, 'HostedZoneNameServers', {
         description:
-          'Set these name servers at your domain registrar to activate the created zone.',
+          'Delegate the created zone to these name servers: at your domain registrar for a whole ' +
+          'domain, or as NS records in the parent domain DNS for a subdomain zone.',
         value: Fn.join(', ', dns.nameServers),
       });
     }
@@ -114,7 +115,8 @@ export class FreeMailStack extends Stack {
     new CfnOutput(this, 'CustomDomainValidationNote', {
       description:
         'Custom-domain ACM certs are DNS-validated via the hosted zone. If the zone was just ' +
-        'CREATED, delegate its name servers at your registrar or the deploy hangs on validation.',
+        'CREATED, delegate it (registrar name servers for a whole domain, NS records in the parent ' +
+        'domain DNS for a subdomain zone) or the deploy hangs on validation.',
       value: 'DNS-validated ACM (us-east-1) via Route53',
     });
 
@@ -197,9 +199,11 @@ export class FreeMailStack extends Stack {
     Annotations.of(this).addWarning(
       'Custom domains are configured on a CREATED hosted zone. Custom-domain ACM certificates are ' +
         'DNS-validated, and that validation BLOCKS the deploy until the records resolve publicly — so ' +
-        'the FIRST deploy will HANG on certificate validation until you delegate the zone. Set the hosted ' +
-        'zone name servers (the HostedZoneNameServers output) at your domain registrar before, or promptly ' +
-        'during, the deploy. Unlike SES DKIM verification, this is not asynchronous — it gates the deploy.',
+        'the FIRST deploy will HANG on certificate validation until you delegate the zone. Delegate it ' +
+        'promptly during the deploy — its name servers are in the Route53 console as soon as the deploy ' +
+        'creates it: set them at your domain registrar for a whole domain, or as NS records in the parent ' +
+        "domain's DNS for a subdomain zone (never the registrar, which would move the whole domain). " +
+        'Unlike SES DKIM verification, this is not asynchronous — it gates the deploy.',
     );
   }
 }

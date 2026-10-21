@@ -85,7 +85,7 @@ Agents skip the browser entirely and call the HTTP API directly with an `x-api-k
 - An **AWS account** with credentials configured, and **region `us-east-1`** (the only supported region)
 - A **domain** you control, with a Route53 hosted zone (existing, or one FreeMail creates for you)
 - **Two hostnames under that zone** — one for the web app (e.g. `app.example.com`) and one for the API (e.g. `api.example.com`). Both are **required**: the browser calls the API cross-origin, so neither has a usable default. `/freemail-setup` and `freemail init` both ask for them.
-- The hosted zone **delegated at your registrar before you deploy**. Both hostnames get DNS-validated ACM certificates, and that validation **blocks the CloudFormation deploy** until the records resolve publicly — an undelegated zone means the deploy hangs.
+- A hosted zone that **resolves publicly**. Both hostnames get DNS-validated ACM certificates, and that validation **blocks the CloudFormation deploy** until the records resolve — so an existing zone must already be live, and a zone FreeMail creates must be delegated during the first deploy, or the deploy hangs.
 
 ## Quickstart
 

@@ -26,7 +26,7 @@ FreeMail is **single-tenant and single-region**: one deployment is one owner, in
 - **AWS account + credentials.** Configure a profile (`aws configure` / SSO) with permission to deploy the stack (CloudFormation, IAM, Lambda, API Gateway, S3, CloudFront, DynamoDB, SES, Route53, ACM, SNS).
 - **Region `us-east-1`.** The only supported region. Make sure your CLI/CDK default region is `us-east-1` (or pass it explicitly).
 - **Node.js 22** (see [`.nvmrc`](../.nvmrc); Node ≥ 20.19 works).
-- **A domain you control.** You'll either import an existing Route53 hosted zone or have FreeMail create a new one — but if FreeMail creates it, you must be able to **set the zone's name servers at your domain registrar** (see [§5](#5-dns-and-email-authentication)).
+- **A domain you control.** You'll either import an existing Route53 hosted zone or have FreeMail create a new one — but if FreeMail creates it, you must be able to **delegate it**: set its name servers at your domain registrar or, for a subdomain zone such as `mail.example.com`, add `NS` records for it wherever the parent domain's DNS is hosted (see [§5](#5-dns-and-email-authentication)).
 - **CDK bootstrap.** A one-time `cdk bootstrap` per account/region (covered below).
 
 Clone and build once so the CLI binary and Lambda/web assets exist:
@@ -49,9 +49,9 @@ A deployment is configured by one file, **`freemail-config.json`** at the repo r
 The setup prompt, [`.claude/skills/freemail-setup/SKILL.md`](../.claude/skills/freemail-setup/SKILL.md) (`/freemail-setup` in Claude Code), writes the config as part of a full setup. It looks before it asks:
 
 - **Your AWS account** — which profile, an existing `FreeMailStack` (a deploy would update it in place), CDK bootstrap, the SES sandbox, an active receipt rule set. With no AWS access set up yet, it walks you through connecting one.
-- **Your domain's public DNS** — who serves it, whether it already receives mail and where, existing SPF/DMARC records, whether `app.` and `api.` are taken — and whether a Route53 zone in your account is the one the internet actually sees.
+- **Your domain's public DNS** — who serves it, whether it already receives mail and where, existing SPF/DMARC records, CAA records that would block the certificates, whether `app.` and `api.` are taken — and whether a Route53 zone in your account is the one the internet actually sees.
 
-From that it recommends a setup — for example a `mail.<domain>` subdomain zone when your DNS is hosted elsewhere, so nothing about your existing domain changes — and asks you only what you decide: which account, which domain, whether to receive mail (with the MX acknowledgement, [§7](#7-inbound-email-optional)). It writes the file and runs `npx freemail validate`.
+From that it recommends a setup — for example a subdomain zone such as `mail.<domain>` when your DNS is hosted elsewhere, on a name it has checked is unused, so nothing about your existing domain changes — and asks you only what you decide: which account, which domain, whether to receive mail (with the MX acknowledgement, [§7](#7-inbound-email-optional)). It writes the file and runs `npx freemail validate`.
 
 It then shows you the `cdk diff`, deploys on your yes, tells you the exact name-server records to set if it created a zone, and afterwards helps with sign-in, SES production access and a quick API check. Its AWS access is read-only apart from `cdk bootstrap` and `cdk deploy`, and it never chooses or types your password. If the account already runs FreeMail, it rebuilds the current config from the stack and changes only what you ask.
 
@@ -67,7 +67,7 @@ It asks:
 
 | Prompt                              | What it sets                              | Notes                                                                                                                                                                                                             |
 | ----------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Existing Route53 hosted zone?**   | `hostedZone.mode` = `import` or `create`  | On `import` it lists your zones (needs AWS creds; falls back to manual entry). On `create`, FreeMail provisions a new zone you must delegate at your registrar.                                                   |
+| **Existing Route53 hosted zone?**   | `hostedZone.mode` = `import` or `create`  | On `import` it lists your zones (needs AWS creds; falls back to manual entry). On `create`, FreeMail provisions a new zone you must delegate ([§5](#5-dns-and-email-authentication)).                             |
 | **Email domain**                    | `emailDomain`                             | The zone apex **or a subdomain of it** — e.g. `example.com` or `mail.example.com`. Must be equal-to or under the hosted zone.                                                                                     |
 | **Web-app domain** (required)       | `appDomain`                               | Where the SPA is served, e.g. `app.example.com`. See [§6](#6-custom-domains-required).                                                                                                                            |
 | **API domain** (required)           | `apiDomain`                               | Where the API is served, e.g. `api.example.com`. Must differ from `appDomain`.                                                                                                                                    |
@@ -127,14 +127,14 @@ The Lambda handlers are bundled from source at synth (esbuild), so no separate h
 
 `cdk deploy` prints outputs you'll use immediately:
 
-| Output                                                                | Use                                                                                                                                                |
-| --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **`WebAppUrl`**                                                       | Open this to sign in and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                                   |
-| **`ApiCustomDomainUrl`**                                              | The API domain. Used by **both** the web app (cross-origin) and agents (`x-api-key`).                                                              |
-| **`HostedZoneNameServers`**                                           | Present only when FreeMail **created** the zone. **Set these at your registrar** to activate the zone (see [§5](#5-dns-and-email-authentication)). |
-| **`SesProductionAccessNote`**                                         | A link to the SES account dashboard to request production access (see [§4](#4-ses-production-access-sandbox-exit)).                                |
-| **`SesMailFromDomain`**, **`SesBounceComplaintTopicArn`**             | The custom MAIL FROM subdomain and the SNS topic that receives bounce/complaint notifications.                                                     |
-| **`MailBucketName`**, **`QuarantineBucketName`**, **`WebBucketName`** | The S3 buckets (mail and quarantine are retained on teardown — see [§10](#10-troubleshooting)).                                                    |
+| Output                                                                | Use                                                                                                                                         |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`WebAppUrl`**                                                       | Open this to sign in and use FreeMail. Custom app domain if configured, else the CloudFront URL.                                            |
+| **`ApiCustomDomainUrl`**                                              | The API domain. Used by **both** the web app (cross-origin) and agents (`x-api-key`).                                                       |
+| **`HostedZoneNameServers`**                                           | Present only when FreeMail **created** the zone. **Delegate the zone to these** to activate it (see [§5](#5-dns-and-email-authentication)). |
+| **`SesProductionAccessNote`**                                         | A link to the SES account dashboard to request production access (see [§4](#4-ses-production-access-sandbox-exit)).                         |
+| **`SesMailFromDomain`**, **`SesBounceComplaintTopicArn`**             | The custom MAIL FROM subdomain and the SNS topic that receives bounce/complaint notifications.                                              |
+| **`MailBucketName`**, **`QuarantineBucketName`**, **`WebBucketName`** | The S3 buckets (mail and quarantine are retained on teardown — see [§10](#10-troubleshooting)).                                             |
 
 ### After deploying
 
@@ -175,9 +175,14 @@ FreeMail creates the email-authentication records in your hosted zone automatica
 
 You don't create these by hand — but they only take effect once the hosted zone is **live on the public internet**.
 
-### If FreeMail created the hosted zone: delegate it at your registrar
+### If FreeMail created the hosted zone: delegate it
 
-A newly **created** zone is not yet authoritative for your domain. Take the **`HostedZoneNameServers`** output and set those name servers at your domain registrar (where you bought the domain). Until you do:
+A newly **created** zone is not yet authoritative for its domain. Take its four name servers — the **`HostedZoneNameServers`** output once the deploy has finished, or the zone's `NS` record in the Route53 console as soon as the deploy has created it — and delegate:
+
+- **A whole domain** (`example.com`): set them as the domain's name servers at your registrar (where you bought the domain).
+- **A subdomain zone** (`mail.example.com`): add them as `NS` records for `mail` wherever `example.com`'s DNS is hosted. **Do not** change the domain's name servers at the registrar — that would move all of `example.com` to the new zone, which holds only FreeMail's records, and take the domain's website and mail down with it.
+
+Until you do:
 
 - SES DKIM/domain verification won't complete (SES verifies asynchronously and keeps retrying — no deploy failure),
 - inbound MX (if enabled) won't route, and
@@ -195,14 +200,14 @@ FreeMail requests a **DNS-validated ACM certificate** for each (in `us-east-1`) 
 
 ### ⚠️ The #1 deploy footgun: delegate a created zone _before_ the first custom-domain deploy
 
-**DNS-validated ACM certificates block the CloudFormation deploy until their validation records resolve publicly.** If your hosted zone was just **created** (`mode: create`) and has **not** yet been delegated at your registrar, the validation records exist only in an un-delegated zone — so nothing can resolve them, and **`cdk deploy` hangs on certificate validation** (often until it times out).
+**DNS-validated ACM certificates block the CloudFormation deploy until their validation records resolve publicly.** If your hosted zone was just **created** (`mode: create`) and has **not** yet been delegated, the validation records exist only in an un-delegated zone — so nothing can resolve them, and **`cdk deploy` hangs on certificate validation** (often until it times out).
 
 Unlike SES DKIM (which verifies asynchronously _after_ the deploy and simply retries), **ACM validation gates the deploy**. So:
 
 Because both domains are now required, **every** deploy provisions certificates — you cannot side-step this with a domain-less first deploy. So:
 
 - **Import an already-delegated zone** (the smooth path), or
-- If FreeMail creates the zone, take the `HostedZoneNameServers` from the created zone and set them at your registrar **promptly during** the hanging deploy, so validation completes before CloudFormation gives up. Delegating first, then deploying, is easier if you can.
+- If FreeMail creates the zone, delegate it ([§5](#if-freemail-created-the-hosted-zone-delegate-it)) **promptly during** the hanging deploy, so validation completes before CloudFormation gives up. The zone and its name servers appear in the Route53 console early in the deploy; the `HostedZoneNameServers` output only once it has finished.
 
 FreeMail warns about this at synth time (a CDK annotation) whenever the zone is newly created, and emits a `CustomDomainValidationNote` output as a reminder.
 
@@ -315,10 +320,10 @@ The MCP server is stateless (Streamable HTTP), so no session setup is required. 
 You're almost certainly still in the **SES sandbox** — you can only send to verified recipients there. Request [production access](#4-ses-production-access-sandbox-exit). Also confirm the `from` address is under your `emailDomain`.
 
 **`cdk deploy` hangs at "waiting for certificate validation".**
-A DNS-validated ACM cert can't validate because the hosted zone isn't publicly delegated. This happens when a **custom domain is configured on a freshly created zone**. Set the zone's name servers (`HostedZoneNameServers` output) at your registrar — validation completes once they propagate. See [§6](#6-custom-domains-required). To avoid it entirely, import an already-delegated zone, or set the name servers as soon as the deploy has created the zone.
+A DNS-validated ACM cert can't validate because the hosted zone isn't publicly delegated. This happens when a **custom domain is configured on a freshly created zone**. Delegate the zone ([§5](#if-freemail-created-the-hosted-zone-delegate-it)) — at the registrar for a whole domain, or as `NS` records in the parent domain's DNS for a subdomain zone; never the registrar for a subdomain zone. Its name servers are in the Route53 console as soon as the deploy has created it (the `HostedZoneNameServers` output appears only once the deploy finishes). Validation completes once the delegation propagates. See [§6](#6-custom-domains-required). To avoid it entirely, import an already-delegated zone, or delegate as soon as the deploy has created the zone.
 
 **DKIM/domain verification stays "pending" in SES.**
-The hosted zone likely isn't delegated at the registrar yet (see [§5](#5-dns-and-email-authentication)), so SES can't see the DKIM CNAMEs. Delegate the zone; SES retries automatically. Verify the records exist in Route53.
+The hosted zone likely isn't delegated yet (see [§5](#5-dns-and-email-authentication)), so SES can't see the DKIM CNAMEs. Delegate the zone; SES retries automatically. Verify the records exist in Route53.
 
 **Inbound deploy fails complaining about an active receipt rule set.**
 Another SES receipt rule set is already active in this account/region. FreeMail refuses to override it. Deactivate the other set (SES console → Email receiving), or deploy to a dedicated account/region. See [§7](#7-inbound-email-optional).
