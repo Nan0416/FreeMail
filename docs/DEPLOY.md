@@ -1,8 +1,10 @@
 # Deploying FreeMail
 
-This guide walks through a full FreeMail deployment: writing its config (with an agent, or with `freemail init`), deploying the stack, requesting SES production access, wiring up DNS, and the optional pieces (custom domains, inbound email). It ends with troubleshooting for the failure modes you're most likely to hit.
+This guide walks through a full FreeMail deployment: writing its config, deploying the stack, requesting SES production access, wiring up DNS, and the optional pieces (custom domains, inbound email). It ends with troubleshooting for the failure modes you're most likely to hit.
 
 FreeMail is **single-tenant and single-region**: one deployment is one owner, in your own AWS account, pinned to **`us-east-1`**. That region is not a default you can change — inbound SES and the CloudFront ACM certificate both require `us-east-1`, and the config parser rejects anything else.
+
+> **Using a coding agent?** The repo ships a setup prompt that runs this whole guide with you: [`.claude/skills/freemail-setup/SKILL.md`](../.claude/skills/freemail-setup/SKILL.md). In Claude Code, run **`/freemail-setup`** in the repo (or ask it to set up FreeMail); point any other agent at that file. It checks your tools, AWS account and your domain's public DNS, asks a few plain-language questions, writes and validates the config, runs `cdk deploy` once you say yes, and walks you through the steps after it. See [§2](#with-an-agent).
 
 ## Contents
 
@@ -44,11 +46,14 @@ A deployment is configured by one file, **`freemail-config.json`** at the repo r
 
 ### With an agent
 
-The repo ships a prompt for coding agents: [`.claude/skills/freemail-init/SKILL.md`](../.claude/skills/freemail-init/SKILL.md). In Claude Code, run **`/freemail-init`** in the repo (or ask it to set up FreeMail); point any other agent at that file.
+The setup prompt, [`.claude/skills/freemail-setup/SKILL.md`](../.claude/skills/freemail-setup/SKILL.md) (`/freemail-setup` in Claude Code), writes the config as part of a full setup. It looks before it asks:
 
-The agent asks you only what you decide — which AWS profile to deploy with, which domains, and whether to receive mail (with the MX acknowledgement, [§7](#7-inbound-email-optional)) — and looks the rest up with read-only AWS CLI calls: the hosted zone ID, whether the domain is already an SES identity, records in the zone that would collide with the ones FreeMail creates, an existing `FreeMailStack` in the account, and an active receipt rule set. It writes the file, runs `npx freemail validate`, and stops before deploying.
+- **Your AWS account** — which profile, an existing `FreeMailStack` (a deploy would update it in place), CDK bootstrap, the SES sandbox, an active receipt rule set. With no AWS access set up yet, it walks you through connecting one.
+- **Your domain's public DNS** — who serves it, whether it already receives mail and where, existing SPF/DMARC records, whether `app.` and `api.` are taken — and whether a Route53 zone in your account is the one the internet actually sees.
 
-It needs the `aws` CLI, signed in to the account you will deploy to.
+From that it recommends a setup — for example a `mail.<domain>` subdomain zone when your DNS is hosted elsewhere, so nothing about your existing domain changes — and asks you only what you decide: which account, which domain, whether to receive mail (with the MX acknowledgement, [§7](#7-inbound-email-optional)). It writes the file and runs `npx freemail validate`.
+
+It then shows you the `cdk diff`, deploys on your yes, tells you the exact name-server records to set if it created a zone, and afterwards helps with sign-in, SES production access and a quick API check. Its AWS access is read-only apart from `cdk bootstrap` and `cdk deploy`, and it never chooses or types your password. If the account already runs FreeMail, it rebuilds the current config from the stack and changes only what you ask.
 
 ### Interactively — `freemail init`
 
@@ -310,7 +315,7 @@ The MCP server is stateless (Streamable HTTP), so no session setup is required. 
 You're almost certainly still in the **SES sandbox** — you can only send to verified recipients there. Request [production access](#4-ses-production-access-sandbox-exit). Also confirm the `from` address is under your `emailDomain`.
 
 **`cdk deploy` hangs at "waiting for certificate validation".**
-A DNS-validated ACM cert can't validate because the hosted zone isn't publicly delegated. This happens when a **custom domain is configured on a freshly created zone**. Set the zone's name servers (`HostedZoneNameServers` output) at your registrar — validation completes once they propagate. See [§6](#6-custom-domains-optional). To avoid it entirely, import an already-delegated zone, or do a first deploy without custom domains.
+A DNS-validated ACM cert can't validate because the hosted zone isn't publicly delegated. This happens when a **custom domain is configured on a freshly created zone**. Set the zone's name servers (`HostedZoneNameServers` output) at your registrar — validation completes once they propagate. See [§6](#6-custom-domains-required). To avoid it entirely, import an already-delegated zone, or set the name servers as soon as the deploy has created the zone.
 
 **DKIM/domain verification stays "pending" in SES.**
 The hosted zone likely isn't delegated at the registrar yet (see [§5](#5-dns-and-email-authentication)), so SES can't see the DKIM CNAMEs. Delegate the zone; SES retries automatically. Verify the records exist in Route53.
