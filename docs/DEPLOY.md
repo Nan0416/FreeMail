@@ -190,6 +190,21 @@ Until you do:
 
 > If you **imported** an existing, already-delegated zone, there's nothing to do here — the records just appear.
 
+### Other TXT values at the email domain
+
+Route53 holds one `TXT` record per name, and in create mode the stack owns the one at `emailDomain`. So a site verification (Google Search Console, Microsoft 365, …) can't simply be added beside FreeMail's SPF value in Route53: a value added there by hand is dropped the next time the stack rewrites the record. List such values in the config instead, and FreeMail publishes them after its SPF value:
+
+```json
+"sesIdentity": {
+  "mode": "create",
+  "extraTxtValues": ["google-site-verification=…"]
+}
+```
+
+Each value is one string of at most 255 printable ASCII characters, without `"` or `\`. An SPF value is refused: the record already carries FreeMail's `v=spf1 include:amazonses.com ~all`, and a second SPF value breaks SPF for the domain. Import mode refuses the option too — FreeMail writes no `TXT` record there, so the record is yours to edit.
+
+If the zone already has a `TXT` record at `emailDomain` when you first deploy in create mode, the deploy fails with _"already exists"_. Move the values you want to keep (not its SPF value) into `extraTxtValues`, and delete the record before deploying.
+
 ## 6. Custom domains (required)
 
 `appDomain` (web app, a CloudFront alias) and `apiDomain` (API, a regional API Gateway custom domain) are **both required**. Each must be equal-to or a subdomain of your hosted zone, and the two must differ from each other.

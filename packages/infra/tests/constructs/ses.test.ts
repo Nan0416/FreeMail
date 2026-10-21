@@ -246,6 +246,35 @@ describe('SesConstruct', () => {
     });
   });
 
+  it("adds the deployer's extra TXT values to the email domain's record, after SPF", () => {
+    const stack = new Stack(new App(), 'TestStack', {
+      env: { region: 'us-east-1', account: '111111111111' },
+    });
+    new SesConstruct(stack, 'Ses', {
+      hostedZone: new HostedZone(stack, 'Zone', { zoneName: 'example.com' }),
+      emailDomain: 'example.com',
+      sesIdentityMode: 'create',
+      extraTxtValues: ['google-site-verification=abc123', 'MS=ms42'],
+      region: 'us-east-1',
+      emailsTable: new Table(stack, 'Emails', {
+        partitionKey: { name: 'pk', type: AttributeType.STRING },
+        sortKey: { name: 'sk', type: AttributeType.STRING },
+      }),
+    });
+    const template = Template.fromStack(stack);
+    // Still one record set at the name: Route53 holds one TXT set per name.
+    template.resourceCountIs('AWS::Route53::RecordSet', 7);
+    template.hasResourceProperties('AWS::Route53::RecordSet', {
+      Name: 'example.com',
+      Type: 'TXT',
+      ResourceRecords: [
+        '"v=spf1 include:amazonses.com ~all"',
+        '"google-site-verification=abc123"',
+        '"MS=ms42"',
+      ],
+    });
+  });
+
   it('publishes the DMARC aggregate-report address when inbound is enabled', () => {
     const template = synthCreateWithInbound();
     template.hasResourceProperties('AWS::Route53::RecordSet', {

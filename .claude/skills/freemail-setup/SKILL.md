@@ -96,7 +96,7 @@ From what you found, pick a setup, explain it in a few sentences, and ask the us
 **The email domain** — the part of addresses after the `@`. Use the zone's apex unless one of these holds, in which case use a subdomain email domain within an imported zone (chosen like a label above, though it needs no delegation):
 
 - the apex has an `MX` and the user wants to receive — FreeMail would replace it, and mail would stop arriving where it goes today;
-- the apex has an `MX` or `TXT` records and FreeMail would create the identity (below) — its SPF record would leave the existing mail provider's mail out, and it can't be added beside existing `TXT` records.
+- the apex has an `MX` or an SPF value, FreeMail would create the identity (below), and the user still sends mail as the domain through that provider — FreeMail's SPF value authorizes only SES, so the provider's mail would fail SPF. Other `TXT` values there, such as site verifications, are no reason on their own: they can be kept (see the records below).
 
 With a subdomain zone, the email domain is that zone's apex.
 
@@ -120,11 +120,11 @@ With a subdomain zone, the email domain is that zone's apex.
 | `TXT` at the email domain, `MX` + `TXT` at `bounce.<email domain>`, `TXT` at `_dmarc.<email domain>` | `sesIdentity` is `create` |
 | `MX` at the email domain                                                                             | inbound is enabled        |
 
-For a taken hostname, offer another. For a `TXT` at the email domain or `_dmarc`, the existing record usually serves another mail or verification setup, and FreeMail's record would be the only one left at that name — so recommend a subdomain email domain, and have the user remove the record only if they confirm nothing depends on it.
+For a taken hostname, offer another. For a `TXT` at the email domain, show the user its values. Values other than SPF, such as site verifications, can be kept: they go into `sesIdentity.extraTxtValues`, and FreeMail publishes them beside its SPF value ([DEPLOY.md §5](../../../docs/DEPLOY.md#other-txt-values-at-the-email-domain)). An SPF value can't be kept, because FreeMail's replaces it — so if it names another sender the user still uses, recommend a subdomain email domain. For a `TXT` at `_dmarc`, FreeMail's DMARC record would replace it. Either way the existing record has to be gone before the deploy: the user removes it, and only once they confirm nothing else depends on what's dropped.
 
 ## 5. Write and validate the config
 
-Write `freemail-config.json` at the repo root in this shape. Leave out `attachments` unless the user asked to change the embed limits ([DEPLOY.md §8](../../../docs/DEPLOY.md#8-attachments)). `hostedZoneId` goes in only when the zone mode is `import`.
+Write `freemail-config.json` at the repo root in this shape. Leave out `attachments` unless the user asked to change the embed limits ([DEPLOY.md §8](../../../docs/DEPLOY.md#8-attachments)). `hostedZoneId` goes in only when the zone mode is `import`. `sesIdentity.extraTxtValues` goes in only in `create` mode, holding the values kept from an existing `TXT` at the email domain (stage 4), each without its surrounding quotes — e.g. `"sesIdentity": { "mode": "create", "extraTxtValues": ["google-site-verification=…"] }`.
 
 ```json
 {

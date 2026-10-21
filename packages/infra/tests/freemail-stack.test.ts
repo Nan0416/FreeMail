@@ -434,6 +434,19 @@ describe('FreeMailStack', () => {
     annotations.hasWarning('*', Match.stringLikeRegexp('dedicated subdomain'));
   });
 
+  it("publishes the config's extra TXT values in the email domain's SPF record", () => {
+    const template = synth(
+      makeConfig({
+        sesIdentity: { mode: 'create', extraTxtValues: ['google-site-verification=abc123'] },
+      }),
+    );
+    template.hasResourceProperties('AWS::Route53::RecordSet', {
+      Name: 'example.com',
+      Type: 'TXT',
+      ResourceRecords: ['"v=spf1 include:amazonses.com ~all"', '"google-site-verification=abc123"'],
+    });
+  });
+
   it('does NOT warn about the imported identity when it is created by FreeMail', () => {
     const stack = new FreeMailStack(new App(), 'TestStack', { config: makeConfig() });
     Annotations.fromStack(stack).hasNoWarning('*', Match.stringLikeRegexp('is IMPORTED'));
