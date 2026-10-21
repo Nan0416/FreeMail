@@ -45,6 +45,11 @@ export interface SesConstructProps {
    * nor any DNS auth record, because both would collide with what is already there.
    */
   readonly sesIdentityMode: SesIdentityMode;
+  /**
+   * Create mode only: more values for the email domain's TXT record, after the SPF value
+   * (a site verification, say). Already validated by the config parser.
+   */
+  readonly extraTxtValues?: readonly string[];
   /** Deploy region — the custom MAIL FROM MX target (feedback-smtp.<region>.amazonses.com) is region-specific. */
   readonly region: string;
   /** Sent messages' rows: the delivery tracker appends SES's reports to them. */
@@ -180,6 +185,7 @@ export class SesConstruct extends Construct {
         props.emailDomain,
         props.region,
         props.inbound !== undefined,
+        props.extraTxtValues ?? [],
       );
     }
 
@@ -281,6 +287,7 @@ export class SesConstruct extends Construct {
     emailDomain: string,
     region: string,
     inboundEnabled: boolean,
+    extraTxtValues: readonly string[],
   ): void {
     // Easy DKIM: 3 CNAMEs. `record.name` is already the fully-qualified host, so a
     // raw CfnRecordSet (which does no FQDN munging) is required — the L2
@@ -293,11 +300,12 @@ export class SesConstruct extends Construct {
       });
     });
 
-    // SPF for the From domain.
+    // SPF for the From domain, then the deployer's extra values (a site verification, say).
+    // Route53 holds one TXT record set per name and this stack owns it, so they live here.
     this.record('Spf', hostedZone, {
       name: emailDomain,
       type: 'TXT',
-      resourceRecords: [txt(SPF_VALUE)],
+      resourceRecords: [txt(SPF_VALUE), ...extraTxtValues.map(txt)],
     });
 
     // Custom MAIL FROM: MX → the region's feedback SMTP endpoint, plus its own SPF.

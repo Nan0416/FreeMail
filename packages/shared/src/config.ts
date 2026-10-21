@@ -65,6 +65,13 @@ export interface SesIdentityConfig {
    * a domain that is already set up for SES does not collide on deploy.
    */
   readonly mode: SesIdentityMode;
+  /**
+   * `create` mode only: more values for the email domain's TXT record, published beside
+   * FreeMail's SPF value — a site verification, say. Route53 holds one TXT record set per
+   * name and in create mode the stack owns it, so a value added to it outside the stack
+   * is dropped whenever the stack next rewrites that record.
+   */
+  readonly extraTxtValues?: readonly string[];
 }
 
 export interface InboundConfig {
@@ -144,9 +151,49 @@ const hostedZoneSchema = z
     }
   });
 
+/**
+ * One extra value for the email domain's TXT record, published verbatim: a single DNS
+ * string (at most 255 characters) of printable ASCII with no `"` or `\` to escape. Not an
+ * SPF value — FreeMail publishes its own, and a name with two `v=spf1` values fails SPF.
+ */
+const txtValueSchema = z
+  .string({ error: 'must be a string' })
+  .trim()
+  .min(1, { error: 'must be a non-empty string' })
+  .max(255, { error: 'must be at most 255 characters (one DNS string)' })
+  .refine((value) => /^[ -~]*$/.test(value) && !/["\\]/.test(value), {
+    error: 'must be printable ASCII, without " or \\',
+  })
+  .refine((value) => !/^v=spf1(\s|$)/i.test(value), {
+    error:
+      'must not be an SPF value: FreeMail publishes the SPF value itself, and a second "v=spf1" value breaks SPF',
+  });
+
 const sesIdentitySchema = z
   .object({
     mode: z.enum(['create', 'import'], { error: 'must be "create" or "import"' }),
+    extraTxtValues: z.array(txtValueSchema, { error: 'must be an array of strings' }).optional(),
+  })
+  .superRefine((identity, ctx) => {
+    if (identity.mode === 'import' && (identity.extraTxtValues ?? []).length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['extraTxtValues'],
+        message:
+          '"sesIdentity.extraTxtValues" is only valid when mode is "create" — in import mode ' +
+          'FreeMail writes no TXT record at the email domain, so add the values there yourself.',
+      });
+    }
+    // Route53 rejects a record set that lists the same value twice.
+    const values = identity.extraTxtValues ?? [];
+    const duplicate = values.find((value, index) => values.indexOf(value) !== index);
+    if (duplicate !== undefined) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['extraTxtValues'],
+        message: `"sesIdentity.extraTxtValues" lists "${duplicate}" more than once.`,
+      });
+    }
   })
   // Defaults to the original behavior, so a config written before this option existed
   // keeps deploying exactly as it did.
@@ -273,7 +320,12 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
     emailDomain: result.data.emailDomain,
     appDomain: result.data.appDomain,
     apiDomain: result.data.apiDomain,
-    sesIdentity: { mode: result.data.sesIdentity.mode },
+    sesIdentity: {
+      mode: result.data.sesIdentity.mode,
+      ...(result.data.sesIdentity.extraTxtValues !== undefined
+        ? { extraTxtValues: result.data.sesIdentity.extraTxtValues }
+        : {}),
+    },
     inbound: {
       enabled: result.data.inbound.enabled,
       confirmInboundMx: result.data.inbound.confirmInboundMx,

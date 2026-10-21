@@ -190,6 +190,21 @@ Until you do:
 
 > If you **imported** an existing, already-delegated zone, there's nothing to do here — the records just appear.
 
+### Other TXT values at the email domain
+
+Route53 holds one `TXT` record per name, and in create mode the stack owns the one at `emailDomain`. So a site verification (Google Search Console, Microsoft 365, …) can't simply be added beside FreeMail's SPF value in Route53: a value added there by hand is dropped the next time the stack rewrites the record. List such values in the config instead, and FreeMail publishes them after its SPF value:
+
+```json
+"sesIdentity": {
+  "mode": "create",
+  "extraTxtValues": ["google-site-verification=…"]
+}
+```
+
+Each value is one string of at most 255 printable ASCII characters, without `"` or `\`. An SPF value is refused: the record already carries FreeMail's `v=spf1 include:amazonses.com ~all`, and a second SPF value breaks SPF for the domain. Import mode refuses the option too — FreeMail writes no `TXT` record there, so the record is yours to edit.
+
+If the zone already has a `TXT` record at `emailDomain` when you first deploy in create mode, the deploy fails with _"already exists"_. Move the values you want to keep (not its SPF value) into `extraTxtValues`, and delete the record before deploying. If that first deploy then fails and rolls back, the record it created is deleted too, so those values are missing from DNS until a deploy succeeds.
+
 ## 6. Custom domains (required)
 
 `appDomain` (web app, a CloudFront alias) and `apiDomain` (API, a regional API Gateway custom domain) are **both required**. Each must be equal-to or a subdomain of your hosted zone, and the two must differ from each other.
@@ -321,6 +336,9 @@ You're almost certainly still in the **SES sandbox** — you can only send to ve
 
 **`cdk deploy` hangs at "waiting for certificate validation".**
 A DNS-validated ACM cert can't validate because the hosted zone isn't publicly delegated. This happens when a **custom domain is configured on a freshly created zone**. Delegate the zone ([§5](#if-freemail-created-the-hosted-zone-delegate-it)) — at the registrar for a whole domain, or as `NS` records in the parent domain's DNS for a subdomain zone; never the registrar for a subdomain zone. Its name servers are in the Route53 console as soon as the deploy has created it (the `HostedZoneNameServers` output appears only once the deploy finishes). Validation completes once the delegation propagates. See [§6](#6-custom-domains-required). To avoid it entirely, import an already-delegated zone, or delegate as soon as the deploy has created the zone.
+
+**Deploy fails: a `TXT` record at the email domain "already exists".**
+In create mode FreeMail writes the `TXT` record at `emailDomain` (its SPF value), and the zone already has one. Keep its values other than SPF in `sesIdentity.extraTxtValues`, delete the record, and deploy again. See [§5](#other-txt-values-at-the-email-domain).
 
 **DKIM/domain verification stays "pending" in SES.**
 The hosted zone likely isn't delegated yet (see [§5](#5-dns-and-email-authentication)), so SES can't see the DKIM CNAMEs. Delegate the zone; SES retries automatically. Verify the records exist in Route53.

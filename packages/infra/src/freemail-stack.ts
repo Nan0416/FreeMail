@@ -37,6 +37,9 @@ export class FreeMailStack extends Stack {
       region: props.config.region,
       emailsTable: data.emailsTable,
       sesIdentityMode: props.config.sesIdentity.mode,
+      ...(props.config.sesIdentity.extraTxtValues
+        ? { extraTxtValues: props.config.sesIdentity.extraTxtValues }
+        : {}),
       // SES owns inbound too: pass the mail stores only when inbound is enabled, and
       // the construct instantiates the receipt pipeline as a child. The confirmInboundMx
       // acknowledgement gate (assertInboundAcknowledged, above) still fires first.

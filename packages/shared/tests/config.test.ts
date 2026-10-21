@@ -101,6 +101,48 @@ describe('parseFreeMailConfig', () => {
     );
   });
 
+  describe('sesIdentity.extraTxtValues', () => {
+    const withExtra = (extraTxtValues: unknown, mode = 'create') =>
+      parseFreeMailConfig({ ...base, sesIdentity: { mode, extraTxtValues } });
+
+    it('accepts extra values in create mode, trimmed and in order', () => {
+      expect(withExtra(['  google-site-verification=abc123 ', 'MS=ms42']).sesIdentity).toEqual({
+        mode: 'create',
+        extraTxtValues: ['google-site-verification=abc123', 'MS=ms42'],
+      });
+    });
+
+    it('rejects them in import mode, where FreeMail writes no TXT record', () => {
+      expect(() => withExtra(['google-site-verification=abc123'], 'import')).toThrow(
+        /only valid when mode is "create"/,
+      );
+    });
+
+    it('rejects an SPF value, which would make two and break SPF', () => {
+      expect(() => withExtra(['v=spf1 include:_spf.google.com ~all'])).toThrow(/SPF value/);
+      expect(() => withExtra(['V=SPF1 -all'])).toThrow(/SPF value/);
+    });
+
+    it('accepts an empty list in either mode — there is nothing to publish', () => {
+      expect(withExtra([]).sesIdentity.extraTxtValues).toEqual([]);
+      expect(withExtra([], 'import').sesIdentity.mode).toBe('import');
+    });
+
+    it('rejects a value Route53 would need split or escaped', () => {
+      expect(withExtra(['x'.repeat(255)]).sesIdentity.extraTxtValues).toEqual(['x'.repeat(255)]);
+      expect(() => withExtra(['x'.repeat(256)])).toThrow(/at most 255 characters/);
+      expect(() => withExtra(['say "hi"'])).toThrow(/printable ASCII/);
+      expect(() => withExtra(['back\\slash'])).toThrow(/printable ASCII/);
+      expect(() => withExtra(['café'])).toThrow(/printable ASCII/);
+    });
+
+    it('rejects an empty value, a duplicate, and a non-array', () => {
+      expect(() => withExtra(['  '])).toThrow(/non-empty/);
+      expect(() => withExtra(['MS=ms42', ' MS=ms42'])).toThrow(/more than once/);
+      expect(() => withExtra('MS=ms42')).toThrow(/array of strings/);
+    });
+  });
+
   it('requires a hostedZoneId when importing', () => {
     expect(() =>
       parseFreeMailConfig({ ...base, hostedZone: { mode: 'import', zoneName: 'example.com' } }),
