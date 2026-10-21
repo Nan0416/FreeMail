@@ -77,15 +77,15 @@ Agents skip the browser entirely and call the HTTP API directly with an `x-api-k
 | `packages/service` | Lambda handlers — REST API + MCP server                 |
 | `packages/web`     | React single-page app (login, compose, inbox, key mgmt) |
 | `packages/infra`   | AWS CDK app (the single `FreeMailStack`)                |
-| `packages/cli`     | `freemail init` deploy-configuration CLI                |
+| `packages/cli`     | `freemail init` / `validate` deploy-configuration CLI   |
 
 ## Prerequisites
 
 - **Node.js 22** (see [`.nvmrc`](./.nvmrc); Node ≥ 20.19 also works)
 - An **AWS account** with credentials configured, and **region `us-east-1`** (the only supported region)
 - A **domain** you control, with a Route53 hosted zone (existing, or one FreeMail creates for you)
-- **Two hostnames under that zone** — one for the web app (e.g. `app.example.com`) and one for the API (e.g. `api.example.com`). Both are **required**: the browser calls the API cross-origin, so neither has a usable default. `freemail init` prompts for them.
-- The hosted zone **delegated at your registrar before you deploy**. Both hostnames get DNS-validated ACM certificates, and that validation **blocks the CloudFormation deploy** until the records resolve publicly — an undelegated zone means the deploy hangs.
+- **Two hostnames under that zone** — one for the web app (e.g. `app.example.com`) and one for the API (e.g. `api.example.com`). Both are **required**: the browser calls the API cross-origin, so neither has a usable default. `/freemail-setup` and `freemail init` both ask for them.
+- A hosted zone that **resolves publicly**. Both hostnames get DNS-validated ACM certificates, and that validation **blocks the CloudFormation deploy** until the records resolve — so an existing zone must already be live, and a zone FreeMail creates must be delegated during the first deploy, or the deploy hangs.
 
 ## Quickstart
 
@@ -95,8 +95,13 @@ cd FreeMail
 npm install
 npm run build            # type-checks + compiles every package, incl. the web SPA
 
+# With an agent: in Claude Code, run /freemail-setup (any agent: .claude/skills/freemail-setup/SKILL.md).
+# It checks your AWS account and domain, asks a few questions, writes and validates the
+# config, and deploys on your go-ahead. Or by hand:
+
 npx freemail init        # interactive prompts → writes freemail-config.json
                          # (or: cp freemail-config.template.json freemail-config.json)
+npx freemail validate    # checks the file the way cdk deploy reads it
 
 cd packages/infra
 npx cdk bootstrap        # first time per account/region

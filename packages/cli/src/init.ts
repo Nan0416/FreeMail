@@ -7,11 +7,8 @@
  * is unit-testable with an injected `InitIo`.
  */
 import { writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { DEFAULT_REGION, parseFreeMailConfig } from '@freemail/shared/config';
+import { DEFAULT_REGION, configPath, parseFreeMailConfig } from '@freemail/shared/config';
 import type { FreeMailConfig, HostedZoneConfig } from '@freemail/shared/config';
-
-export const CONFIG_FILENAME = 'freemail-config.json';
 
 export interface InitAnswers {
   readonly hostedZone: HostedZoneConfig;
@@ -60,7 +57,7 @@ export interface InitIo {
  * could only ever produce a config the deploy cannot find.
  */
 export async function runInit(io: InitIo): Promise<number> {
-  const outPath = resolve(CONFIG_FILENAME);
+  const outPath = configPath();
   const answers = await io.prompt();
   const config = buildConfig(answers);
 

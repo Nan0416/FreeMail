@@ -10,8 +10,33 @@
  * `parseFreeMailConfig` is intentionally fail-loud: a malformed config is a deploy-time
  * footgun, so we reject it with a clear message rather than silently defaulting.
  */
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { isSubdomainOrEqual, normalizeDomain } from './domain.js';
+
+/**
+ * The deploy config has exactly ONE location: `freemail-config.json` at the repo root,
+ * written by `freemail init` and gitignored (it names your domains and zone).
+ * `freemail-config.template.json` beside it is the committed starting point.
+ *
+ * Deliberately not configurable. It used to be resolvable from three places — a
+ * `-c configPath=` CDK context value, a `FREEMAIL_CONFIG` env var, then a default —
+ * which meant answering "which config did this deploy actually use?" required checking
+ * three sources in precedence order. One fixed path is one answer.
+ */
+export const CONFIG_FILENAME = 'freemail-config.json';
+
+/**
+ * Absolute path to the repo-root config file: the one the CDK app reads, `freemail init`
+ * writes and `freemail validate` checks, whatever the working directory.
+ */
+export function configPath(): string {
+  // This module is packages/shared/{src,dist}/config.*, three levels below the repo root.
+  const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  return join(repoRoot, CONFIG_FILENAME);
+}
 
 /** The only supported region — inbound SES + CloudFront ACM certs both require us-east-1. */
 export const DEFAULT_REGION = 'us-east-1';
@@ -266,4 +291,30 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
         }
       : {}),
   };
+}
+
+/**
+ * Read, JSON-parse, and validate a FreeMail deploy config file, failing loud. The one
+ * loader: the CDK app reads the config through it at synth and `freemail validate` checks
+ * it, so a config that validates is one the deploy can load.
+ */
+export function loadFreeMailConfig(path: string): FreeMailConfig {
+  let raw: string;
+  try {
+    raw = readFileSync(path, 'utf8');
+  } catch {
+    throw new Error(
+      `FreeMail: no config found at ${path}. Run \`npx freemail init\` to create one, ` +
+        `or copy ${CONFIG_FILENAME.replace('.json', '.template.json')} and fill it in.`,
+    );
+  }
+
+  let json: unknown;
+  try {
+    json = JSON.parse(raw);
+  } catch (error) {
+    throw new Error(`FreeMail: config at ${path} is not valid JSON: ${(error as Error).message}`);
+  }
+
+  return parseFreeMailConfig(json);
 }

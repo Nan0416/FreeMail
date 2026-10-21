@@ -1,16 +1,9 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { parseFreeMailConfig } from '@freemail/shared/config';
+import { join } from 'node:path';
+import { configPath, parseFreeMailConfig } from '@freemail/shared/config';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  CONFIG_FILENAME,
-  buildConfig,
-  runInit,
-  writeConfig,
-  type InitAnswers,
-  type InitIo,
-} from '../src/init.js';
+import { buildConfig, runInit, writeConfig, type InitAnswers, type InitIo } from '../src/init.js';
 
 const answers = (overrides: Partial<InitAnswers> = {}): InitAnswers => ({
   hostedZone: { mode: 'create', zoneName: 'example.com' },
@@ -119,8 +112,9 @@ describe('runInit', () => {
     const code = await runInit(io);
     expect(code).toBe(0);
     // Fixed location, no --out override: anywhere else and `cdk deploy` would not find it.
+    // The repo root, not the working directory, so running it from packages/infra works too.
     expect(io.write).toHaveBeenCalledWith(
-      resolve(CONFIG_FILENAME),
+      configPath(),
       expect.objectContaining({ region: 'us-east-1' }),
     );
     expect(io.log).toHaveBeenCalledWith(expect.stringContaining('Next steps'));

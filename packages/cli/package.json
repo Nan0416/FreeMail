@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "bin": {
-    "freemail": "./dist/index.js"
+    "freemail": "./bin/freemail.js"
   },
   "scripts": {
     "build": "tsc -b",
