@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -43,14 +51,35 @@ describe('cli', () => {
 });
 
 describe('isEntryPoint', () => {
-  it('lets `npx freemail` run: the built bin answers through its node_modules/.bin symlink', () => {
-    // The built CLI (CI builds before testing), started the way npx starts it.
+  it('lets `npx freemail` run: the bin npm linked answers through node_modules/.bin', () => {
+    // The built CLI (CI builds before testing), started the way npx starts it. npm links the
+    // bin at install time — before any build — so this also proves the link exists then.
     const bin = join(dirname(configPath()), 'node_modules', '.bin', 'freemail');
     const result = spawnSync(process.execPath, [bin, 'version'], { encoding: 'utf8' });
     expect(result.stdout).toMatch(/^freemail /);
   });
 
-  it('recognizes the module when node runs it through a symlink, as npx does', () => {
+  it('says to build first when the bin runs before `npm run build`', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'freemail-unbuilt-'));
+    try {
+      // The bin alone, with no dist/ beside it — a fresh clone after `npm install`.
+      mkdirSync(join(dir, 'bin'));
+      copyFileSync(
+        join(dirname(configPath()), 'packages', 'cli', 'bin', 'freemail.js'),
+        join(dir, 'bin', 'freemail.js'),
+      );
+      writeFileSync(join(dir, 'package.json'), '{ "type": "module" }');
+      const result = spawnSync(process.execPath, [join(dir, 'bin', 'freemail.js'), 'version'], {
+        encoding: 'utf8',
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toMatch(/not built yet.*npm run build/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('recognizes the module when node runs it through a symlink', () => {
     // Resolved, as node resolves the module's own URL (macOS's tmpdir is itself a symlink).
     const dir = realpathSync(mkdtempSync(join(tmpdir(), 'freemail-bin-')));
     try {

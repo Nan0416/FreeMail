@@ -5,6 +5,9 @@
  * `version`/`validate`/`help` are handled synchronously by `main`. `init` runs an
  * interactive flow, so it's dispatched separately (and lazily imports the
  * prompt/AWS deps so simple commands stay fast).
+ *
+ * The installed `freemail` bin is `bin/freemail.js`, which calls `run`; running this file
+ * directly (`node dist/index.js`, `npm start`) runs it too.
  */
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -49,10 +52,19 @@ async function runInitCommand(): Promise<void> {
   }
 }
 
+/** Run the CLI with the arguments after `freemail`. */
+export function run(argv: string[]): void {
+  if (argv[0] === 'init') {
+    void runInitCommand();
+  } else {
+    process.exit(main(argv));
+  }
+}
+
 /**
- * Whether this module is the script node was asked to run. `npx freemail` runs it through
- * symlinks (`node_modules/.bin/freemail` → the `@freemail/cli` workspace link →
- * `packages/cli`) while `import.meta.url` is the resolved file, so compare real paths.
+ * Whether this module is the script node was asked to run. A path to it may go through
+ * symlinks (a workspace link, or macOS's `/tmp` → `/private/tmp`) while `import.meta.url` is
+ * the resolved file, so compare real paths.
  */
 export function isEntryPoint(scriptPath: string | undefined, moduleUrl: string): boolean {
   if (!scriptPath) {
@@ -65,12 +77,7 @@ export function isEntryPoint(scriptPath: string | undefined, moduleUrl: string):
   }
 }
 
-// Run only when invoked directly as the CLI (not when imported by tests).
+// Run only when invoked directly (not when imported by the bin or by tests).
 if (isEntryPoint(process.argv[1], import.meta.url)) {
-  const argv = process.argv.slice(2);
-  if (argv[0] === 'init') {
-    void runInitCommand();
-  } else {
-    process.exit(main(argv));
-  }
+  run(process.argv.slice(2));
 }
