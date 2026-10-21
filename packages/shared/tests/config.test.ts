@@ -123,7 +123,13 @@ describe('parseFreeMailConfig', () => {
       expect(() => withExtra(['V=SPF1 -all'])).toThrow(/SPF value/);
     });
 
+    it('accepts an empty list in either mode — there is nothing to publish', () => {
+      expect(withExtra([]).sesIdentity.extraTxtValues).toEqual([]);
+      expect(withExtra([], 'import').sesIdentity.mode).toBe('import');
+    });
+
     it('rejects a value Route53 would need split or escaped', () => {
+      expect(withExtra(['x'.repeat(255)]).sesIdentity.extraTxtValues).toEqual(['x'.repeat(255)]);
       expect(() => withExtra(['x'.repeat(256)])).toThrow(/at most 255 characters/);
       expect(() => withExtra(['say "hi"'])).toThrow(/printable ASCII/);
       expect(() => withExtra(['back\\slash'])).toThrow(/printable ASCII/);

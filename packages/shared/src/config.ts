@@ -175,7 +175,7 @@ const sesIdentitySchema = z
     extraTxtValues: z.array(txtValueSchema, { error: 'must be an array of strings' }).optional(),
   })
   .superRefine((identity, ctx) => {
-    if (identity.mode === 'import' && identity.extraTxtValues !== undefined) {
+    if (identity.mode === 'import' && (identity.extraTxtValues ?? []).length > 0) {
       ctx.addIssue({
         code: 'custom',
         path: ['extraTxtValues'],
