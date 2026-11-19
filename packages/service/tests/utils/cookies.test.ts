@@ -1,13 +1,6 @@
 import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from '@freemail/shared';
 import { describe, expect, it } from 'vitest';
-import {
-  ACCESS_COOKIE,
-  DUPLICATE_COOKIE,
-  REFRESH_COOKIE,
-  clearSessionCookies,
-  readCookie,
-  sessionCookies,
-} from '../../src/utils/cookies.js';
+import { ACCESS_COOKIE, DUPLICATE_COOKIE, REFRESH_COOKIE, clearSessionCookies, readCookie, sessionCookies } from '../../src/utils/cookies.js';
 
 describe('session cookie serialization', () => {
   it('sets both cookies HttpOnly, Secure, SameSite=Strict, Path=/ with the TTL max-age', () => {
@@ -31,9 +24,7 @@ describe('session cookie serialization', () => {
   it('clears both cookies with an empty value and Max-Age=0, same attributes', () => {
     const [access, refresh] = clearSessionCookies();
     expect(access).toBe(`${ACCESS_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`);
-    expect(refresh).toBe(
-      `${REFRESH_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`,
-    );
+    expect(refresh).toBe(`${REFRESH_COOKIE}=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0`);
   });
 });
 
@@ -48,13 +39,9 @@ describe('readCookie', () => {
   });
 
   it('rejects a duplicate (injected/shadowing) same-name cookie rather than guessing', () => {
-    expect(readCookie([`${ACCESS_COOKIE}=real`, `${ACCESS_COOKIE}=evil`], ACCESS_COOKIE)).toBe(
-      DUPLICATE_COOKIE,
-    );
+    expect(readCookie([`${ACCESS_COOKIE}=real`, `${ACCESS_COOKIE}=evil`], ACCESS_COOKIE)).toBe(DUPLICATE_COOKIE);
     // Even identical duplicates are rejected — we never pick first or last.
-    expect(readCookie([`${ACCESS_COOKIE}=x`, `${ACCESS_COOKIE}=x`], ACCESS_COOKIE)).toBe(
-      DUPLICATE_COOKIE,
-    );
+    expect(readCookie([`${ACCESS_COOKIE}=x`, `${ACCESS_COOKIE}=x`], ACCESS_COOKIE)).toBe(DUPLICATE_COOKIE);
   });
 
   it('splits on the first "=" so a token containing "." or "=" survives intact', () => {

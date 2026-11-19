@@ -31,13 +31,7 @@ function store(fake = new FakeS3()) {
 
 describe('S3UploadStore', () => {
   it('presigns a PUT that pins the length and carries the declaration as signed metadata', async () => {
-    const url = new URL(
-      await store().s.presignPut(
-        'uploads/AAAAAAAAAAAAAAAAAAAAAA',
-        { filename: 'résumé 1.pdf', contentType: 'application/pdf', sizeBytes: 1234 },
-        900,
-      ),
-    );
+    const url = new URL(await store().s.presignPut('uploads/AAAAAAAAAAAAAAAAAAAAAA', { filename: 'résumé 1.pdf', contentType: 'application/pdf', sizeBytes: 1234 }, 900));
 
     expect(url.host).toBe('mail-bucket.s3.us-east-1.amazonaws.com');
     expect(url.pathname).toBe('/uploads/AAAAAAAAAAAAAAAAAAAAAA');
@@ -46,9 +40,7 @@ describe('S3UploadStore', () => {
     expect(url.searchParams.get('X-Amz-SignedHeaders')).toBe('content-length;host');
     expect(url.searchParams.get('X-Amz-Expires')).toBe('900');
     expect(url.searchParams.get('x-amz-meta-filename')).toBe(encodeURIComponent('résumé 1.pdf'));
-    expect(url.searchParams.get('x-amz-meta-content-type')).toBe(
-      encodeURIComponent('application/pdf'),
-    );
+    expect(url.searchParams.get('x-amz-meta-content-type')).toBe(encodeURIComponent('application/pdf'));
     // No presigned checksum of an empty body (which would fail every real upload).
     expect([...url.searchParams.keys()].some((k) => k.startsWith('x-amz-checksum'))).toBe(false);
   });

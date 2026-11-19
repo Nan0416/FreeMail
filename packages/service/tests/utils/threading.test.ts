@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  MAX_REFERENCES,
-  replyReferences,
-  replySubject,
-  sanitizeMessageId,
-  sanitizeReferences,
-  sesMessageIdHeader,
-} from '../../src/utils/threading.js';
+import { MAX_REFERENCES, replyReferences, replySubject, sanitizeMessageId, sanitizeReferences, sesMessageIdHeader } from '../../src/utils/threading.js';
 
 describe('sanitizeMessageId', () => {
   it('keeps one well-formed id, trimmed', () => {
@@ -39,11 +32,7 @@ describe('sanitizeMessageId', () => {
 
 describe('sanitizeReferences', () => {
   it('splits, validates, and de-duplicates the ids in order', () => {
-    expect(sanitizeReferences('<a@x> <b@x>\r\n <a@x> junk <c@x>')).toEqual([
-      '<a@x>',
-      '<b@x>',
-      '<c@x>',
-    ]);
+    expect(sanitizeReferences('<a@x> <b@x>\r\n <a@x> junk <c@x>')).toEqual(['<a@x>', '<b@x>', '<c@x>']);
   });
 
   it('accepts the list form mailparser produces', () => {
@@ -93,12 +82,7 @@ describe('replyReferences', () => {
 
 describe('sesMessageIdHeader', () => {
   it('uses email.amazonses.com in us-east-1 (as observed on live mail)', () => {
-    expect(
-      sesMessageIdHeader(
-        '010001a127d4e2c6-6b953257-49ba-46a0-b091-e88f141336c4-000000',
-        'us-east-1',
-      ),
-    ).toBe('<010001a127d4e2c6-6b953257-49ba-46a0-b091-e88f141336c4-000000@email.amazonses.com>');
+    expect(sesMessageIdHeader('010001a127d4e2c6-6b953257-49ba-46a0-b091-e88f141336c4-000000', 'us-east-1')).toBe('<010001a127d4e2c6-6b953257-49ba-46a0-b091-e88f141336c4-000000@email.amazonses.com>');
   });
 
   it('uses the region host elsewhere', () => {

@@ -28,9 +28,7 @@ export function detailTrust(direction: EmailDirection): DetailTrust {
 }
 
 export function listTrust(emails: readonly EmailListItem[]): ListTrust {
-  return emails.some((email) => email.direction === 'inbound')
-    ? 'contains_untrusted_external_content'
-    : 'self_authored_content';
+  return emails.some((email) => email.direction === 'inbound') ? 'contains_untrusted_external_content' : 'self_authored_content';
 }
 
 /** Shared human-readable banner describing why the framed block must be treated as data. */

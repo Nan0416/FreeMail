@@ -56,10 +56,7 @@ export interface StoreEmailBodyInput {
  * BEFORE the caller writes the row (the row is the commit marker), so a row never points at a
  * missing object.
  */
-export async function storeEmailBody(
-  store: MailBodyStore,
-  input: StoreEmailBodyInput,
-): Promise<StoredEmailBody> {
+export async function storeEmailBody(store: MailBodyStore, input: StoreEmailBodyInput): Promise<StoredEmailBody> {
   // The same per-part cap the reader applied when it re-parsed raw MIME, so what is stored is
   // exactly what used to be shown. The response budget is re-applied at read time, when the
   // envelope's size is known.
@@ -73,10 +70,7 @@ export async function storeEmailBody(
     ...(fitted.truncated ? { truncated: true } : {}),
   };
   const bodyBytes = utf8Bytes(content.text) + utf8Bytes(content.html);
-  if (
-    bodyBytes <= MAX_INLINE_BODY_BYTES &&
-    input.otherRowBytes + bodyBytes <= MAX_INLINE_ROW_BYTES
-  ) {
+  if (bodyBytes <= MAX_INLINE_BODY_BYTES && input.otherRowBytes + bodyBytes <= MAX_INLINE_ROW_BYTES) {
     return { kind: 'inline', ...content };
   }
   await store.putBody(input.key, content);
@@ -87,10 +81,7 @@ export async function storeEmailBody(
  * Read a stored body back; null when its S3 object is missing or the stored pointer is not one
  * this code wrote. An inline body is re-checked field by field, like the S3 JSON.
  */
-export async function loadEmailBody(
-  store: MailBodyStore,
-  body: StoredEmailBody,
-): Promise<MailBodyContent | null> {
+export async function loadEmailBody(store: MailBodyStore, body: StoredEmailBody): Promise<MailBodyContent | null> {
   if (body.kind === 's3') {
     return typeof body.s3Key === 'string' ? store.getBody(body.s3Key) : null;
   }

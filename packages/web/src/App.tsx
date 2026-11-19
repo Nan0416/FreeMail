@@ -7,10 +7,7 @@ import { Toaster } from '@/components/ui/sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { loadRuntimeConfig } from './config/runtime-config.js';
 
-type Boot =
-  | { readonly status: 'loading' }
-  | { readonly status: 'ready'; readonly config: WebRuntimeConfig }
-  | { readonly status: 'error'; readonly message: string };
+type Boot = { readonly status: 'loading' } | { readonly status: 'ready'; readonly config: WebRuntimeConfig } | { readonly status: 'error'; readonly message: string };
 
 /**
  * Boots by loading the deploy-time runtime config (the API endpoint), then mounts
@@ -58,10 +55,7 @@ export function App(
   if (boot.status === 'error') {
     return (
       <AuthScreen>
-        <p
-          role="alert"
-          className="rounded-lg border bg-background p-4 text-[13px] text-destructive"
-        >
+        <p role="alert" className="rounded-lg border bg-background p-4 text-[13px] text-destructive">
           {boot.message}
         </p>
       </AuthScreen>

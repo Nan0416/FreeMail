@@ -34,9 +34,7 @@ async function domainInZone(message: string, zoneName: string, suggested: string
     await input({
       message,
       default: suggested,
-      validate: (value) =>
-        isSubdomainOrEqual(normalizeDomain(value), zoneName) ||
-        `Must be ${zoneName} or a subdomain of it.`,
+      validate: (value) => isSubdomainOrEqual(normalizeDomain(value), zoneName) || `Must be ${zoneName} or a subdomain of it.`,
     }),
   );
 }
@@ -67,10 +65,7 @@ async function resolveHostedZone(): Promise<HostedZoneConfig> {
   if (zones.length > 0) {
     const choice = await select({
       message: 'Select the hosted zone to use:',
-      choices: [
-        ...zones.map((zone) => ({ name: `${zone.name} (${zone.id})`, value: zone.id })),
-        { name: 'Enter zone ID manually…', value: MANUAL_ENTRY },
-      ],
+      choices: [...zones.map((zone) => ({ name: `${zone.name} (${zone.id})`, value: zone.id })), { name: 'Enter zone ID manually…', value: MANUAL_ENTRY }],
     });
     if (choice !== MANUAL_ENTRY) {
       const zone = zones.find((z) => z.id === choice);
@@ -102,25 +97,15 @@ export async function promptAnswers(): Promise<InitAnswers> {
     await input({
       message: `Email domain — the zone apex or a subdomain (e.g. mail.${hostedZone.zoneName}):`,
       default: hostedZone.zoneName,
-      validate: (value) =>
-        isSubdomainOrEqual(normalizeDomain(value), hostedZone.zoneName) ||
-        `Must be ${hostedZone.zoneName} or a subdomain of it.`,
+      validate: (value) => isSubdomainOrEqual(normalizeDomain(value), hostedZone.zoneName) || `Must be ${hostedZone.zoneName} or a subdomain of it.`,
     }),
   );
 
   // Required (#47): the web app is served at appDomain and calls the API cross-origin
   // at apiDomain, which is the single origin the API's CORS allowlist is built from.
   // They must differ — one host cannot alias both CloudFront and API Gateway.
-  const appDomain = await domainInZone(
-    'Domain for the web app (e.g. app.' + hostedZone.zoneName + '):',
-    hostedZone.zoneName,
-    `app.${hostedZone.zoneName}`,
-  );
-  const apiDomain = await domainInZone(
-    'Domain for the API (must differ from the web app domain):',
-    hostedZone.zoneName,
-    `api.${hostedZone.zoneName}`,
-  );
+  const appDomain = await domainInZone('Domain for the web app (e.g. app.' + hostedZone.zoneName + '):', hostedZone.zoneName, `app.${hostedZone.zoneName}`);
+  const apiDomain = await domainInZone('Domain for the API (must differ from the web app domain):', hostedZone.zoneName, `api.${hostedZone.zoneName}`);
 
   // Import mode exists for a domain already set up for SES: creating the identity or its
   // auth records again would fail the deploy outright ("already exists").

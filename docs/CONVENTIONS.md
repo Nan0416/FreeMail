@@ -473,7 +473,7 @@ style, or the style will not typecheck.
   that must exist but is deliberately unused — an Express error handler's four-argument
   arity, a Request that carries no fields yet — cannot be written to satisfy both.
 
-**Prettier** — `singleQuote`, `semi`, `trailingComma: all`, `printWidth: 100`.
+**Prettier** — `singleQuote`, `semi`, `trailingComma: all`, `printWidth: 200`.
 
 **Comments.** Density here is high on purpose: comments explain _why_, especially where a
 line is load-bearing for correctness or security. A comment restating the code is noise; a

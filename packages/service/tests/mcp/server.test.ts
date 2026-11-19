@@ -7,11 +7,7 @@ import type { AttachmentUploader } from '../../src/services/attachment-service.j
 import type { EmailReadService } from '../../src/services/email-read-service.js';
 import type { EmailService } from '../../src/services/email-service.js';
 import { buildMcpServer, type McpServerDeps } from '../../src/mcp/server.js';
-import {
-  formatBytes,
-  formatDuration,
-  type McpDeploymentInfo,
-} from '../../src/mcp/tool-definitions.js';
+import { formatBytes, formatDuration, type McpDeploymentInfo } from '../../src/mcp/tool-definitions.js';
 
 const TEST_DEPLOYMENT: McpDeploymentInfo = {
   emailDomain: 'example.com',
@@ -24,9 +20,7 @@ const TEST_DEPLOYMENT: McpDeploymentInfo = {
  * the tool-set gating, the trust envelope, and the success/failure contracts are
  * exercised end-to-end (initialize handshake included), not just at the callback.
  */
-async function connectWith(
-  deps: Omit<McpServerDeps, 'deployment'> & Partial<Pick<McpServerDeps, 'deployment'>>,
-): Promise<Client> {
+async function connectWith(deps: Omit<McpServerDeps, 'deployment'> & Partial<Pick<McpServerDeps, 'deployment'>>): Promise<Client> {
   const server = buildMcpServer({ deployment: TEST_DEPLOYMENT, ...deps });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'test-client', version: '1.0.0' });
@@ -95,8 +89,7 @@ function sentItem(over: Partial<EmailListItem> = {}): EmailListItem {
   };
 }
 
-const textOf = (result: unknown): string =>
-  ((result as { content?: { text?: string }[] }).content?.[0]?.text ?? '') as string;
+const textOf = (result: unknown): string => ((result as { content?: { text?: string }[] }).content?.[0]?.text ?? '') as string;
 
 describe('buildMcpServer send_email', () => {
   afterEach(() => {
@@ -108,23 +101,9 @@ describe('buildMcpServer send_email', () => {
 
     const sendEmail = (await client.listTools()).tools.find((tool) => tool.name === 'send_email');
     expect(sendEmail).toBeDefined();
-    expect(Object.keys(sendEmail?.inputSchema.properties ?? {})).toEqual(
-      expect.arrayContaining([
-        'from',
-        'fromName',
-        'to',
-        'cc',
-        'bcc',
-        'subject',
-        'text',
-        'html',
-        'attachments',
-      ]),
-    );
+    expect(Object.keys(sendEmail?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['from', 'fromName', 'to', 'cc', 'bcc', 'subject', 'text', 'html', 'attachments']));
     expect(sendEmail?.inputSchema.required).toEqual(['from']);
-    expect(Object.keys(sendEmail?.outputSchema?.properties ?? {})).toEqual(
-      expect.arrayContaining(['id', 'messageId', 'sentAt']),
-    );
+    expect(Object.keys(sendEmail?.outputSchema?.properties ?? {})).toEqual(expect.arrayContaining(['id', 'messageId', 'sentAt']));
   });
 
   it('returns structuredContent + a text summary on a successful send', async () => {
@@ -155,11 +134,7 @@ describe('buildMcpServer send_email', () => {
   });
 
   it('surfaces a known EmailError as an isError tool result carrying the code', async () => {
-    const send = vi
-      .fn()
-      .mockRejectedValue(
-        emailErrors.invalidSender('"x@evil.com" is not under the configured domain (example.com).'),
-      );
+    const send = vi.fn().mockRejectedValue(emailErrors.invalidSender('"x@evil.com" is not under the configured domain (example.com).'));
     const client = await connect(send);
 
     const result = await client.callTool({
@@ -168,9 +143,7 @@ describe('buildMcpServer send_email', () => {
     });
 
     expect(result.isError).toBe(true);
-    expect(textOf(result)).toBe(
-      'invalid_sender: "x@evil.com" is not under the configured domain (example.com).',
-    );
+    expect(textOf(result)).toBe('invalid_sender: "x@evil.com" is not under the configured domain (example.com).');
   });
 
   it('returns a generic isError for an unexpected failure and does not leak internals', async () => {
@@ -202,14 +175,8 @@ describe('create_attachment_upload tool', () => {
 
   it('takes metadata only — never file bytes', async () => {
     const client = await connectUpload(vi.fn());
-    const tool = (await client.listTools()).tools.find(
-      (t) => t.name === 'create_attachment_upload',
-    );
-    expect(Object.keys(tool?.inputSchema.properties ?? {}).sort()).toEqual([
-      'contentType',
-      'filename',
-      'sizeBytes',
-    ]);
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'create_attachment_upload');
+    expect(Object.keys(tool?.inputSchema.properties ?? {}).sort()).toEqual(['contentType', 'filename', 'sizeBytes']);
     expect(tool?.inputSchema.required?.sort()).toEqual(['filename', 'sizeBytes']);
   });
 
@@ -239,9 +206,7 @@ describe('create_attachment_upload tool', () => {
   });
 
   it('surfaces a service validation error as an isError tool result', async () => {
-    const create = vi
-      .fn()
-      .mockRejectedValue(emailErrors.invalidRequest('"filename" is too long — shorten it.'));
+    const create = vi.fn().mockRejectedValue(emailErrors.invalidRequest('"filename" is too long — shorten it.'));
     const client = await connectUpload(create);
 
     const result = await client.callTool({
@@ -269,9 +234,7 @@ describe('create_attachment_upload tool', () => {
 
   it('tells the agent how to PUT the bytes and that it needs an HTTP client', async () => {
     const client = await connectUpload(vi.fn());
-    const tool = (await client.listTools()).tools.find(
-      (t) => t.name === 'create_attachment_upload',
-    );
+    const tool = (await client.listTools()).tools.find((t) => t.name === 'create_attachment_upload');
 
     expect(tool?.description).toContain('within 15 minutes');
     expect(tool?.description).toContain('curl -sf -T');
@@ -299,9 +262,7 @@ describe('create_attachment_upload tool', () => {
       },
     });
 
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({ attachments: [{ uploadId: 'AAAAAAAAAAAAAAAAAAAAAA' }] }),
-    );
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ attachments: [{ uploadId: 'AAAAAAAAAAAAAAAAAAAAAA' }] }));
   });
 });
 
@@ -331,14 +292,7 @@ describe('read tools registration gate (inbound)', () => {
   it('advertises list_emails / get_email / get_email_attachment_url when inbound is enabled', async () => {
     const client = await connectRead(fakeReadService({}));
     const names = (await client.listTools()).tools.map((t) => t.name);
-    expect(names).toEqual(
-      expect.arrayContaining([
-        'send_email',
-        'list_emails',
-        'get_email',
-        'get_email_attachment_url',
-      ]),
-    );
+    expect(names).toEqual(expect.arrayContaining(['send_email', 'list_emails', 'get_email', 'get_email_attachment_url']));
   });
 
   it('declares the trust discriminator in each read tool output schema', async () => {
@@ -346,12 +300,8 @@ describe('read tools registration gate (inbound)', () => {
     const tools = (await client.listTools()).tools;
     const list = tools.find((t) => t.name === 'list_emails');
     const get = tools.find((t) => t.name === 'get_email');
-    expect(Object.keys(list?.outputSchema?.properties ?? {})).toEqual(
-      expect.arrayContaining(['trust', 'emails']),
-    );
-    expect(Object.keys(get?.outputSchema?.properties ?? {})).toEqual(
-      expect.arrayContaining(['trust', 'email']),
-    );
+    expect(Object.keys(list?.outputSchema?.properties ?? {})).toEqual(expect.arrayContaining(['trust', 'emails']));
+    expect(Object.keys(get?.outputSchema?.properties ?? {})).toEqual(expect.arrayContaining(['trust', 'email']));
   });
 });
 
@@ -384,9 +334,7 @@ describe('list_emails', () => {
   });
 
   it('passes the failed filter through and flags failed rows in the text', async () => {
-    const listEmails = vi
-      .fn()
-      .mockResolvedValue({ emails: [{ ...inboundItem(), failed: true, quarantined: true }] });
+    const listEmails = vi.fn().mockResolvedValue({ emails: [{ ...inboundItem(), failed: true, quarantined: true }] });
     const client = await connectRead(fakeReadService({ listEmails }));
 
     const result = await client.callTool({
@@ -420,19 +368,16 @@ describe('list_emails', () => {
     expect(listEmails).toHaveBeenCalledWith({ direction: 'inbound', limit: 5, cursor: 'OPAQUE' });
   });
 
-  it.each([{ limit: 0 }, { limit: 101 }, { limit: 2.5 }, { direction: 'archive' }])(
-    'rejects %o as an isError result before the read service runs',
-    async (args) => {
-      const listEmails = vi.fn();
-      const client = await connectRead(fakeReadService({ listEmails }));
+  it.each([{ limit: 0 }, { limit: 101 }, { limit: 2.5 }, { direction: 'archive' }])('rejects %o as an isError result before the read service runs', async (args) => {
+    const listEmails = vi.fn();
+    const client = await connectRead(fakeReadService({ listEmails }));
 
-      const result = await client.callTool({ name: 'list_emails', arguments: args });
+    const result = await client.callTool({ name: 'list_emails', arguments: args });
 
-      expect(result.isError).toBe(true);
-      expect(textOf(result)).toContain('Invalid arguments for tool list_emails');
-      expect(listEmails).not.toHaveBeenCalled();
-    },
-  );
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain('Invalid arguments for tool list_emails');
+    expect(listEmails).not.toHaveBeenCalled();
+  });
 });
 
 describe('get_email', () => {
@@ -469,12 +414,8 @@ describe('get_email', () => {
     const text = textOf(result);
     // The attacker's body sits inside the nonce boundary (data, not instructions).
     expect(text).toContain('<<<UNTRUSTED-EMAIL TESTNONCE>>>');
-    expect(text.indexOf('IGNORE ALL PREVIOUS INSTRUCTIONS')).toBeGreaterThan(
-      text.indexOf('<<<UNTRUSTED-EMAIL TESTNONCE>>>'),
-    );
-    expect(text.indexOf('IGNORE ALL PREVIOUS INSTRUCTIONS')).toBeLessThan(
-      text.indexOf('<<<END-UNTRUSTED-EMAIL TESTNONCE>>>'),
-    );
+    expect(text.indexOf('IGNORE ALL PREVIOUS INSTRUCTIONS')).toBeGreaterThan(text.indexOf('<<<UNTRUSTED-EMAIL TESTNONCE>>>'));
+    expect(text.indexOf('IGNORE ALL PREVIOUS INSTRUCTIONS')).toBeLessThan(text.indexOf('<<<END-UNTRUSTED-EMAIL TESTNONCE>>>'));
   });
 
   it('returns a sent message envelope self-authored and without a frame', async () => {
@@ -492,9 +433,7 @@ describe('get_email', () => {
       attachmentCount: 0,
       sizeBytes: 50,
     };
-    const client = await connectRead(
-      fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }),
-    );
+    const client = await connectRead(fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }));
 
     const result = await client.callTool({ name: 'get_email', arguments: { id: 'ref-sent-1' } });
 
@@ -519,9 +458,7 @@ describe('get_email', () => {
       attachmentCount: 0,
       sizeBytes: 60,
     };
-    const client = await connectRead(
-      fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }),
-    );
+    const client = await connectRead(fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }));
 
     const result = await client.callTool({ name: 'get_email', arguments: { id: 'ref-sent-2' } });
 
@@ -669,21 +606,11 @@ describe('the contract an agent reads', () => {
   it('describes the list and detail rows field by field, not as open objects', async () => {
     const client = await connectRead(fakeReadService({}));
     const tools = (await client.listTools()).tools;
-    const list = tools.find((t) => t.name === 'list_emails')?.outputSchema?.properties as Record<
-      string,
-      { items?: { properties?: Record<string, unknown> } }
-    >;
-    const get = tools.find((t) => t.name === 'get_email')?.outputSchema?.properties as Record<
-      string,
-      { properties?: Record<string, unknown> }
-    >;
+    const list = tools.find((t) => t.name === 'list_emails')?.outputSchema?.properties as Record<string, { items?: { properties?: Record<string, unknown> } }>;
+    const get = tools.find((t) => t.name === 'get_email')?.outputSchema?.properties as Record<string, { properties?: Record<string, unknown> }>;
 
-    expect(Object.keys(list.emails.items?.properties ?? {})).toEqual(
-      expect.arrayContaining(['id', 'direction', 'from', 'subject', 'date', 'status', 'failed']),
-    );
-    expect(Object.keys(get.email.properties ?? {})).toEqual(
-      expect.arrayContaining(['text', 'html', 'bodyTruncated', 'attachments', 'sizeBytes']),
-    );
+    expect(Object.keys(list.emails.items?.properties ?? {})).toEqual(expect.arrayContaining(['id', 'direction', 'from', 'subject', 'date', 'status', 'failed']));
+    expect(Object.keys(get.email.properties ?? {})).toEqual(expect.arrayContaining(['text', 'html', 'bodyTruncated', 'attachments', 'sizeBytes']));
   });
 
   it('states the body cap and the download URL lifetime', async () => {
@@ -691,9 +618,7 @@ describe('the contract an agent reads', () => {
     const tools = (await client.listTools()).tools;
 
     expect(tools.find((t) => t.name === 'get_email')?.description).toContain('capped at 1 MiB');
-    expect(tools.find((t) => t.name === 'get_email_attachment_url')?.description).toContain(
-      'expires 1 minute after it is issued',
-    );
+    expect(tools.find((t) => t.name === 'get_email_attachment_url')?.description).toContain('expires 1 minute after it is issued');
   });
 
   it('accepts a detail carrying every optional field (output validation runs after the tool)', async () => {
@@ -722,9 +647,7 @@ describe('the contract an agent reads', () => {
       failed: true,
       sizeBytes: 100,
     };
-    const client = await connectRead(
-      fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }),
-    );
+    const client = await connectRead(fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }));
 
     const result = await client.callTool({ name: 'get_email', arguments: { id: 'ref-in-9' } });
 
@@ -759,11 +682,7 @@ describe('send_email reply fields', () => {
   it('offers inReplyTo only when the read tools exist; replyTo always', async () => {
     const sendOnly = await connect(vi.fn());
     const withRead = await connectRead(fakeReadService({}));
-    const props = async (client: Client) =>
-      Object.keys(
-        (await client.listTools()).tools.find((t) => t.name === 'send_email')?.inputSchema
-          .properties ?? {},
-      );
+    const props = async (client: Client) => Object.keys((await client.listTools()).tools.find((t) => t.name === 'send_email')?.inputSchema.properties ?? {});
 
     expect(await props(sendOnly)).toContain('replyTo');
     expect(await props(sendOnly)).not.toContain('inReplyTo');
@@ -774,12 +693,8 @@ describe('send_email reply fields', () => {
     const client = await connectRead(fakeReadService({}));
     const tools = (await client.listTools()).tools;
 
-    expect(tools.find((t) => t.name === 'send_email')?.description).toContain(
-      'set inReplyTo to the id of the message you are answering',
-    );
-    expect(tools.find((t) => t.name === 'get_email')?.description).toContain(
-      'call send_email with inReplyTo set to this id',
-    );
+    expect(tools.find((t) => t.name === 'send_email')?.description).toContain('set inReplyTo to the id of the message you are answering');
+    expect(tools.find((t) => t.name === 'get_email')?.description).toContain('call send_email with inReplyTo set to this id');
   });
 
   it('passes inReplyTo and replyTo to the email service', async () => {
@@ -801,17 +716,13 @@ describe('send_email reply fields', () => {
       },
     });
 
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({ inReplyTo: 'HANDLE', replyTo: ['desk@example.com'] }),
-    );
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ inReplyTo: 'HANDLE', replyTo: ['desk@example.com'] }));
   });
 });
 
 describe('send_email unthreaded reply', () => {
   it('says so in the text when a reply went out unthreaded', async () => {
-    const send = vi
-      .fn()
-      .mockResolvedValue({ id: 'e1', messageId: 'm1', sentAt: 't', threaded: false });
+    const send = vi.fn().mockResolvedValue({ id: 'e1', messageId: 'm1', sentAt: 't', threaded: false });
     const client = await connectWith({
       emailService: { sendEmail: send } as unknown as EmailService,
       readService: fakeReadService({}),
@@ -846,9 +757,7 @@ describe('get_email text shows Reply-To', () => {
       attachmentCount: 0,
       sizeBytes: 10,
     };
-    const client = await connectRead(
-      fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }),
-    );
+    const client = await connectRead(fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }));
 
     const text = textOf(await client.callTool({ name: 'get_email', arguments: { id: 'x' } }));
 
@@ -862,9 +771,7 @@ describe('list_emails search', () => {
     const client = await connectRead(fakeReadService({}));
     const tool = (await client.listTools()).tools.find((t) => t.name === 'list_emails');
 
-    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(
-      expect.arrayContaining(['query', 'from', 'to', 'subject', 'after', 'before']),
-    );
+    expect(Object.keys(tool?.inputSchema.properties ?? {})).toEqual(expect.arrayContaining(['query', 'from', 'to', 'subject', 'after', 'before']));
     expect(tool?.inputSchema.properties?.query).toMatchObject({ maxLength: 200 });
     expect(tool?.description).toContain('examines at most 1000 messages per folder');
     expect(tool?.description).toContain('keep paging until it is absent');
@@ -909,21 +816,14 @@ describe('send_email forwarding', () => {
   it('accepts { emailId, attachmentId } only when the read tools exist', async () => {
     const sendOnly = await connect(vi.fn());
     const withRead = await connectRead(fakeReadService({}));
-    const attachments = async (client: Client) =>
-      (await client.listTools()).tools.find((t) => t.name === 'send_email')?.inputSchema.properties
-        ?.attachments as ArraySchema;
+    const attachments = async (client: Client) => (await client.listTools()).tools.find((t) => t.name === 'send_email')?.inputSchema.properties?.attachments as ArraySchema;
 
     const plain = await attachments(sendOnly);
     expect(plain.items?.anyOf).toBeUndefined();
-    expect(Object.keys((plain.items?.properties as Record<string, unknown>) ?? {})).toEqual([
-      'uploadId',
-    ]);
+    expect(Object.keys((plain.items?.properties as Record<string, unknown>) ?? {})).toEqual(['uploadId']);
 
     const either = await attachments(withRead);
-    expect(either.items?.anyOf?.map((option) => Object.keys(option.properties ?? {}))).toEqual([
-      ['uploadId'],
-      ['emailId', 'attachmentId'],
-    ]);
+    expect(either.items?.anyOf?.map((option) => Object.keys(option.properties ?? {}))).toEqual([['uploadId'], ['emailId', 'attachmentId']]);
   });
 
   it('passes a stored reference to the email service', async () => {
@@ -944,21 +844,15 @@ describe('send_email forwarding', () => {
       },
     });
 
-    expect(send).toHaveBeenCalledWith(
-      expect.objectContaining({ attachments: [{ emailId: 'H', attachmentId: '2' }] }),
-    );
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ attachments: [{ emailId: 'H', attachmentId: '2' }] }));
   });
 
   it('tells the agent how to forward', async () => {
     const client = await connectRead(fakeReadService({}));
     const tools = (await client.listTools()).tools;
 
-    expect(tools.find((t) => t.name === 'send_email')?.description).toContain(
-      'forwarded as is, with nothing downloaded or uploaded',
-    );
-    expect(tools.find((t) => t.name === 'get_email')?.description).toContain(
-      'to forward one, list { emailId: this id, attachmentId }',
-    );
+    expect(tools.find((t) => t.name === 'send_email')?.description).toContain('forwarded as is, with nothing downloaded or uploaded');
+    expect(tools.find((t) => t.name === 'get_email')?.description).toContain('to forward one, list { emailId: this id, attachmentId }');
   });
 });
 
@@ -979,9 +873,7 @@ describe('send_email idempotency', () => {
   });
 
   it('says plainly when a call replayed an earlier send', async () => {
-    const send = vi
-      .fn()
-      .mockResolvedValue({ id: 'e1', messageId: 'm1', sentAt: 't', replayed: true });
+    const send = vi.fn().mockResolvedValue({ id: 'e1', messageId: 'm1', sentAt: 't', replayed: true });
     const client = await connect(send);
 
     const result = await client.callTool({
@@ -1009,9 +901,7 @@ describe('send_email idempotency', () => {
 
 describe('list_emails empty pages', () => {
   it('says more remains when a filtered page matched nothing but has a cursor', async () => {
-    const client = await connectRead(
-      fakeReadService({ listEmails: vi.fn().mockResolvedValue({ emails: [], nextCursor: 'C' }) }),
-    );
+    const client = await connectRead(fakeReadService({ listEmails: vi.fn().mockResolvedValue({ emails: [], nextCursor: 'C' }) }));
 
     const result = await client.callTool({ name: 'list_emails', arguments: { query: 'x' } });
 
@@ -1020,13 +910,9 @@ describe('list_emails empty pages', () => {
   });
 
   it('says "No emails." only at the real end', async () => {
-    const client = await connectRead(
-      fakeReadService({ listEmails: vi.fn().mockResolvedValue({ emails: [] }) }),
-    );
+    const client = await connectRead(fakeReadService({ listEmails: vi.fn().mockResolvedValue({ emails: [] }) }));
 
-    expect(textOf(await client.callTool({ name: 'list_emails', arguments: {} }))).toBe(
-      'No emails.',
-    );
+    expect(textOf(await client.callTool({ name: 'list_emails', arguments: {} }))).toBe('No emails.');
   });
 });
 
@@ -1076,9 +962,7 @@ describe('get_email delivery reports', () => {
       attachmentCount: 0,
       sizeBytes: 50,
     };
-    const client = await connectRead(
-      fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }),
-    );
+    const client = await connectRead(fakeReadService({ getEmail: vi.fn().mockResolvedValue(email) }));
 
     const result = await client.callTool({ name: 'get_email', arguments: { id: 'ref-sent-9' } });
 
@@ -1086,12 +970,8 @@ describe('get_email delivery reports', () => {
     const text = textOf(result);
     expect(text).toContain('Status: bounced');
     expect(text).toContain('Delivery: delivered a@x.com at 2026-07-17T00:00:03.000Z');
-    expect(text).toContain(
-      'Delivery: bounced b@x.com at 2026-07-17T00:00:04.000Z (Permanent/General: 550 user unknown)',
-    );
+    expect(text).toContain('Delivery: bounced b@x.com at 2026-07-17T00:00:04.000Z (Permanent/General: 550 user unknown)');
     const tools = (await client.listTools()).tools;
-    expect(tools.find((t) => t.name === 'send_email')?.description).toContain(
-      'its status becomes "delivered" or "bounced"',
-    );
+    expect(tools.find((t) => t.name === 'send_email')?.description).toContain('its status becomes "delivered" or "bounced"');
   });
 });

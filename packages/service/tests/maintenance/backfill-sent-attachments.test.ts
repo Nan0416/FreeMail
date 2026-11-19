@@ -13,11 +13,7 @@ import type {
   UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
 import type { OutboundObjectStore } from '../../src/facades/s3-outbound-object-store.js';
-import {
-  backfillSentAttachments,
-  DdbSentAttachmentsWriter,
-  type SentAttachmentsWriter,
-} from '../../src/maintenance/backfill-sent-attachments.js';
+import { backfillSentAttachments, DdbSentAttachmentsWriter, type SentAttachmentsWriter } from '../../src/maintenance/backfill-sent-attachments.js';
 import type { RawMimeSource } from '../../src/services/email-read-service.js';
 import { buildRawMime } from '../../src/utils/mime.js';
 
@@ -52,9 +48,7 @@ class FakeDao implements EmailsDao {
   createInboundEmail(): Promise<CreateInboundEmailOutput> {
     return Promise.resolve({ created: true });
   }
-  queryEmailsByDirection(
-    input: QueryEmailsByDirectionInput,
-  ): Promise<QueryEmailsByDirectionOutput> {
+  queryEmailsByDirection(input: QueryEmailsByDirectionInput): Promise<QueryEmailsByDirectionOutput> {
     const start = input.afterSk ? this.rows.findIndex((r) => r.sk === input.afterSk) + 1 : 0;
     return Promise.resolve({ emails: this.rows.slice(start, start + input.limit) });
   }
@@ -68,10 +62,7 @@ class FakeDao implements EmailsDao {
 
 class FakeWriter implements SentAttachmentsWriter {
   readonly writes: { id: string; attachments: readonly SentAttachmentDescriptor[] }[] = [];
-  setAttachments(
-    row: { id: string },
-    attachments: readonly SentAttachmentDescriptor[],
-  ): Promise<void> {
+  setAttachments(row: { id: string }, attachments: readonly SentAttachmentDescriptor[]): Promise<void> {
     this.writes.push({ id: row.id, attachments });
     return Promise.resolve();
   }
@@ -95,11 +86,7 @@ class FakeStore implements OutboundObjectStore, RawMimeSource {
 }
 
 /** Archive a real composed MIME (what EmailService writes) with the given attachments. */
-async function archive(
-  store: FakeStore,
-  id: string,
-  attachments: { filename: string; contentType: string; body: string }[],
-): Promise<void> {
+async function archive(store: FakeStore, id: string, attachments: { filename: string; contentType: string; body: string }[]): Promise<void> {
   const raw = await buildRawMime({
     from: 'me@example.com',
     to: ['a@b.com'],
@@ -181,11 +168,7 @@ describe('backfillSentAttachments', () => {
   it('skips rows already recorded, without attachments, or without an archive', async () => {
     const store = new FakeStore();
     const backfill = run(
-      [
-        sentRow('done', { attachmentCount: 1, attachments: [] }),
-        sentRow('plain', { attachmentCount: 0 }),
-        sentRow('legacy', { attachmentCount: 1, rawS3Key: undefined }),
-      ],
+      [sentRow('done', { attachmentCount: 1, attachments: [] }), sentRow('plain', { attachmentCount: 0 }), sentRow('legacy', { attachmentCount: 1, rawS3Key: undefined })],
       store,
       true,
     );
@@ -230,10 +213,7 @@ describe('DdbSentAttachmentsWriter', () => {
       },
     } as unknown as DynamoDBDocumentClient;
 
-    await new DdbSentAttachmentsWriter(doc, 'emails-test').setAttachments(
-      { id: 's1', sentAt: '2026-09-10T00:00:00.000Z' },
-      [],
-    );
+    await new DdbSentAttachmentsWriter(doc, 'emails-test').setAttachments({ id: 's1', sentAt: '2026-09-10T00:00:00.000Z' }, []);
 
     expect(commands[0].input).toMatchObject({
       TableName: 'emails-test',

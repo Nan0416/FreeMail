@@ -21,8 +21,7 @@ function authorizerContext(event: APIGatewayProxyEventV2): AuthorizerLambdaConte
   // EVERY request, because `authMiddleware` attaches context for the whole app including
   // the public routes. A reader on the authorization path must degrade to "no context"
   // rather than throw a TypeError the error handler would then have to report as a 500.
-  const requestContext = event.requestContext as unknown as
-    { authorizer?: { lambda?: AuthorizerLambdaContext } } | undefined;
+  const requestContext = event.requestContext as unknown as { authorizer?: { lambda?: AuthorizerLambdaContext } } | undefined;
   return requestContext?.authorizer?.lambda ?? {};
 }
 

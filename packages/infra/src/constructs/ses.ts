@@ -7,14 +7,7 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
 import { CfnRecordSet, type IHostedZone } from 'aws-cdk-lib/aws-route53';
 import type { Bucket } from 'aws-cdk-lib/aws-s3';
-import {
-  ConfigurationSet,
-  EmailIdentity,
-  EmailSendingEvent,
-  EventDestination,
-  Identity,
-  SuppressionReasons,
-} from 'aws-cdk-lib/aws-ses';
+import { ConfigurationSet, EmailIdentity, EmailSendingEvent, EventDestination, Identity, SuppressionReasons } from 'aws-cdk-lib/aws-ses';
 import { SqsDestination } from 'aws-cdk-lib/aws-lambda-destinations';
 import { FilterOrPolicy, SubscriptionFilter, Topic } from 'aws-cdk-lib/aws-sns';
 import { Queue } from 'aws-cdk-lib/aws-sqs';
@@ -24,15 +17,7 @@ import type { SesIdentityMode } from '@freemail/shared/config';
 import { SELF_CONTAINED_BUNDLING } from './bundling.js';
 import { InboundConstruct } from './inbound.js';
 
-const HANDLERS_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  '..',
-  'service',
-  'src',
-  'handlers',
-);
+const HANDLERS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'service', 'src', 'handlers');
 
 export interface SesConstructProps {
   /** The Route53 zone that owns the email domain — all auth records are written here. */
@@ -153,13 +138,7 @@ export class SesConstruct extends Construct {
     });
     this.configurationSet.addEventDestination('BounceComplaintSns', {
       destination: EventDestination.snsTopic(this.bounceComplaintTopic),
-      events: [
-        EmailSendingEvent.DELIVERY,
-        EmailSendingEvent.BOUNCE,
-        EmailSendingEvent.COMPLAINT,
-        EmailSendingEvent.REJECT,
-        EmailSendingEvent.DELIVERY_DELAY,
-      ],
+      events: [EmailSendingEvent.DELIVERY, EmailSendingEvent.BOUNCE, EmailSendingEvent.COMPLAINT, EmailSendingEvent.REJECT, EmailSendingEvent.DELIVERY_DELAY],
     });
     this.bounceComplaintLogger = this.addBounceComplaintLogger();
     this.deliveryTracker = this.addDeliveryTracker(props.emailsTable);
@@ -179,14 +158,7 @@ export class SesConstruct extends Construct {
         feedbackForwarding: false,
       });
 
-      this.writeAuthRecords(
-        this.emailIdentity,
-        props.hostedZone,
-        props.emailDomain,
-        props.region,
-        props.inbound !== undefined,
-        props.extraTxtValues ?? [],
-      );
+      this.writeAuthRecords(this.emailIdentity, props.hostedZone, props.emailDomain, props.region, props.inbound !== undefined, props.extraTxtValues ?? []);
     }
 
     // SES owns its inbound receipt setup too: when inbound is enabled the stack passes
@@ -238,9 +210,7 @@ export class SesConstruct extends Construct {
     this.bounceComplaintTopic.addSubscription(
       new LambdaSubscription(logger, {
         filterPolicyWithMessageBody: {
-          eventType: FilterOrPolicy.filter(
-            SubscriptionFilter.stringFilter({ denylist: ['Delivery'] }),
-          ),
+          eventType: FilterOrPolicy.filter(SubscriptionFilter.stringFilter({ denylist: ['Delivery'] })),
         },
       }),
     );
@@ -273,22 +243,13 @@ export class SesConstruct extends Construct {
     tracker.configureAsyncInvoke({
       retryAttempts: 2,
       maxEventAge: Duration.hours(6),
-      onFailure: new SqsDestination(
-        new Queue(this, 'DeliveryTrackerDlq', { retentionPeriod: Duration.days(14) }),
-      ),
+      onFailure: new SqsDestination(new Queue(this, 'DeliveryTrackerDlq', { retentionPeriod: Duration.days(14) })),
     });
     this.bounceComplaintTopic.addSubscription(new LambdaSubscription(tracker));
     return tracker;
   }
 
-  private writeAuthRecords(
-    emailIdentity: EmailIdentity,
-    hostedZone: IHostedZone,
-    emailDomain: string,
-    region: string,
-    inboundEnabled: boolean,
-    extraTxtValues: readonly string[],
-  ): void {
+  private writeAuthRecords(emailIdentity: EmailIdentity, hostedZone: IHostedZone, emailDomain: string, region: string, inboundEnabled: boolean, extraTxtValues: readonly string[]): void {
     // Easy DKIM: 3 CNAMEs. `record.name` is already the fully-qualified host, so a
     // raw CfnRecordSet (which does no FQDN munging) is required — the L2
     // CnameRecord would append the zone name a second time and break DKIM.
@@ -330,11 +291,7 @@ export class SesConstruct extends Construct {
     });
   }
 
-  private record(
-    id: string,
-    hostedZone: IHostedZone,
-    props: { name: string; type: string; resourceRecords: string[] },
-  ): CfnRecordSet {
+  private record(id: string, hostedZone: IHostedZone, props: { name: string; type: string; resourceRecords: string[] }): CfnRecordSet {
     return new CfnRecordSet(this, `${id}Record`, {
       hostedZoneId: hostedZone.hostedZoneId,
       name: props.name,

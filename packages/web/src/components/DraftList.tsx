@@ -20,25 +20,13 @@ export function DraftList(props: DraftListProps): React.JSX.Element {
   return (
     <section aria-label="Drafts" className="flex h-full min-w-0 flex-col">
       <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="lg:hidden"
-          aria-label="Open navigation"
-          onClick={props.onOpenNav}
-        >
+        <Button variant="ghost" size="icon-sm" className="lg:hidden" aria-label="Open navigation" onClick={props.onOpenNav}>
           <Menu />
         </Button>
         <h1 className="text-[15px] font-semibold tracking-tight">Drafts</h1>
-        {props.drafts.length > 0 && (
-          <span className="ml-1 text-xs text-muted-foreground tabular-nums">
-            {props.drafts.length}
-          </span>
-        )}
+        {props.drafts.length > 0 && <span className="ml-1 text-xs text-muted-foreground tabular-nums">{props.drafts.length}</span>}
       </header>
-      <p className="shrink-0 border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
-        Drafts are saved in this browser only. Attachments aren&rsquo;t kept.
-      </p>
+      <p className="shrink-0 border-b bg-muted/40 px-4 py-2 text-xs text-muted-foreground">Drafts are saved in this browser only. Attachments aren&rsquo;t kept.</p>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {props.drafts.length === 0 ? (
           <div className="flex flex-col items-center px-6 py-16 text-center">
@@ -59,14 +47,9 @@ export function DraftList(props: DraftListProps): React.JSX.Element {
                     <span className="flex items-baseline gap-2">
                       <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
                         <span className="text-destructive/90">Draft</span>
-                        {draft.to.trim() && (
-                          <span className="text-foreground"> · To: {draft.to}</span>
-                        )}
+                        {draft.to.trim() && <span className="text-foreground"> · To: {draft.to}</span>}
                       </span>
-                      <time
-                        dateTime={draft.updatedAt}
-                        className="shrink-0 text-xs text-muted-foreground tabular-nums"
-                      >
+                      <time dateTime={draft.updatedAt} className="shrink-0 text-xs text-muted-foreground tabular-nums">
                         {formatListDate(draft.updatedAt)}
                       </time>
                     </span>

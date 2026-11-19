@@ -1,15 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { AuthError } from '../../src/utils/errors.js';
-import type {
-  ApiKeysDao,
-  CreateApiKeyInput,
-  CreateApiKeyOutput,
-  DeleteApiKeyInput,
-  DeleteApiKeyOutput,
-  GetApiKeyInput,
-  GetApiKeyOutput,
-  ListApiKeysOutput,
-} from '../../src/data/api-keys-dao.js';
+import type { ApiKeysDao, CreateApiKeyInput, CreateApiKeyOutput, DeleteApiKeyInput, DeleteApiKeyOutput, GetApiKeyInput, GetApiKeyOutput, ListApiKeysOutput } from '../../src/data/api-keys-dao.js';
 import { parseApiKey } from '../../src/utils/api-key.js';
 import { ApiKeyService } from '../../src/services/api-key-service.js';
 

@@ -1,30 +1,9 @@
-import {
-  DOWNLOAD_PRESIGN_TTL_SECONDS,
-  MAX_UPLOAD_BYTES,
-  UPLOAD_URL_TTL_SECONDS,
-} from '@freemail/shared';
+import { DOWNLOAD_PRESIGN_TTL_SECONDS, MAX_UPLOAD_BYTES, UPLOAD_URL_TTL_SECONDS } from '@freemail/shared';
 import { describe, expect, it } from 'vitest';
-import type {
-  ClaimDownloadTokenInput,
-  ClaimDownloadTokenOutput,
-  CreateDownloadTokenOutput,
-  DownloadTokensDao,
-  GetDownloadTokenOutput,
-} from '../../src/data/download-tokens-dao.js';
-import type {
-  AttachmentPresigner,
-  PresignRequest,
-} from '../../src/facades/s3-attachment-presigner.js';
-import type {
-  UploadDeclaration,
-  UploadStore,
-  UploadedObject,
-} from '../../src/facades/s3-upload-store.js';
-import {
-  AttachmentService,
-  isValidUploadId,
-  uploadKey,
-} from '../../src/services/attachment-service.js';
+import type { ClaimDownloadTokenInput, ClaimDownloadTokenOutput, CreateDownloadTokenOutput, DownloadTokensDao, GetDownloadTokenOutput } from '../../src/data/download-tokens-dao.js';
+import type { AttachmentPresigner, PresignRequest } from '../../src/facades/s3-attachment-presigner.js';
+import type { UploadDeclaration, UploadStore, UploadedObject } from '../../src/facades/s3-upload-store.js';
+import { AttachmentService, isValidUploadId, uploadKey } from '../../src/services/attachment-service.js';
 import { contentDispositionForDownload } from '../../src/utils/content-disposition.js';
 import { EmailError } from '../../src/utils/errors.js';
 
@@ -141,40 +120,26 @@ describe('AttachmentService.createAttachmentUpload', () => {
 
   it('accepts up to 100 MB and rejects anything else — before presigning', async () => {
     const t = service();
-    await expect(
-      t.svc.createAttachmentUpload({ filename: 'big', sizeBytes: MAX_UPLOAD_BYTES }),
-    ).resolves.toBeDefined();
+    await expect(t.svc.createAttachmentUpload({ filename: 'big', sizeBytes: MAX_UPLOAD_BYTES })).resolves.toBeDefined();
     for (const sizeBytes of [0, -1, 1.5, MAX_UPLOAD_BYTES + 1, Number.NaN]) {
-      await expect(
-        t.svc.createAttachmentUpload({ filename: 'x', sizeBytes }),
-      ).rejects.toBeInstanceOf(EmailError);
+      await expect(t.svc.createAttachmentUpload({ filename: 'x', sizeBytes })).rejects.toBeInstanceOf(EmailError);
     }
     expect(t.uploads.presigned).toHaveLength(1);
   });
 
   it('rejects an empty or overlong filename and a malformed content type', async () => {
     const t = service();
-    await expect(t.svc.createAttachmentUpload({ filename: '   ', sizeBytes: 1 })).rejects.toThrow(
-      /filename/,
-    );
-    await expect(
-      t.svc.createAttachmentUpload({ filename: 'x'.repeat(256), sizeBytes: 1 }),
-    ).rejects.toThrow(/filename/);
-    await expect(
-      t.svc.createAttachmentUpload({ filename: 'x', contentType: 'not a type', sizeBytes: 1 }),
-    ).rejects.toThrow(/contentType/);
+    await expect(t.svc.createAttachmentUpload({ filename: '   ', sizeBytes: 1 })).rejects.toThrow(/filename/);
+    await expect(t.svc.createAttachmentUpload({ filename: 'x'.repeat(256), sizeBytes: 1 })).rejects.toThrow(/filename/);
+    await expect(t.svc.createAttachmentUpload({ filename: 'x', contentType: 'not a type', sizeBytes: 1 })).rejects.toThrow(/contentType/);
   });
 
   it('rejects a filename too long for S3 metadata once encoded, before presigning', async () => {
     const t = service();
     // Each CJK character encodes to 9 bytes: 200 of them (1800) is the limit, 201 is over —
     // both well within the 255-character limit.
-    await expect(
-      t.svc.createAttachmentUpload({ filename: '文'.repeat(201), sizeBytes: 1 }),
-    ).rejects.toThrow(/too long/);
-    await expect(
-      t.svc.createAttachmentUpload({ filename: '文'.repeat(200), sizeBytes: 1 }),
-    ).resolves.toBeDefined();
+    await expect(t.svc.createAttachmentUpload({ filename: '文'.repeat(201), sizeBytes: 1 })).rejects.toThrow(/too long/);
+    await expect(t.svc.createAttachmentUpload({ filename: '文'.repeat(200), sizeBytes: 1 })).resolves.toBeDefined();
     expect(t.uploads.presigned).toHaveLength(1);
   });
 

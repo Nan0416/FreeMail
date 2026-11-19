@@ -19,12 +19,7 @@
  * `outputSchema`), and `content[].text` wraps inbound content in a nonce-delimited frame.
  * See {@link ../email/untrusted-frame}.
  */
-import type {
-  EmailDetail,
-  EmailListItem,
-  ListEmailsResponse,
-  SendEmailRequest,
-} from '@freemail/shared';
+import type { EmailDetail, EmailListItem, ListEmailsResponse, SendEmailRequest } from '@freemail/shared';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { randomUUID } from 'node:crypto';
@@ -34,15 +29,7 @@ import type { EmailReadService } from '../services/email-read-service.js';
 import type { AttachmentUploader } from '../services/attachment-service.js';
 import type { EmailService } from '../services/email-service.js';
 import { detailTrust, frameUntrusted, listTrust } from '../utils/untrusted-frame.js';
-import {
-  createAttachmentUploadTool,
-  getEmailAttachmentUrlTool,
-  getEmailTool,
-  listEmailsTool,
-  sendEmailTool,
-  serverInstructions,
-  type McpDeploymentInfo,
-} from './tool-definitions.js';
+import { createAttachmentUploadTool, getEmailAttachmentUrlTool, getEmailTool, listEmailsTool, sendEmailTool, serverInstructions, type McpDeploymentInfo } from './tool-definitions.js';
 
 export const MCP_SERVER_NAME = 'freemail';
 export const MCP_SERVER_VERSION = '0.1.0';
@@ -77,10 +64,7 @@ function toolErrorResult(error: unknown, genericMessage: string, logLabel: strin
 }
 
 /** `create_attachment_upload`: a presigned PUT for one attachment ({@link AttachmentUploader}). */
-export async function handleCreateUpload(
-  attachmentService: AttachmentUploader,
-  args: { filename: string; contentType?: string | undefined; sizeBytes: number },
-): Promise<CallToolResult> {
+export async function handleCreateUpload(attachmentService: AttachmentUploader, args: { filename: string; contentType?: string | undefined; sizeBytes: number }): Promise<CallToolResult> {
   try {
     const upload = await attachmentService.createAttachmentUpload({
       filename: args.filename,
@@ -100,11 +84,7 @@ export async function handleCreateUpload(
       structuredContent: { ...upload },
     };
   } catch (error) {
-    return toolErrorResult(
-      error,
-      'Failed to create the upload due to an internal error.',
-      'create_attachment_upload tool: unexpected failure',
-    );
+    return toolErrorResult(error, 'Failed to create the upload due to an internal error.', 'create_attachment_upload tool: unexpected failure');
   }
 }
 
@@ -112,10 +92,7 @@ export async function handleCreateUpload(
  * The `send_email` tool body. Exported so the success/known-failure/unexpected-failure
  * branches are asserted without driving the MCP protocol.
  */
-export async function handleSendEmail(
-  emailService: EmailService,
-  request: SendEmailRequest,
-): Promise<CallToolResult> {
+export async function handleSendEmail(emailService: EmailService, request: SendEmailRequest): Promise<CallToolResult> {
   try {
     const result = await emailService.sendEmail(request);
     return {
@@ -124,32 +101,20 @@ export async function handleSendEmail(
           type: 'text',
           text:
             (result.replayed
-              ? `Not sent again: this idempotencyKey already sent email ${result.id} (SES message ` +
-                `${result.messageId}) at ${result.sentAt}.`
+              ? `Not sent again: this idempotencyKey already sent email ${result.id} (SES message ` + `${result.messageId}) at ${result.sentAt}.`
               : `Sent email ${result.id} (SES message ${result.messageId}) at ${result.sentAt}.`) +
-            (result.threaded === false
-              ? ' It is NOT threaded: the original has no usable Message-ID, so it starts a new ' +
-                'conversation.'
-              : ''),
+            (result.threaded === false ? ' It is NOT threaded: the original has no usable Message-ID, so it starts a new ' + 'conversation.' : ''),
         },
       ],
       structuredContent: { ...result },
     };
   } catch (error) {
-    return toolErrorResult(
-      error,
-      'Failed to send the email due to an internal error.',
-      'send_email tool: unexpected failure sending email',
-    );
+    return toolErrorResult(error, 'Failed to send the email due to an internal error.', 'send_email tool: unexpected failure sending email');
   }
 }
 
 /** `list_emails`: the merged/direction-filtered timeline page over {@link EmailReadService}. */
-export async function handleListEmails(
-  readService: EmailReadService,
-  nonce: () => string,
-  args: RawListEmailsInput,
-): Promise<CallToolResult> {
+export async function handleListEmails(readService: EmailReadService, nonce: () => string, args: RawListEmailsInput): Promise<CallToolResult> {
   try {
     const query = parseListEmailsQuery(args);
     const page = await readService.listEmails(query);
@@ -162,20 +127,12 @@ export async function handleListEmails(
       },
     };
   } catch (error) {
-    return toolErrorResult(
-      error,
-      'Failed to list emails due to an internal error.',
-      'list_emails tool: unexpected failure listing emails',
-    );
+    return toolErrorResult(error, 'Failed to list emails due to an internal error.', 'list_emails tool: unexpected failure listing emails');
   }
 }
 
 /** `get_email`: one message (body materialized on demand for exposable inbound). */
-export async function handleGetEmail(
-  readService: EmailReadService,
-  nonce: () => string,
-  args: { id: string },
-): Promise<CallToolResult> {
+export async function handleGetEmail(readService: EmailReadService, nonce: () => string, args: { id: string }): Promise<CallToolResult> {
   try {
     const email = await readService.getEmail({ handle: args.id });
     return {
@@ -183,19 +140,12 @@ export async function handleGetEmail(
       structuredContent: { trust: detailTrust(email.direction), email },
     };
   } catch (error) {
-    return toolErrorResult(
-      error,
-      'Failed to read the email due to an internal error.',
-      'get_email tool: unexpected failure reading email',
-    );
+    return toolErrorResult(error, 'Failed to read the email due to an internal error.', 'get_email tool: unexpected failure reading email');
   }
 }
 
 /** `get_email_attachment_url`: a short-lived presigned download URL, verbatim from #11. */
-export async function handleGetEmailAttachmentUrl(
-  readService: EmailReadService,
-  args: { id: string; attachmentId: string },
-): Promise<CallToolResult> {
+export async function handleGetEmailAttachmentUrl(readService: EmailReadService, args: { id: string; attachmentId: string }): Promise<CallToolResult> {
   try {
     const result = await readService.getAttachmentUrl({
       handle: args.id,
@@ -211,11 +161,7 @@ export async function handleGetEmailAttachmentUrl(
       structuredContent: { ...result },
     };
   } catch (error) {
-    return toolErrorResult(
-      error,
-      'Failed to mint the attachment URL due to an internal error.',
-      'get_email_attachment_url tool: unexpected failure minting URL',
-    );
+    return toolErrorResult(error, 'Failed to mint the attachment URL due to an internal error.', 'get_email_attachment_url tool: unexpected failure minting URL');
   }
 }
 
@@ -224,22 +170,17 @@ function renderListText(page: ListEmailsResponse, nonce: () => string): string {
   if (page.emails.length === 0) {
     // With a text filter, a page can examine its whole budget and match nothing while more
     // remains — so an empty page is only the end when there is no cursor.
-    return page.nextCursor
-      ? 'No matches in this stretch of the mailbox, but more remains to search — pass nextCursor.'
-      : 'No emails.';
+    return page.nextCursor ? 'No matches in this stretch of the mailbox, but more remains to search — pass nextCursor.' : 'No emails.';
   }
   const header = `${page.emails.length} email(s)${page.nextCursor ? ' (more available — pass nextCursor)' : ''}.`;
   const rows = page.emails.map(listRow).join('\n');
   // If ANY row is inbound, frame the whole rendered list — over-marking own sent rows is safe.
-  const body = page.emails.some((email) => email.direction === 'inbound')
-    ? frameUntrusted(nonce(), rows)
-    : rows;
+  const body = page.emails.some((email) => email.direction === 'inbound') ? frameUntrusted(nonce(), rows) : rows;
   return `${header}\n${body}`;
 }
 
 function listRow(email: EmailListItem): string {
-  const who =
-    email.direction === 'inbound' ? `from ${email.from}` : `to ${email.to.join(', ') || '(none)'}`;
+  const who = email.direction === 'inbound' ? `from ${email.from}` : `to ${email.to.join(', ') || '(none)'}`;
   let flags = '';
   if (email.direction === 'inbound' && email.failed) {
     flags = ' [failed: content not extracted]';
@@ -262,9 +203,7 @@ function renderDetailText(email: EmailDetail, nonce: () => string): string {
     }
     for (const event of email.deliveryEvents ?? []) {
       const who = event.recipients.length ? ` ${event.recipients.join(', ')}` : '';
-      lines.push(
-        `Delivery: ${event.type}${who} at ${event.at}${event.detail ? ` (${event.detail})` : ''}`,
-      );
+      lines.push(`Delivery: ${event.type}${who} at ${event.at}${event.detail ? ` (${event.detail})` : ''}`);
     }
     lines.push(`To: ${email.to.join(', ') || '(none)'}`);
     if (email.cc.length) {
@@ -277,9 +216,7 @@ function renderDetailText(email: EmailDetail, nonce: () => string): string {
     if (email.text !== undefined) {
       lines.push(email.text);
     } else if (email.html !== undefined) {
-      lines.push(
-        `(HTML body — ${Buffer.byteLength(email.html, 'utf8')} bytes; raw HTML in structuredContent.email.html.)`,
-      );
+      lines.push(`(HTML body — ${Buffer.byteLength(email.html, 'utf8')} bytes; raw HTML in structuredContent.email.html.)`);
     } else {
       lines.push('(No stored body for this message.)');
     }
@@ -308,9 +245,7 @@ function inboundDetailInner(email: EmailDetail): string {
   if (email.text !== undefined) {
     lines.push(email.text);
   } else if (email.html !== undefined) {
-    lines.push(
-      `(HTML body — ${Buffer.byteLength(email.html, 'utf8')} bytes; raw HTML in structuredContent.email.html. Sandbox before rendering.)`,
-    );
+    lines.push(`(HTML body — ${Buffer.byteLength(email.html, 'utf8')} bytes; raw HTML in structuredContent.email.html. Sandbox before rendering.)`);
   } else {
     lines.push('(No readable body — content suppressed or not exposable.)');
   }
@@ -329,30 +264,15 @@ function inboundDetailInner(email: EmailDetail): string {
  */
 export function buildMcpServer(deps: McpServerDeps): McpServer {
   const readService = deps.inboundEnabled ? deps.readService : undefined;
-  const server = new McpServer(
-    { name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION },
-    { instructions: serverInstructions(deps.deployment, readService !== undefined) },
-  );
-  server.registerTool(
-    'send_email',
-    sendEmailTool(deps.deployment, readService !== undefined),
-    (args) => handleSendEmail(deps.emailService, args),
-  );
-  server.registerTool('create_attachment_upload', createAttachmentUploadTool(), (args) =>
-    handleCreateUpload(deps.attachmentService, args),
-  );
+  const server = new McpServer({ name: MCP_SERVER_NAME, version: MCP_SERVER_VERSION }, { instructions: serverInstructions(deps.deployment, readService !== undefined) });
+  server.registerTool('send_email', sendEmailTool(deps.deployment, readService !== undefined), (args) => handleSendEmail(deps.emailService, args));
+  server.registerTool('create_attachment_upload', createAttachmentUploadTool(), (args) => handleCreateUpload(deps.attachmentService, args));
 
   if (readService) {
     const nonce = deps.nonce ?? (() => randomUUID());
-    server.registerTool('list_emails', listEmailsTool(deps.deployment), (args) =>
-      handleListEmails(readService, nonce, args),
-    );
-    server.registerTool('get_email', getEmailTool(), (args) =>
-      handleGetEmail(readService, nonce, args),
-    );
-    server.registerTool('get_email_attachment_url', getEmailAttachmentUrlTool(), (args) =>
-      handleGetEmailAttachmentUrl(readService, args),
-    );
+    server.registerTool('list_emails', listEmailsTool(deps.deployment), (args) => handleListEmails(readService, nonce, args));
+    server.registerTool('get_email', getEmailTool(), (args) => handleGetEmail(readService, nonce, args));
+    server.registerTool('get_email_attachment_url', getEmailAttachmentUrlTool(), (args) => handleGetEmailAttachmentUrl(readService, args));
   }
 
   return server;

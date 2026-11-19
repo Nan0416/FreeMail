@@ -9,14 +9,7 @@
  * presigned-download flow the read slice (#11) adds.
  */
 import { Readable } from 'node:stream';
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-  PutObjectTaggingCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, PutObjectTaggingCommand, S3Client } from '@aws-sdk/client-s3';
 import { INBOUND_INGESTED_TAG } from '@freemail/shared/storage';
 
 /** Trusted object metadata from a HEAD — the size gate + the stable receipt time. */
@@ -82,9 +75,7 @@ export class S3InboundObjectStore implements InboundObjectStore {
   }
 
   async getHead(key: string, maxBytes: number): Promise<Buffer> {
-    const out = await this.client.send(
-      new GetObjectCommand({ Bucket: this.bucket, Key: key, Range: `bytes=0-${maxBytes - 1}` }),
-    );
+    const out = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key, Range: `bytes=0-${maxBytes - 1}` }));
     if (!out.Body) {
       return Buffer.alloc(0);
     }

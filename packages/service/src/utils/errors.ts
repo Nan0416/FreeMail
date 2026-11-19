@@ -41,23 +41,11 @@ export class AuthError extends Error {
 
 export const authErrors = {
   invalidRequest: (message = 'Invalid request.') => new AuthError('invalid_request', 400, message),
-  weakPassword: () =>
-    new AuthError('weak_password', 400, 'Password does not meet the minimum length requirement.'),
+  weakPassword: () => new AuthError('weak_password', 400, 'Password does not meet the minimum length requirement.'),
   invalidCredentials: () => new AuthError('invalid_credentials', 401, 'Incorrect password.'),
-  accountLocked: (retryAfterSeconds: number) =>
-    new AuthError(
-      'account_locked',
-      429,
-      'Too many failed attempts. Try again later.',
-      retryAfterSeconds,
-    ),
+  accountLocked: (retryAfterSeconds: number) => new AuthError('account_locked', 429, 'Too many failed attempts. Try again later.', retryAfterSeconds),
   invalidToken: () => new AuthError('invalid_token', 401, 'Invalid or expired token.'),
-  unsupportedMediaType: () =>
-    new AuthError(
-      'unsupported_media_type',
-      415,
-      'Content-Type must be application/json for this request.',
-    ),
+  unsupportedMediaType: () => new AuthError('unsupported_media_type', 415, 'Content-Type must be application/json for this request.'),
   forbidden: (message = 'Forbidden.') => new AuthError('forbidden', 403, message),
 };
 

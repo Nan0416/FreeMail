@@ -37,10 +37,7 @@ export interface FailureReason {
  * The reason a received message's content was withheld, or null when it wasn't (it is clean
  * and parsed — at most spam). A virus verdict other than PASS outranks a parse problem.
  */
-export function failureReason(email: {
-  readonly virusVerdict?: InboundVerdict;
-  readonly parseStatus?: InboundParseStatus;
-}): FailureReason | null {
+export function failureReason(email: { readonly virusVerdict?: InboundVerdict; readonly parseStatus?: InboundParseStatus }): FailureReason | null {
   if (email.virusVerdict !== undefined && email.virusVerdict !== 'PASS') {
     if (email.virusVerdict === 'FAIL') {
       return { label: 'Virus', detail: 'it failed a virus scan', suspicious: true };
@@ -143,10 +140,7 @@ export function sentStatusNotice(email: EmailDetail): string | null {
     const bounced = (email.deliveryEvents ?? []).filter((event) => event.type === 'bounced');
     const who = [...new Set(bounced.flatMap((event) => event.recipients))];
     const reason = bounced.find((event) => event.detail)?.detail;
-    return (
-      `This message bounced${who.length ? ` for ${who.join(', ')}` : ''}` +
-      `${reason ? `: ${reason}` : ''}.`
-    );
+    return `This message bounced${who.length ? ` for ${who.join(', ')}` : ''}` + `${reason ? `: ${reason}` : ''}.`;
   }
   if (email.status === 'sending') {
     return 'This message is still sending, or its outcome is unknown — it may have gone out.';

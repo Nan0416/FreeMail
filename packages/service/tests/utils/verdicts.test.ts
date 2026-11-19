@@ -6,18 +6,10 @@ const lines = (raw: string) => parseHeaderLines(raw);
 
 describe('verdictFromHeaders', () => {
   it('normalizes a single known verdict', () => {
-    expect(verdictFromHeaders(lines('X-SES-Spam-Verdict: PASS'), 'x-ses-spam-verdict')).toBe(
-      'PASS',
-    );
-    expect(verdictFromHeaders(lines('X-SES-Virus-Verdict: FAIL'), 'x-ses-virus-verdict')).toBe(
-      'FAIL',
-    );
-    expect(verdictFromHeaders(lines('X-SES-Spam-Verdict: GRAY'), 'x-ses-spam-verdict')).toBe(
-      'GRAY',
-    );
-    expect(
-      verdictFromHeaders(lines('X-SES-Virus-Verdict: PROCESSING_FAILED'), 'x-ses-virus-verdict'),
-    ).toBe('PROCESSING_FAILED');
+    expect(verdictFromHeaders(lines('X-SES-Spam-Verdict: PASS'), 'x-ses-spam-verdict')).toBe('PASS');
+    expect(verdictFromHeaders(lines('X-SES-Virus-Verdict: FAIL'), 'x-ses-virus-verdict')).toBe('FAIL');
+    expect(verdictFromHeaders(lines('X-SES-Spam-Verdict: GRAY'), 'x-ses-spam-verdict')).toBe('GRAY');
+    expect(verdictFromHeaders(lines('X-SES-Virus-Verdict: PROCESSING_FAILED'), 'x-ses-virus-verdict')).toBe('PROCESSING_FAILED');
   });
 
   it('is ABSENT when the header is missing', () => {
@@ -31,17 +23,13 @@ describe('verdictFromHeaders', () => {
   });
 
   it('is UNKNOWN for an unrecognized token', () => {
-    expect(verdictFromHeaders(lines('X-SES-Virus-Verdict: WHATEVER'), 'x-ses-virus-verdict')).toBe(
-      'UNKNOWN',
-    );
+    expect(verdictFromHeaders(lines('X-SES-Virus-Verdict: WHATEVER'), 'x-ses-virus-verdict')).toBe('UNKNOWN');
   });
 });
 
 describe('extractVerdicts', () => {
   it('reads both SES verdicts', () => {
-    expect(extractVerdicts(lines('X-SES-Spam-Verdict: PASS\r\nX-SES-Virus-Verdict: PASS'))).toEqual(
-      { spamVerdict: 'PASS', virusVerdict: 'PASS' },
-    );
+    expect(extractVerdicts(lines('X-SES-Spam-Verdict: PASS\r\nX-SES-Virus-Verdict: PASS'))).toEqual({ spamVerdict: 'PASS', virusVerdict: 'PASS' });
   });
 });
 
@@ -60,23 +48,17 @@ describe('decideExposure — fail closed', () => {
     });
   });
 
-  it.each(['FAIL', 'GRAY', 'PROCESSING_FAILED', 'CONFLICTING', 'ABSENT', 'UNKNOWN'] as const)(
-    'suppresses content when virus verdict is %s (no affirmative PASS)',
-    (virusVerdict) => {
-      expect(decideExposure({ spamVerdict: 'PASS', virusVerdict }, 'ok')).toEqual({
-        exposeContent: false,
-        quarantined: true,
-      });
-    },
-  );
+  it.each(['FAIL', 'GRAY', 'PROCESSING_FAILED', 'CONFLICTING', 'ABSENT', 'UNKNOWN'] as const)('suppresses content when virus verdict is %s (no affirmative PASS)', (virusVerdict) => {
+    expect(decideExposure({ spamVerdict: 'PASS', virusVerdict }, 'ok')).toEqual({
+      exposeContent: false,
+      quarantined: true,
+    });
+  });
 
-  it.each(['oversize', 'limit_exceeded', 'parse_failed'] as const)(
-    'suppresses content when parse status is %s even with virus PASS',
-    (parseStatus) => {
-      expect(decideExposure({ spamVerdict: 'PASS', virusVerdict: 'PASS' }, parseStatus)).toEqual({
-        exposeContent: false,
-        quarantined: true,
-      });
-    },
-  );
+  it.each(['oversize', 'limit_exceeded', 'parse_failed'] as const)('suppresses content when parse status is %s even with virus PASS', (parseStatus) => {
+    expect(decideExposure({ spamVerdict: 'PASS', virusVerdict: 'PASS' }, parseStatus)).toEqual({
+      exposeContent: false,
+      quarantined: true,
+    });
+  });
 });

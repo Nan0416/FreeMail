@@ -41,21 +41,13 @@ export interface MergeQueryResult {
 }
 
 /** Fetch one partition newest-first, strictly older than `afterSk`. */
-export type MergeQuery = (
-  direction: Direction,
-  opts: { readonly limit: number; readonly afterSk?: string },
-) => Promise<MergeQueryResult>;
+export type MergeQuery = (direction: Direction, opts: { readonly limit: number; readonly afterSk?: string }) => Promise<MergeQueryResult>;
 
 /**
  * Adapt a plain page query (at most `limit` rows, fewer only at the partition's end) to a
  * {@link MergeQuery}: a short page is the end, and the last row is how far it read.
  */
-export function pageQuery(
-  query: (
-    direction: Direction,
-    opts: { readonly limit: number; readonly afterSk?: string },
-  ) => Promise<readonly EmailSummary[]>,
-): MergeQuery {
+export function pageQuery(query: (direction: Direction, opts: { readonly limit: number; readonly afterSk?: string }) => Promise<readonly EmailSummary[]>): MergeQuery {
   return async (direction, opts) => {
     const rows = await query(direction, opts);
     return {
@@ -139,9 +131,7 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
   const directions: Direction[] = params.direction ? [params.direction] : ['sent', 'inbound'];
 
   // The folders are independent: ask them at once.
-  const results = await Promise.all(
-    directions.map((dir) => params.query(dir, { limit: params.limit, afterSk: decoded[dir] })),
-  );
+  const results = await Promise.all(directions.map((dir) => params.query(dir, { limit: params.limit, afterSk: decoded[dir] })));
   const fetched = {} as Record<Direction, MergeQueryResult>;
   directions.forEach((dir, index) => {
     fetched[dir] = results[index] as MergeQueryResult;
@@ -159,11 +149,7 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
 
   // Remember which listed partition each row was fetched from: a row's own `direction` can't
   // say (an Errors-folder row is a `direction: 'inbound'` message fetched as `failed`).
-  const pool = directions.flatMap((dir) =>
-    fetched[dir].rows
-      .filter((row) => floor === undefined || row.sk >= floor)
-      .map((row) => ({ dir, row })),
-  );
+  const pool = directions.flatMap((dir) => fetched[dir].rows.filter((row) => floor === undefined || row.sk >= floor).map((row) => ({ dir, row })));
   pool.sort((a, b) => bySkDescending(a.row, b.row));
   const page = pool.slice(0, params.limit);
   const rows = page.map((entry) => entry.row);
@@ -178,11 +164,7 @@ export async function listEmailsPage(params: ListEmailsParams): Promise<MergedPa
     // last match). Otherwise resume after the last row emitted — the page is sk-descending, so
     // that is its lowest — or, if none was, where it started, re-fetching what lost the merge.
     const lastEmittedSk =
-      emitted.length === result.rows.length
-        ? (result.scannedToSk ?? emitted[emitted.length - 1]?.sk ?? decoded[dir])
-        : emitted.length > 0
-          ? emitted[emitted.length - 1].sk
-          : decoded[dir];
+      emitted.length === result.rows.length ? (result.scannedToSk ?? emitted[emitted.length - 1]?.sk ?? decoded[dir]) : emitted.length > 0 ? emitted[emitted.length - 1].sk : decoded[dir];
     // ALWAYS carry this direction's continuation position — even if it drained this page.
     // Omitting it would make the next page restart the direction from the newest row
     // (re-emitting everything → dupes / non-termination). A drained direction simply

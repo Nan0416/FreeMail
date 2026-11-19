@@ -1,19 +1,8 @@
 import { MAX_READ_BODY_BYTES } from '@freemail/shared';
 import { describe, expect, it } from 'vitest';
 import type { CreateInboundEmailInput, StoredEmailBody } from '../../src/data/emails-dao.js';
-import {
-  parseStoredBody,
-  type MailBodyContent,
-  type MailBodyStore,
-} from '../../src/facades/s3-mail-body-store.js';
-import {
-  MAX_INLINE_BODY_BYTES,
-  MAX_INLINE_ROW_BYTES,
-  bodyKey,
-  estimateRowBytes,
-  loadEmailBody,
-  storeEmailBody,
-} from '../../src/services/email-body-storage.js';
+import { parseStoredBody, type MailBodyContent, type MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
+import { MAX_INLINE_BODY_BYTES, MAX_INLINE_ROW_BYTES, bodyKey, estimateRowBytes, loadEmailBody, storeEmailBody } from '../../src/services/email-body-storage.js';
 
 /** Round-trips every body through JSON, like the real S3 object, so nothing rides by reference. */
 class FakeBodyStore implements MailBodyStore {
@@ -43,16 +32,7 @@ function dynamoItemBytes(value: unknown): number {
     return 3 + value.reduce((sum: number, item) => sum + 1 + dynamoItemBytes(item), 0);
   }
   if (typeof value === 'object') {
-    return (
-      3 +
-      Object.entries(value as Record<string, unknown>).reduce(
-        (sum, [name, item]) =>
-          item === undefined
-            ? sum
-            : sum + 1 + Buffer.byteLength(name, 'utf8') + dynamoItemBytes(item),
-        0,
-      )
-    );
+    return 3 + Object.entries(value as Record<string, unknown>).reduce((sum, [name, item]) => (item === undefined ? sum : sum + 1 + Buffer.byteLength(name, 'utf8') + dynamoItemBytes(item)), 0);
   }
   return 0;
 }
@@ -208,8 +188,6 @@ describe('loadEmailBody', () => {
     expect(await loadEmailBody(store, { kind: 's3', s3Key: 'bodies/sent/s1.json' })).toEqual({
       text: 'hi',
     });
-    expect(
-      await loadEmailBody(store, { kind: 's3', s3Key: 'bodies/sent/missing.json' }),
-    ).toBeNull();
+    expect(await loadEmailBody(store, { kind: 's3', s3Key: 'bodies/sent/missing.json' })).toBeNull();
   });
 });

@@ -21,10 +21,6 @@ describe('avatarTint', () => {
 
 describe('parseRecipients', () => {
   it('splits on commas, semicolons and newlines and drops blanks', () => {
-    expect(parseRecipients(' a@x.com, b@x.com;c@x.com\n\n , ')).toEqual([
-      'a@x.com',
-      'b@x.com',
-      'c@x.com',
-    ]);
+    expect(parseRecipients(' a@x.com, b@x.com;c@x.com\n\n , ')).toEqual(['a@x.com', 'b@x.com', 'c@x.com']);
   });
 });

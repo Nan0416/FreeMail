@@ -26,47 +26,34 @@ export class KeysEndpoints implements Endpoints {
   constructor(apiKeyService: ApiKeyService) {
     this.router = Router();
 
-    this.router.post(
-      '/keys',
-      requireJsonContentType,
-      requireAccessScheme,
-      async (req: Request, res: Response, next: NextFunction) => {
-        try {
-          const name = optionalString(requireBody(req), 'name');
-          logger.info('POST /keys.');
-          res.status(201).json(await apiKeyService.createApiKey({ name }));
-        } catch (err) {
-          next(err);
-        }
-      },
-    );
+    this.router.post('/keys', requireJsonContentType, requireAccessScheme, async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const name = optionalString(requireBody(req), 'name');
+        logger.info('POST /keys.');
+        res.status(201).json(await apiKeyService.createApiKey({ name }));
+      } catch (err) {
+        next(err);
+      }
+    });
 
-    this.router.get(
-      '/keys',
-      requireAccessScheme,
-      async (_req: Request, res: Response, next: NextFunction) => {
-        try {
-          logger.info('GET /keys.');
-          res.status(200).json(await apiKeyService.listApiKeys({}));
-        } catch (err) {
-          next(err);
-        }
-      },
-    );
+    this.router.get('/keys', requireAccessScheme, async (_req: Request, res: Response, next: NextFunction) => {
+      try {
+        logger.info('GET /keys.');
+        res.status(200).json(await apiKeyService.listApiKeys({}));
+      } catch (err) {
+        next(err);
+      }
+    });
 
-    this.router.delete(
-      '/keys/:id',
-      requireAccessScheme,
-      async (req: Request, res: Response, next: NextFunction) => {
-        try {
-          logger.info('DELETE /keys/:id.');
-          await apiKeyService.revokeApiKey({ keyId: requirePathParam(req, 'id') });
-          res.status(204).end();
-        } catch (err) {
-          next(err);
-        }
-      },
-    );
+    this.router.delete('/keys/:id', requireAccessScheme, async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        logger.info('DELETE /keys/:id.');
+        await apiKeyService.revokeApiKey({ keyId: requirePathParam(req, 'id') });
+        res.status(204).end();
+      } catch (err) {
+        next(err);
+      }
+    });
   }
 
   bind(app: Express): void {

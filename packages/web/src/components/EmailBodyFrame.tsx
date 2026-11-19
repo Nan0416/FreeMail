@@ -18,17 +18,6 @@ export interface EmailBodyFrameProps {
  * reading pane and scrolls internally — the correct script-free sizing.
  */
 export function EmailBodyFrame(props: EmailBodyFrameProps): React.JSX.Element {
-  const srcDoc = useMemo(
-    () => buildEmailSrcdoc(props.html, { allowImages: props.allowImages }),
-    [props.html, props.allowImages],
-  );
-  return (
-    <iframe
-      className="block min-h-80 w-full flex-1 border-0 bg-white"
-      title="Email content"
-      sandbox="allow-popups allow-popups-to-escape-sandbox"
-      referrerPolicy="no-referrer"
-      srcDoc={srcDoc}
-    />
-  );
+  const srcDoc = useMemo(() => buildEmailSrcdoc(props.html, { allowImages: props.allowImages }), [props.html, props.allowImages]);
+  return <iframe className="block min-h-80 w-full flex-1 border-0 bg-white" title="Email content" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" srcDoc={srcDoc} />;
 }

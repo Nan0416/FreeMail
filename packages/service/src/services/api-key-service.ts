@@ -4,12 +4,7 @@
  * {@link ApiKeysDao} and time through the injected clock, so every branch is
  * unit-testable without AWS.
  */
-import {
-  MAX_API_KEY_NAME_LENGTH,
-  type ApiKeySummary,
-  type CreateApiKeyResponse,
-  type ListApiKeysResponse,
-} from '@freemail/shared';
+import { MAX_API_KEY_NAME_LENGTH, type ApiKeySummary, type CreateApiKeyResponse, type ListApiKeysResponse } from '@freemail/shared';
 import { authErrors } from '../utils/errors.js';
 import type { ApiKeysDao, GetApiKeyOutput } from '../data/api-keys-dao.js';
 import { generateApiKey, parseApiKey, verifyApiKeySecret } from '../utils/api-key.js';
@@ -97,9 +92,7 @@ export class ApiKeyService {
    * key is malformed, unknown, or its secret does not match. Lookup by the public
    * keyId, then a constant-time secret comparison.
    */
-  async verifyApiKey(
-    request: VerifyApiKeyServiceRequest,
-  ): Promise<VerifyApiKeyServiceResponse | null> {
+  async verifyApiKey(request: VerifyApiKeyServiceRequest): Promise<VerifyApiKeyServiceResponse | null> {
     const parsed = parseApiKey(request.rawKey);
     if (!parsed) {
       return null;
@@ -120,9 +113,7 @@ export class ApiKeyService {
       return null;
     }
     if (trimmed.length > MAX_API_KEY_NAME_LENGTH) {
-      throw authErrors.invalidRequest(
-        `"name" must be at most ${MAX_API_KEY_NAME_LENGTH} characters.`,
-      );
+      throw authErrors.invalidRequest(`"name" must be at most ${MAX_API_KEY_NAME_LENGTH} characters.`);
     }
     return trimmed;
   }

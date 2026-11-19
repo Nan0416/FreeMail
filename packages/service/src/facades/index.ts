@@ -6,15 +6,7 @@
  * free of AWS entirely.
  */
 export { SesV2Sender, type SesSender, type SendRawParams } from './ses-email-facade.js';
-export {
-  S3AttachmentPresigner,
-  type AttachmentPresigner,
-  type PresignRequest,
-} from './s3-attachment-presigner.js';
+export { S3AttachmentPresigner, type AttachmentPresigner, type PresignRequest } from './s3-attachment-presigner.js';
 export { S3InboundObjectStore, type InboundObjectStore } from './s3-inbound-object-store.js';
 export { S3OutboundObjectStore, type OutboundObjectStore } from './s3-outbound-object-store.js';
-export {
-  DdbSigningKeyProvider,
-  StaticSigningKeyProvider,
-  type SigningKeyProvider,
-} from './signing-key-provider.js';
+export { DdbSigningKeyProvider, StaticSigningKeyProvider, type SigningKeyProvider } from './signing-key-provider.js';

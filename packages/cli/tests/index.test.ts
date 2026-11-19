@@ -1,13 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -64,10 +56,7 @@ describe('isEntryPoint', () => {
     try {
       // The bin alone, with no dist/ beside it — a fresh clone after `npm install`.
       mkdirSync(join(dir, 'bin'));
-      copyFileSync(
-        join(dirname(configPath()), 'packages', 'cli', 'bin', 'freemail.js'),
-        join(dir, 'bin', 'freemail.js'),
-      );
+      copyFileSync(join(dirname(configPath()), 'packages', 'cli', 'bin', 'freemail.js'), join(dir, 'bin', 'freemail.js'));
       writeFileSync(join(dir, 'package.json'), '{ "type": "module" }');
       const result = spawnSync(process.execPath, [join(dir, 'bin', 'freemail.js'), 'version'], {
         encoding: 'utf8',

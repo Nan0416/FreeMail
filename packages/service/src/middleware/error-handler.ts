@@ -31,12 +31,7 @@ interface BodyParserError extends Error {
   readonly status?: number;
 }
 
-export const errorHandler: ErrorRequestHandler = (
-  err: Error,
-  _req: Request,
-  res: Response,
-  next: NextFunction,
-): void => {
+export const errorHandler: ErrorRequestHandler = (err: Error, _req: Request, res: Response, next: NextFunction): void => {
   // Express requires the four-argument signature to recognize an error handler at all.
   // `next` is not decoration: once the response has begun, the only correct move is to
   // delegate to Express's default handler, which destroys the socket. Trying to write a
@@ -72,9 +67,7 @@ export const errorHandler: ErrorRequestHandler = (
  * Translate a body-parser rejection. These arrive before any route runs, so they must not
  * be reported as internal errors — the caller sent something we refused to parse.
  */
-function asBodyParserError(
-  err: Error,
-): { readonly status: number; readonly body: AuthErrorBody } | undefined {
+function asBodyParserError(err: Error): { readonly status: number; readonly body: AuthErrorBody } | undefined {
   const parserError = err as BodyParserError;
   if (parserError.type === 'entity.too.large') {
     return {

@@ -10,11 +10,7 @@ function json(status: number, body: unknown): Response {
 
 describe('loadRuntimeConfig', () => {
   it('loads and normalizes /config.json', async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(
-        json(200, { apiBaseUrl: 'https://api.example.com/', inboundEnabled: true }),
-      );
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json(200, { apiBaseUrl: 'https://api.example.com/', inboundEnabled: true }));
     await expect(loadRuntimeConfig(fetchMock)).resolves.toEqual({
       apiBaseUrl: 'https://api.example.com',
       inboundEnabled: true,
@@ -25,9 +21,7 @@ describe('loadRuntimeConfig', () => {
   });
 
   it('defaults inboundEnabled to false when the deployed config omits it', async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(json(200, { apiBaseUrl: 'https://api.example.com' }));
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json(200, { apiBaseUrl: 'https://api.example.com' }));
     await expect(loadRuntimeConfig(fetchMock)).resolves.toEqual({
       apiBaseUrl: 'https://api.example.com',
       inboundEnabled: false,

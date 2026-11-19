@@ -1,16 +1,6 @@
 import { useState } from 'react';
 import { EditorContent, useEditorState, type Editor } from '@tiptap/react';
-import {
-  Bold,
-  Italic,
-  Link2,
-  List,
-  ListOrdered,
-  Quote,
-  RemoveFormatting,
-  Strikethrough,
-  Underline,
-} from 'lucide-react';
+import { Bold, Italic, Link2, List, ListOrdered, Quote, RemoveFormatting, Strikethrough, Underline } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Toggle } from '@/components/ui/toggle';
@@ -19,14 +9,7 @@ import { cn } from '@/lib/utils';
 
 /** The editable message body. The editor instance is owned by the compose window. */
 export function RichTextBody(props: { editor: Editor; className?: string }): React.JSX.Element {
-  return (
-    <EditorContent
-      editor={props.editor}
-      aria-label="Message"
-      className={cn('compose-editor cursor-text text-sm', props.className)}
-      onClick={() => props.editor.chain().focus().run()}
-    />
-  );
+  return <EditorContent editor={props.editor} aria-label="Message" className={cn('compose-editor cursor-text text-sm', props.className)} onClick={() => props.editor.chain().focus().run()} />;
 }
 
 /** Compact formatting toolbar: inline marks, lists, quote, link, clear. */
@@ -47,78 +30,37 @@ export function FormattingToolbar(props: { editor: Editor }): React.JSX.Element 
 
   return (
     <div role="toolbar" aria-label="Formatting" className="flex items-center gap-px">
-      <Mark
-        label="Bold"
-        shortcut="⌘B"
-        pressed={active.bold}
-        onToggle={() => props.editor.chain().focus().toggleBold().run()}
-      >
+      <Mark label="Bold" shortcut="⌘B" pressed={active.bold} onToggle={() => props.editor.chain().focus().toggleBold().run()}>
         <Bold />
       </Mark>
-      <Mark
-        label="Italic"
-        shortcut="⌘I"
-        pressed={active.italic}
-        onToggle={() => props.editor.chain().focus().toggleItalic().run()}
-      >
+      <Mark label="Italic" shortcut="⌘I" pressed={active.italic} onToggle={() => props.editor.chain().focus().toggleItalic().run()}>
         <Italic />
       </Mark>
-      <Mark
-        label="Underline"
-        shortcut="⌘U"
-        pressed={active.underline}
-        onToggle={() => props.editor.chain().focus().toggleUnderline().run()}
-      >
+      <Mark label="Underline" shortcut="⌘U" pressed={active.underline} onToggle={() => props.editor.chain().focus().toggleUnderline().run()}>
         <Underline />
       </Mark>
-      <Mark
-        label="Strikethrough"
-        pressed={active.strike}
-        onToggle={() => props.editor.chain().focus().toggleStrike().run()}
-      >
+      <Mark label="Strikethrough" pressed={active.strike} onToggle={() => props.editor.chain().focus().toggleStrike().run()}>
         <Strikethrough />
       </Mark>
       <span aria-hidden className="mx-1 h-4 w-px bg-border" />
-      <Mark
-        label="Bulleted list"
-        pressed={active.bulletList}
-        onToggle={() => props.editor.chain().focus().toggleBulletList().run()}
-      >
+      <Mark label="Bulleted list" pressed={active.bulletList} onToggle={() => props.editor.chain().focus().toggleBulletList().run()}>
         <List />
       </Mark>
-      <Mark
-        label="Numbered list"
-        pressed={active.orderedList}
-        onToggle={() => props.editor.chain().focus().toggleOrderedList().run()}
-      >
+      <Mark label="Numbered list" pressed={active.orderedList} onToggle={() => props.editor.chain().focus().toggleOrderedList().run()}>
         <ListOrdered />
       </Mark>
-      <Mark
-        label="Quote"
-        pressed={active.blockquote}
-        onToggle={() => props.editor.chain().focus().toggleBlockquote().run()}
-      >
+      <Mark label="Quote" pressed={active.blockquote} onToggle={() => props.editor.chain().focus().toggleBlockquote().run()}>
         <Quote />
       </Mark>
       <LinkControl editor={props.editor} active={active.link} />
-      <Mark
-        label="Clear formatting"
-        pressed={false}
-        onToggle={() => props.editor.chain().focus().unsetAllMarks().clearNodes().run()}
-      >
+      <Mark label="Clear formatting" pressed={false} onToggle={() => props.editor.chain().focus().unsetAllMarks().clearNodes().run()}>
         <RemoveFormatting />
       </Mark>
     </div>
   );
 }
 
-function Mark(props: {
-  label: string;
-  shortcut?: string;
-  pressed: boolean;
-  onToggle: () => void;
-  children: React.ReactNode;
-}): React.JSX.Element {
+function Mark(props: { label: string; shortcut?: string; pressed: boolean; onToggle: () => void; children: React.ReactNode }): React.JSX.Element {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -169,12 +111,7 @@ function LinkControl(props: { editor: Editor; active: boolean }): React.JSX.Elem
       <Tooltip>
         <TooltipTrigger asChild>
           <PopoverTrigger asChild>
-            <Toggle
-              size="sm"
-              aria-label="Link"
-              pressed={props.active}
-              className="size-7 min-w-7 p-0 text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground [&_svg]:size-3.5"
-            >
+            <Toggle size="sm" aria-label="Link" pressed={props.active} className="size-7 min-w-7 p-0 text-muted-foreground data-[state=on]:bg-accent data-[state=on]:text-foreground [&_svg]:size-3.5">
               <Link2 />
             </Toggle>
           </PopoverTrigger>

@@ -18,9 +18,5 @@ export function AuthGate(props: AuthGateProps): React.JSX.Element {
       </AuthScreen>
     );
   }
-  return auth.status === 'authenticated' ? (
-    <AppShell inboundEnabled={props.inboundEnabled ?? false} />
-  ) : (
-    <SignInView />
-  );
+  return auth.status === 'authenticated' ? <AppShell inboundEnabled={props.inboundEnabled ?? false} /> : <SignInView />;
 }

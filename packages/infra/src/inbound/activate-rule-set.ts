@@ -15,8 +15,7 @@
 
 export type ActivationRequestType = 'Create' | 'Update' | 'Delete';
 
-export type ActivationDecision =
-  { readonly action: 'activate' } | { readonly action: 'deactivate' } | { readonly action: 'noop' };
+export type ActivationDecision = { readonly action: 'activate' } | { readonly action: 'deactivate' } | { readonly action: 'noop' };
 
 /**
  * Decide what to do with the region's active receipt rule set.
@@ -30,11 +29,7 @@ export type ActivationDecision =
  * Self-contained: references only its parameters and `Error` (no imports, no
  * closure, no module state) so `toString()` yields runnable Lambda source.
  */
-export function decideActivation(
-  requestType: ActivationRequestType,
-  activeRuleSetName: string | undefined,
-  ourRuleSetName: string,
-): ActivationDecision {
+export function decideActivation(requestType: ActivationRequestType, activeRuleSetName: string | undefined, ourRuleSetName: string): ActivationDecision {
   if (requestType === 'Delete') {
     return activeRuleSetName === ourRuleSetName ? { action: 'deactivate' } : { action: 'noop' };
   }

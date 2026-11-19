@@ -32,13 +32,7 @@ import {
   MAX_READ_BODY_BYTES,
   type RawEmailDownloadResponse,
 } from '@freemail/shared';
-import {
-  type EmailsDao,
-  FAILED_PARTITION,
-  type EmailSummary,
-  type GetEmailOutput,
-  type InboundAttachmentDescriptor,
-} from '../data/emails-dao.js';
+import { type EmailsDao, FAILED_PARTITION, type EmailSummary, type GetEmailOutput, type InboundAttachmentDescriptor } from '../data/emails-dao.js';
 import { INBOUND_RAW_RETENTION_DAYS } from '@freemail/shared/storage';
 import type { AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import type { MailBodyContent, MailBodyStore } from '../facades/s3-mail-body-store.js';
@@ -53,24 +47,13 @@ import {
   MAX_TEXT_BODY_BYTES,
   MAX_TOTAL_BODY_BYTES,
 } from '../utils/inbound-limits.js';
-import {
-  type AttachmentSink,
-  type ParsedInbound,
-  type ParseLimits,
-  type ParseOptions,
-  parseInbound,
-} from '../utils/inbound-parse.js';
+import { type AttachmentSink, type ParsedInbound, type ParseLimits, type ParseOptions, parseInbound } from '../utils/inbound-parse.js';
 import { decideExposure } from '../utils/verdicts.js';
 import { fitBodyToBudget } from '../utils/body-budget.js';
 import { contentDispositionForDownload } from '../utils/content-disposition.js';
 import { decodeEmailRef, encodeEmailRef } from '../utils/email-ref.js';
 import { emailErrors } from '../utils/errors.js';
-import {
-  listEmailsPage,
-  pageQuery,
-  type MergeQuery,
-  type MergeQueryResult,
-} from '../utils/list-merge.js';
+import { listEmailsPage, pageQuery, type MergeQuery, type MergeQueryResult } from '../utils/list-merge.js';
 import { hasTextFilters, matchesListFilters, sortKeyBounds } from '../utils/list-filter.js';
 import { getLogger } from '../utils/logger.js';
 import { loadEmailBody } from './email-body-storage.js';
@@ -81,12 +64,7 @@ export interface RawMimeSource {
 }
 
 /** The parse function — defaulted to #10's `parseInbound`, overridable in tests. */
-export type ParseInbound = (
-  source: Readable,
-  sink: AttachmentSink,
-  limits?: ParseLimits,
-  options?: ParseOptions,
-) => Promise<ParsedInbound>;
+export type ParseInbound = (source: Readable, sink: AttachmentSink, limits?: ParseLimits, options?: ParseOptions) => Promise<ParsedInbound>;
 
 export interface EmailReadServiceDeps {
   readonly emailsDao: EmailsDao;
@@ -206,10 +184,7 @@ export class EmailReadService {
     const query: MergeQuery =
       filters !== undefined && hasTextFilters(filters)
         ? (direction, opts) => this.scanForMatches(direction, opts, filters, bounds)
-        : pageQuery(
-            async (direction, opts) =>
-              (await this.emailsDao.listEmailSummaries({ direction, ...opts, ...bounds })).emails,
-          );
+        : pageQuery(async (direction, opts) => (await this.emailsDao.listEmailSummaries({ direction, ...opts, ...bounds })).emails);
     const page = await listEmailsPage({
       query,
       ...(request.direction ? { direction: request.direction } : {}),
@@ -240,9 +215,7 @@ export class EmailReadService {
     let scannedToSk: string | undefined;
     while (scanned < LIST_FILTER_SCAN_ROWS) {
       const batchSize = Math.min(FILTER_BATCH_ROWS, LIST_FILTER_SCAN_ROWS - scanned);
-      const batch = (
-        await this.emailsDao.listEmailSummaries({ direction, limit: batchSize, afterSk, ...bounds })
-      ).emails;
+      const batch = (await this.emailsDao.listEmailSummaries({ direction, limit: batchSize, afterSk, ...bounds })).emails;
       for (const row of batch) {
         scanned += 1;
         scannedToSk = row.sk;
@@ -266,10 +239,7 @@ export class EmailReadService {
     const row = await this.loadRow(request.handle);
     // Size the envelope first so the body budget accounts for the WHOLE response, not just
     // the body — the combined serialized bytes must stay under the Lambda response limit.
-    const envelopeBytes = Buffer.byteLength(
-      JSON.stringify(this.toDetail(row, request.handle, {})),
-      'utf8',
-    );
+    const envelopeBytes = Buffer.byteLength(JSON.stringify(this.toDetail(row, request.handle, {})), 'utf8');
     const body = await this.materializeBody(row, envelopeBytes);
     return this.toDetail(row, request.handle, body);
   }
@@ -280,9 +250,7 @@ export class EmailReadService {
    * sent row written before attachments were recorded — so the id resolves to nothing → 404,
    * never a guessable key. The raw S3 key is used server-side only.
    */
-  async getAttachmentUrl(
-    request: GetAttachmentUrlServiceRequest,
-  ): Promise<AttachmentDownloadResponse> {
+  async getAttachmentUrl(request: GetAttachmentUrlServiceRequest): Promise<AttachmentDownloadResponse> {
     const row = await this.loadRow(request.handle);
     const descriptor = rowAttachments(row).find((a) => a.id === request.attachmentId);
     if (!descriptor) {
@@ -295,9 +263,7 @@ export class EmailReadService {
       contentDisposition: contentDispositionForDownload(descriptor.filename),
       expiresInSeconds: ATTACHMENT_URL_TTL_SECONDS,
     });
-    const expiresAt = new Date(
-      this.now().getTime() + ATTACHMENT_URL_TTL_SECONDS * 1000,
-    ).toISOString();
+    const expiresAt = new Date(this.now().getTime() + ATTACHMENT_URL_TTL_SECONDS * 1000).toISOString();
     return { url, expiresAt };
   }
 
@@ -321,9 +287,7 @@ export class EmailReadService {
       contentDisposition: contentDispositionForDownload(emlFilename(row.subject)),
       expiresInSeconds: ATTACHMENT_URL_TTL_SECONDS,
     });
-    const expiresAt = new Date(
-      this.now().getTime() + ATTACHMENT_URL_TTL_SECONDS * 1000,
-    ).toISOString();
+    const expiresAt = new Date(this.now().getTime() + ATTACHMENT_URL_TTL_SECONDS * 1000).toISOString();
     return { url, expiresAt };
   }
 
@@ -337,17 +301,11 @@ export class EmailReadService {
   }
 
   /** The body to return for a message; `{}` when it is not exposable or has none. */
-  private async materializeBody(
-    row: GetEmailOutput,
-    envelopeBytes: number,
-  ): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
+  private async materializeBody(row: GetEmailOutput, envelopeBytes: number): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
     if (row.direction === 'inbound') {
       // Gate on the STORED verdicts first — a non-exposable row never yields a body, whatever
       // it carries (ingest stores none for one, so this is defense in depth).
-      const exposure = decideExposure(
-        { spamVerdict: row.spamVerdict, virusVerdict: row.virusVerdict },
-        row.parseStatus,
-      );
+      const exposure = decideExposure({ spamVerdict: row.spamVerdict, virusVerdict: row.virusVerdict }, row.parseStatus);
       if (!exposure.exposeContent) {
         return {};
       }
@@ -370,10 +328,7 @@ export class EmailReadService {
    * row without one (pre-#29) stays envelope-only. Inbound raw MIME expires, so once it is
    * gone the row reads envelope-only too.
    */
-  private async legacyBody(
-    row: GetEmailOutput,
-    envelopeBytes: number,
-  ): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
+  private async legacyBody(row: GetEmailOutput, envelopeBytes: number): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
     if (row.direction === 'sent') {
       if (!row.rawS3Key) {
         return {};
@@ -388,11 +343,7 @@ export class EmailReadService {
    * the defense-in-depth fail-closed — a corrupt/parse-failed archive yields no body rather
    * than throwing — and an expired (deleted) object yields none either.
    */
-  private async parseBody(
-    rawS3Key: string,
-    envelopeBytes: number,
-    options: ParseOptions,
-  ): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
+  private async parseBody(rawS3Key: string, envelopeBytes: number, options: ParseOptions): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
     let stream: Readable;
     try {
       stream = await this.rawMime.getStream(rawS3Key);
@@ -445,11 +396,7 @@ export class EmailReadService {
     };
   }
 
-  private toDetail(
-    row: GetEmailOutput,
-    handle: string,
-    body: { text?: string; html?: string; bodyTruncated?: boolean },
-  ): EmailDetail {
+  private toDetail(row: GetEmailOutput, handle: string, body: { text?: string; html?: string; bodyTruncated?: boolean }): EmailDetail {
     if (row.direction === 'sent') {
       return {
         id: handle,
@@ -462,9 +409,7 @@ export class EmailReadService {
         subject: row.subject,
         date: row.sentAt,
         ...(row.status !== undefined ? { status: row.status } : {}),
-        ...(row.deliveryEvents !== undefined && row.deliveryEvents.length > 0
-          ? { deliveryEvents: distinctEvents(row.deliveryEvents) }
-          : {}),
+        ...(row.deliveryEvents !== undefined && row.deliveryEvents.length > 0 ? { deliveryEvents: distinctEvents(row.deliveryEvents) } : {}),
         ...body,
         rawAvailable: this.rawDownload(row) !== undefined,
         attachments: rowAttachments(row).map(publicDescriptor),
@@ -514,16 +459,12 @@ export class EmailReadService {
    * - Received before stored bodies: its untagged raw copy, kept forever, whatever the verdict —
    *   flagged suspicious without a virus PASS.
    */
-  private rawDownload(
-    row: GetEmailOutput,
-  ): { readonly key: string; readonly presigner: AttachmentPresigner } | undefined {
+  private rawDownload(row: GetEmailOutput): { readonly key: string; readonly presigner: AttachmentPresigner } | undefined {
     if (row.direction === 'sent') {
       return row.rawS3Key ? { key: row.rawS3Key, presigner: this.presigner } : undefined;
     }
     if (row.pk === FAILED_PARTITION) {
-      return row.quarantineS3Key && this.quarantinePresigner
-        ? { key: row.quarantineS3Key, presigner: this.quarantinePresigner }
-        : undefined;
+      return row.quarantineS3Key && this.quarantinePresigner ? { key: row.quarantineS3Key, presigner: this.quarantinePresigner } : undefined;
     }
     // A row without a stored body predates stored bodies: its raw copy is untagged and kept
     // forever — the only way to recover the message — so offer it whatever the verdict, like an
@@ -537,9 +478,7 @@ export class EmailReadService {
       return undefined;
     }
     const ageMs = this.now().getTime() - Date.parse(row.receivedAt);
-    return ageMs < INBOUND_RAW_RETENTION_DAYS * DAY_MS
-      ? { key: row.rawS3Key, presigner: this.presigner }
-      : undefined;
+    return ageMs < INBOUND_RAW_RETENTION_DAYS * DAY_MS ? { key: row.rawS3Key, presigner: this.presigner } : undefined;
   }
 }
 
@@ -570,10 +509,7 @@ function rowAttachments(row: GetEmailOutput): readonly InboundAttachmentDescript
  * with the already-measured envelope. See fitBodyToBudget. A body cut at storage time stays
  * flagged truncated.
  */
-function fitToResponse(
-  content: MailBodyContent,
-  envelopeBytes: number,
-): { text?: string; html?: string; bodyTruncated?: boolean } {
+function fitToResponse(content: MailBodyContent, envelopeBytes: number): { text?: string; html?: string; bodyTruncated?: boolean } {
   const fitted = fitBodyToBudget(content.text, content.html, {
     partCapBytes: MAX_READ_BODY_BYTES,
     serializedBudgetBytes: Math.max(0, MAX_EMAIL_RESPONSE_BYTES - envelopeBytes),
@@ -592,20 +528,12 @@ const MAX_EML_STEM_CHARS = 80;
 
 /** `<subject>.eml`, or `message.eml` for an empty subject. Header-safety is contentDispositionForDownload's job. */
 function emlFilename(subject: string): string {
-  const stem = Array.from(subject.replace(UNSAFE_FILENAME_CHARS, '_').trim())
-    .slice(0, MAX_EML_STEM_CHARS)
-    .join('')
-    .trim();
+  const stem = Array.from(subject.replace(UNSAFE_FILENAME_CHARS, '_').trim()).slice(0, MAX_EML_STEM_CHARS).join('').trim();
   return `${stem || 'message'}.eml`;
 }
 
 /** Strip the server-only S3 key — the client gets only the addressable attachment id. */
-function publicDescriptor(descriptor: {
-  id: string;
-  filename: string;
-  contentType: string;
-  sizeBytes: number;
-}): EmailAttachmentInfo {
+function publicDescriptor(descriptor: { id: string; filename: string; contentType: string; sizeBytes: number }): EmailAttachmentInfo {
   return {
     id: descriptor.id,
     filename: descriptor.filename,

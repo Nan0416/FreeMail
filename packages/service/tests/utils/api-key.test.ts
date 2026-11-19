@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { API_KEY_PREFIX } from '@freemail/shared';
-import {
-  generateApiKey,
-  hashApiKeySecret,
-  parseApiKey,
-  verifyApiKeySecret,
-} from '../../src/utils/api-key.js';
+import { generateApiKey, hashApiKeySecret, parseApiKey, verifyApiKeySecret } from '../../src/utils/api-key.js';
 
 describe('generateApiKey', () => {
   it('mints an fm_-prefixed key whose parts round-trip and whose hash matches', () => {

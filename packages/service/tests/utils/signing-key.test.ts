@@ -1,17 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type {
-  AuthDao,
-  ClearLockoutOutput,
-  CreateSigningKeyInput,
-  CreateSigningKeyOutput,
-  GetSigningKeyOutput,
-  PutRefreshTokenOutput,
-} from '../../src/data/auth-dao.js';
-import {
-  getOrCreateSigningKey,
-  getSigningKey,
-  resetSigningKeyCache,
-} from '../../src/utils/signing-key.js';
+import type { AuthDao, ClearLockoutOutput, CreateSigningKeyInput, CreateSigningKeyOutput, GetSigningKeyOutput, PutRefreshTokenOutput } from '../../src/data/auth-dao.js';
+import { getOrCreateSigningKey, getSigningKey, resetSigningKeyCache } from '../../src/utils/signing-key.js';
 
 /**
  * Only the signing-key rows matter here, so the rest of the AuthDao surface throws —

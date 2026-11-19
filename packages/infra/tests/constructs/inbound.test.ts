@@ -102,10 +102,7 @@ describe('InboundConstruct', () => {
       PolicyDocument: {
         Statement: Match.arrayWith([
           Match.objectLike({
-            Action: Match.arrayWith([
-              'ses:DescribeActiveReceiptRuleSet',
-              'ses:SetActiveReceiptRuleSet',
-            ]),
+            Action: Match.arrayWith(['ses:DescribeActiveReceiptRuleSet', 'ses:SetActiveReceiptRuleSet']),
             Effect: 'Allow',
           }),
         ]),

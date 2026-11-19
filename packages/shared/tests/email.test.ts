@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  DEFAULT_EMBED_ATTACHMENT_BYTES,
-  DEFAULT_EMBED_TOTAL_BYTES,
-  MAX_RAW_MESSAGE_BYTES,
-  MAX_RECIPIENTS,
-  MAX_UPLOAD_BYTES,
-  isValidEmailAddress,
-} from '../src/email.js';
+import { DEFAULT_EMBED_ATTACHMENT_BYTES, DEFAULT_EMBED_TOTAL_BYTES, MAX_RAW_MESSAGE_BYTES, MAX_RECIPIENTS, MAX_UPLOAD_BYTES, isValidEmailAddress } from '../src/email.js';
 
 describe('isValidEmailAddress', () => {
   it('accepts well-formed addresses', () => {

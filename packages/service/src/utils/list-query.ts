@@ -11,13 +11,7 @@
  * bounds up front, and the SDK rejects a value outside them (`limit: 150`, `direction: ''`)
  * before this runs, where REST clamps or ignores it.
  */
-import {
-  DEFAULT_EMAIL_PAGE_SIZE,
-  MAX_EMAIL_PAGE_SIZE,
-  MAX_LIST_FILTER_CHARS,
-  type EmailListFilter,
-  type EmailListFilters,
-} from '@freemail/shared';
+import { DEFAULT_EMAIL_PAGE_SIZE, MAX_EMAIL_PAGE_SIZE, MAX_LIST_FILTER_CHARS, type EmailListFilter, type EmailListFilters } from '@freemail/shared';
 import { emailErrors } from './errors.js';
 import type { ListEmailsServiceRequest } from '../services/email-read-service.js';
 
@@ -77,9 +71,7 @@ function parseText(raw: string | undefined, name: string): string | undefined {
     return undefined;
   }
   if (value.length > MAX_LIST_FILTER_CHARS) {
-    throw emailErrors.invalidRequest(
-      `"${name}" may be at most ${MAX_LIST_FILTER_CHARS} characters.`,
-    );
+    throw emailErrors.invalidRequest(`"${name}" may be at most ${MAX_LIST_FILTER_CHARS} characters.`);
   }
   return value;
 }
@@ -103,15 +95,9 @@ function parseTime(raw: string | undefined, name: string): string | undefined {
   // Drop sub-millisecond digits: Date.parse's handling of them is not specified.
   const ms = match ? Date.parse(value.replace(/(\.\d{3})\d+/, '$1')) : Number.NaN;
   // Date.parse rolls an impossible day over (2026-02-30 → March 2): check the calendar date.
-  const realDate =
-    match !== null &&
-    isCalendarDate(Number(match[1]), Number(match[2]), Number(match[3])) &&
-    !Number.isNaN(ms) &&
-    NORMALIZED_RE.test(new Date(ms).toISOString());
+  const realDate = match !== null && isCalendarDate(Number(match[1]), Number(match[2]), Number(match[3])) && !Number.isNaN(ms) && NORMALIZED_RE.test(new Date(ms).toISOString());
   if (!realDate) {
-    throw emailErrors.invalidRequest(
-      `"${name}" must be a date (2026-10-01) or an ISO-8601 time with a zone (2026-10-01T09:00:00Z).`,
-    );
+    throw emailErrors.invalidRequest(`"${name}" must be a date (2026-10-01) or an ISO-8601 time with a zone (2026-10-01T09:00:00Z).`);
   }
   return new Date(ms).toISOString();
 }
@@ -141,7 +127,5 @@ function parseLimit(raw: string | number | undefined): number {
 /** True when year-month-day names a real day (no Feb 30, no month 13). */
 function isCalendarDate(year: number, month: number, day: number): boolean {
   const date = new Date(Date.UTC(year, month - 1, day));
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  );
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
 }

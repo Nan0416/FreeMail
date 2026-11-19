@@ -1,11 +1,5 @@
 import { DescribeTableCommand } from '@aws-sdk/client-dynamodb';
-import {
-  GetCommand,
-  PutCommand,
-  QueryCommand,
-  UpdateCommand,
-  DynamoDBDocumentClient,
-} from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand, QueryCommand, UpdateCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it, vi } from 'vitest';
 import { EMAIL_LIST_INDEX_ATTRIBUTES } from '@freemail/shared/storage';
 import { DdbEmailsDao } from '../../src/data/ddb-emails-dao.js';
@@ -28,19 +22,10 @@ function asDocClient(fake: { send: (command: never) => Promise<unknown> }): Dyna
  */
 function assertPlaceholdersUsed(command: unknown): void {
   const input = (command as { input?: Record<string, unknown> }).input ?? {};
-  const expressions = [
-    input.UpdateExpression,
-    input.ConditionExpression,
-    input.KeyConditionExpression,
-    input.ProjectionExpression,
-    input.FilterExpression,
-  ]
+  const expressions = [input.UpdateExpression, input.ConditionExpression, input.KeyConditionExpression, input.ProjectionExpression, input.FilterExpression]
     .filter((expression): expression is string => typeof expression === 'string')
     .join(' ');
-  const placeholders = [
-    ...Object.keys((input.ExpressionAttributeNames as Record<string, unknown>) ?? {}),
-    ...Object.keys((input.ExpressionAttributeValues as Record<string, unknown>) ?? {}),
-  ];
+  const placeholders = [...Object.keys((input.ExpressionAttributeNames as Record<string, unknown>) ?? {}), ...Object.keys((input.ExpressionAttributeValues as Record<string, unknown>) ?? {})];
   for (const placeholder of placeholders) {
     const escaped = placeholder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     if (!new RegExp(`${escaped}(?![A-Za-z0-9_])`).test(expressions)) {
@@ -136,9 +121,7 @@ describe('DdbEmailsDao', () => {
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
     await dao.createSentEmail(record({ body: { kind: 'inline', text: 'Hi', html: '<p>Hi</p>' } }));
-    await dao.createInboundEmail(
-      inboundRecord({ body: { kind: 's3', s3Key: 'bodies/inbound/ses-in-1.json' } }),
-    );
+    await dao.createInboundEmail(inboundRecord({ body: { kind: 's3', s3Key: 'bodies/inbound/ses-in-1.json' } }));
 
     expect((doc.commands[0] as PutCommand).input.Item?.body).toEqual({
       kind: 'inline',
@@ -309,11 +292,7 @@ class PagedFakeDoc {
   indexState: { IndexStatus: string; Backfilling?: boolean } | undefined | Error = {
     IndexStatus: 'ACTIVE',
   };
-  constructor(
-    private readonly pages: (
-      { Items: Record<string, unknown>[]; LastEvaluatedKey?: unknown } | Error
-    )[],
-  ) {}
+  constructor(private readonly pages: ({ Items: Record<string, unknown>[]; LastEvaluatedKey?: unknown } | Error)[]) {}
   send(command: QueryCommand | DescribeTableCommand): Promise<unknown> {
     if (command instanceof DescribeTableCommand) {
       this.describes += 1;
@@ -333,9 +312,7 @@ class PagedFakeDoc {
       return Promise.resolve(page);
     }
     const projected = new Set<string>(['pk', 'sk', ...EMAIL_LIST_INDEX_ATTRIBUTES]);
-    const items = page.Items.map((item) =>
-      Object.fromEntries(Object.entries(item).filter(([name]) => projected.has(name))),
-    );
+    const items = page.Items.map((item) => Object.fromEntries(Object.entries(item).filter(([name]) => projected.has(name))));
     return Promise.resolve({ ...page, Items: items });
   }
 }
@@ -355,9 +332,7 @@ describe('DdbEmailsDao — Errors folder', () => {
     const doc = new FakeDoc();
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    await dao.createInboundEmail(
-      inboundRecord({ failed: true, quarantineS3Key: 'inbound/ses-in-1.eml' }),
-    );
+    await dao.createInboundEmail(inboundRecord({ failed: true, quarantineS3Key: 'inbound/ses-in-1.eml' }));
 
     const item = (doc.commands[0] as PutCommand).input.Item!;
     expect(item.pk).toBe('FAILED');
@@ -379,9 +354,7 @@ describe('DdbEmailsDao — Errors folder', () => {
   });
 
   it('lists the FAILED partition as inbound rows that carry their pk', async () => {
-    const doc = new PagedFakeDoc([
-      { Items: [{ ...inboundRecord(), pk: 'FAILED', sk: 'sk-1', direction: 'inbound' }] },
-    ]);
+    const doc = new PagedFakeDoc([{ Items: [{ ...inboundRecord(), pk: 'FAILED', sk: 'sk-1', direction: 'inbound' }] }]);
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
     const result = await dao.listEmailSummaries({ direction: 'failed', limit: 5 });
@@ -507,10 +480,7 @@ describe('DdbEmailsDao — list index + paging', () => {
   });
 
   it('returns a short page only when the partition really ends', async () => {
-    const doc = new PagedFakeDoc([
-      { Items: [inboundItem('sk-2')], LastEvaluatedKey: { pk: 'INBOUND', sk: 'sk-2' } },
-      { Items: [inboundItem('sk-1')] },
-    ]);
+    const doc = new PagedFakeDoc([{ Items: [inboundItem('sk-2')], LastEvaluatedKey: { pk: 'INBOUND', sk: 'sk-2' } }, { Items: [inboundItem('sk-1')] }]);
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
     const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 10 });
@@ -620,11 +590,7 @@ describe('DdbEmailsDao — list index + paging', () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date('2026-10-10T00:00:00.000Z'));
-      const doc = new PagedFakeDoc([
-        validationError('The table does not have the specified index: list'),
-        { Items: [inboundItem('sk-1')] },
-        { Items: [] },
-      ]);
+      const doc = new PagedFakeDoc([validationError('The table does not have the specified index: list'), { Items: [inboundItem('sk-1')] }, { Items: [] }]);
       const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
       const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
@@ -632,9 +598,7 @@ describe('DdbEmailsDao — list index + paging', () => {
       expect(result.emails.map((e) => e.sk)).toEqual(['sk-1']);
       // From the table, only the list fields are read — never full items with their bodies.
       const fallback = doc.queries[1]!.input;
-      expect(Object.values(fallback.ExpressionAttributeNames ?? {})).toEqual(
-        expect.arrayContaining(['pk', 'sk', 'from', 'to', 'subject', 'status']),
-      );
+      expect(Object.values(fallback.ExpressionAttributeNames ?? {})).toEqual(expect.arrayContaining(['pk', 'sk', 'from', 'to', 'subject', 'status']));
       expect(Object.values(fallback.ExpressionAttributeNames ?? {})).not.toContain('body');
       expect(fallback.ProjectionExpression).toMatch(/^#l0, #l1, /);
 
@@ -673,10 +637,7 @@ describe('DdbEmailsDao — list index + paging', () => {
     const doc = new PagedFakeDoc([{ Items: [] }, { Items: [] }]);
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    await Promise.all([
-      dao.listEmailSummaries({ direction: 'sent', limit: 5 }),
-      dao.listEmailSummaries({ direction: 'inbound', limit: 5 }),
-    ]);
+    await Promise.all([dao.listEmailSummaries({ direction: 'sent', limit: 5 }), dao.listEmailSummaries({ direction: 'inbound', limit: 5 })]);
 
     expect(doc.describes).toBe(1);
     expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', 'list']);
@@ -686,9 +647,7 @@ describe('DdbEmailsDao — list index + paging', () => {
     const doc = new PagedFakeDoc([validationError('ExclusiveStartKey is invalid')]);
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    await expect(dao.listEmailSummaries({ direction: 'sent', limit: 5 })).rejects.toThrow(
-      /ExclusiveStartKey/,
-    );
+    await expect(dao.listEmailSummaries({ direction: 'sent', limit: 5 })).rejects.toThrow(/ExclusiveStartKey/);
     expect(doc.queries).toHaveLength(1);
   });
 });
@@ -875,9 +834,7 @@ describe('DdbEmailsDao — send idempotency records', () => {
     const doc = new FakeDoc();
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
     await dao.deleteIdempotencyRecord({ key: 'k-1' });
-    expect((doc.commands[0]?.input as { ConditionExpression?: string }).ConditionExpression).toBe(
-      '#state = :pending',
-    );
+    expect((doc.commands[0]?.input as { ConditionExpression?: string }).ConditionExpression).toBe('#state = :pending');
 
     doc.failWith = 'ConditionalCheckFailedException';
     await expect(dao.deleteIdempotencyRecord({ key: 'k-1' })).resolves.toEqual({});
@@ -992,9 +949,7 @@ describe('DdbEmailsDao — delivery reports', () => {
   const report = {
     id: 'e1',
     sentAt: '2026-10-10T12:00:00.000Z',
-    events: [
-      { type: 'delivered' as const, at: '2026-10-10T12:00:03.000Z', recipients: ['a@x.com'] },
-    ],
+    events: [{ type: 'delivered' as const, at: '2026-10-10T12:00:03.000Z', recipients: ['a@x.com'] }],
   };
 
   it('appends the events to an existing row, then advances the status only forward', async () => {
@@ -1011,12 +966,8 @@ describe('DdbEmailsDao — delivery reports', () => {
       ConditionExpression?: string;
     };
     expect(append.Key).toEqual({ pk: 'SENT', sk: '2026-10-10T12:00:00.000Z#e1' });
-    expect(append.UpdateExpression).toBe(
-      'SET #events = list_append(if_not_exists(#events, :empty), :events)',
-    );
-    expect(append.ConditionExpression).toBe(
-      'attribute_exists(pk) AND (attribute_not_exists(#events) OR size(#events) < :max)',
-    );
+    expect(append.UpdateExpression).toBe('SET #events = list_append(if_not_exists(#events, :empty), :events)');
+    expect(append.ConditionExpression).toBe('attribute_exists(pk) AND (attribute_not_exists(#events) OR size(#events) < :max)');
     const status = doc.commands[1]?.input as {
       ConditionExpression?: string;
       ExpressionAttributeValues?: Record<string, unknown>;
@@ -1036,10 +987,7 @@ describe('DdbEmailsDao — delivery reports', () => {
 
     await dao.updateSentEmailDelivery({ ...report, status: 'delivered' });
 
-    expect(
-      (doc.commands[1]?.input as { ExpressionAttributeValues?: Record<string, unknown> })
-        .ExpressionAttributeValues,
-    ).toEqual({ ':status': 'delivered', ':from0': 'sending', ':from1': 'sent' });
+    expect((doc.commands[1]?.input as { ExpressionAttributeValues?: Record<string, unknown> }).ExpressionAttributeValues).toEqual({ ':status': 'delivered', ':from0': 'sending', ':from1': 'sent' });
   });
 
   it('reports a row that is not there, and writes nothing more', async () => {
@@ -1120,9 +1068,7 @@ describe('DdbEmailsDao — delivery reports at the edges', () => {
 
     expect(await dao.updateSentEmailDelivery(report)).toEqual({ found: true });
     expect(doc.commands).toHaveLength(2);
-    expect((doc.commands[1]?.input as { UpdateExpression?: string }).UpdateExpression).toBe(
-      'SET #status = :status',
-    );
+    expect((doc.commands[1]?.input as { UpdateExpression?: string }).UpdateExpression).toBe('SET #status = :status');
   });
 
   it('still moves the status when the row is at the item size limit', async () => {

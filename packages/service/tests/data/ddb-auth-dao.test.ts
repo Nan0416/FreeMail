@@ -1,11 +1,4 @@
-import {
-  DeleteCommand,
-  GetCommand,
-  PutCommand,
-  UpdateCommand,
-  type PutCommandInput,
-  DynamoDBDocumentClient,
-} from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, GetCommand, PutCommand, UpdateCommand, type PutCommandInput, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { isLockedOut } from '../../src/utils/lockout.js';
 import { DdbAuthDao } from '../../src/data/ddb-auth-dao.js';
@@ -69,9 +62,7 @@ class FakeDoc {
       const key = keyOf(command.input.Key);
       const existing = this.store.get(key);
       this.store.delete(key);
-      return Promise.resolve(
-        command.input.ReturnValues === 'ALL_OLD' ? { Attributes: existing } : {},
-      );
+      return Promise.resolve(command.input.ReturnValues === 'ALL_OLD' ? { Attributes: existing } : {});
     }
     if (command instanceof UpdateCommand) {
       // Models the lockout reset: SET count/window 0, ADD version 1, REMOVE lockedUntil.
@@ -92,10 +83,7 @@ class FakeDoc {
     return Promise.reject(new Error('unsupported command'));
   }
 
-  private conditionHolds(
-    input: PutCommandInput,
-    existing: Record<string, unknown> | undefined,
-  ): boolean {
+  private conditionHolds(input: PutCommandInput, existing: Record<string, unknown> | undefined): boolean {
     const expr = input.ConditionExpression;
     if (!expr) {
       return true;

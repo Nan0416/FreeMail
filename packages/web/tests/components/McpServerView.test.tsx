@@ -55,12 +55,7 @@ describe('McpServerView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy server URL' }));
     await screen.findByRole('button', { name: 'Copied' });
     fireEvent.click(screen.getByRole('button', { name: 'Copy .mcp.json' }));
-    await waitFor(() =>
-      expect(writeText.mock.calls).toEqual([
-        ['http://api.test/mcp'],
-        [mcpJson('http://api.test/mcp')],
-      ]),
-    );
+    await waitFor(() => expect(writeText.mock.calls).toEqual([['http://api.test/mcp'], [mcpJson('http://api.test/mcp')]]));
   });
 
   it('shows a created key exactly once and clears it from the DOM on dismiss', async () => {
@@ -115,9 +110,7 @@ describe('McpServerView', () => {
 
     // Cancelling leaves the key alone.
     fireEvent.click(await screen.findByRole('button', { name: 'Revoke' }));
-    fireEvent.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }),
-    );
+    fireEvent.click(within(await screen.findByRole('alertdialog')).getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'DELETE')).toBe(false);
 
@@ -126,11 +119,6 @@ describe('McpServerView', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Revoke key' }));
 
     await waitFor(() => expect(screen.getByText('No access keys yet.')).toBeInTheDocument());
-    expect(
-      fetchMock.mock.calls.some(
-        ([url, init]) =>
-          new URL(String(url)).pathname === '/keys/kid1' && init?.method === 'DELETE',
-      ),
-    ).toBe(true);
+    expect(fetchMock.mock.calls.some(([url, init]) => new URL(String(url)).pathname === '/keys/kid1' && init?.method === 'DELETE')).toBe(true);
   });
 });

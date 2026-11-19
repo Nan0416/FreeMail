@@ -7,11 +7,7 @@
  * SDK's own `@hono/node-server` wrapper), so the only way to know it works is to feed the
  * real event shape in at the top and assert the real API Gateway result at the bottom.
  */
-import type {
-  APIGatewayProxyEventV2,
-  APIGatewayProxyStructuredResultV2,
-  Context,
-} from 'aws-lambda';
+import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
 import { LATEST_PROTOCOL_VERSION } from '@modelcontextprotocol/sdk/types.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -98,8 +94,7 @@ async function loadHandler(inboundEnabled: boolean, env: Record<string, string> 
   delete process.env.EMBED_TOTAL_BYTES;
   Object.assign(process.env, env);
   const module = await import('../../src/handlers/mcp.js');
-  return (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> =>
-    module.handler(event, LAMBDA_CONTEXT);
+  return (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> => module.handler(event, LAMBDA_CONTEXT);
 }
 
 function initializeBody(): string {
@@ -148,9 +143,7 @@ beforeEach(() => {
 describe('mcp handler — #47 Layer 3 media-type gate', () => {
   it('rejects a non-JSON content type with 415 before the tool can run', async () => {
     const handler = await loadHandler(false);
-    const result = await handler(
-      apiEvent(initializeBody(), { contentType: 'text/plain', lambda: AUTHORIZED }),
-    );
+    const result = await handler(apiEvent(initializeBody(), { contentType: 'text/plain', lambda: AUTHORIZED }));
 
     expect(result.statusCode).toBe(415);
     expect(payloadOf(result)).toMatchObject({ error: 'unsupported_media_type' });
@@ -159,9 +152,7 @@ describe('mcp handler — #47 Layer 3 media-type gate', () => {
 
   it('rejects an absent content type', async () => {
     const handler = await loadHandler(false);
-    const result = await handler(
-      apiEvent(initializeBody(), { contentType: null, lambda: AUTHORIZED }),
-    );
+    const result = await handler(apiEvent(initializeBody(), { contentType: null, lambda: AUTHORIZED }));
     expect(result.statusCode).toBe(415);
   });
 

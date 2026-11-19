@@ -24,9 +24,7 @@ const NODE_BUILTINS: ReadonlySet<string> = new Set(builtinModules);
 
 /** The part of esbuild's metafile this test reads. */
 interface Metafile {
-  readonly outputs: Readonly<
-    Record<string, { readonly imports: readonly { path: string; external?: boolean }[] }>
-  >;
+  readonly outputs: Readonly<Record<string, { readonly imports: readonly { path: string; external?: boolean }[] }>>;
 }
 
 /** One built handler: what esbuild left for the runtime to load (Node builtins aside). */
@@ -58,9 +56,7 @@ function synthBundles(): Map<string, Bundle> {
   for (const fn of stack.node.findAll().filter((c) => c instanceof NodejsFunction)) {
     const logicalId = Stack.of(fn).getLogicalId(fn.node.defaultChild as CfnFunction);
     const assetPath = resources[logicalId]?.Metadata?.['aws:asset:path'] ?? '';
-    const metafile = JSON.parse(
-      readFileSync(join(assembly.directory, assetPath, 'index.meta.json'), 'utf8'),
-    ) as Metafile;
+    const metafile = JSON.parse(readFileSync(join(assembly.directory, assetPath, 'index.meta.json'), 'utf8')) as Metafile;
     const externals = Object.values(metafile.outputs)
       .flatMap((output) => output.imports)
       .filter((imported) => imported.external === true && !imported.path.startsWith('node:'))
@@ -78,9 +74,7 @@ describe('Lambda bundles', () => {
   });
 
   it('builds every FreeMail handler', () => {
-    expect(
-      [...bundles.keys()].map((logicalId) => logicalId.replace(/[0-9A-F]{8}$/, '')).sort(),
-    ).toEqual([
+    expect([...bundles.keys()].map((logicalId) => logicalId.replace(/[0-9A-F]{8}$/, '')).sort()).toEqual([
       'ApiAuthorizerHandler',
       'ApiMcpHandler',
       'ApiRestHandler',
