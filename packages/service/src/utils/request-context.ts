@@ -40,3 +40,19 @@ export function schemeFromContext(event: APIGatewayProxyEventV2): string | undef
   const scheme = authorizerContext(event).scheme;
   return typeof scheme === 'string' ? scheme : undefined;
 }
+
+/** The AWS principal behind a request to an IAM-authorized route. */
+export interface IamCaller {
+  readonly accountId: string;
+  readonly userArn: string;
+}
+
+/**
+ * The IAM caller API Gateway verified (SigV4), or undefined when the route isn't
+ * IAM-authorized. API Gateway sets this context; a client can't supply it.
+ */
+export function iamCallerFromContext(event: APIGatewayProxyEventV2): IamCaller | undefined {
+  const requestContext = event.requestContext as unknown as { authorizer?: { iam?: { accountId?: unknown; userArn?: unknown } } } | undefined;
+  const iam = requestContext?.authorizer?.iam;
+  return typeof iam?.accountId === 'string' && typeof iam.userArn === 'string' ? { accountId: iam.accountId, userArn: iam.userArn } : undefined;
+}

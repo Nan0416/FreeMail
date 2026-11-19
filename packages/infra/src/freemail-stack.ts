@@ -129,6 +129,12 @@ export class FreeMailStack extends Stack {
     new CfnOutput(this, 'SesBounceComplaintTopicArn', {
       value: ses.bounceComplaintTopic.topicArn,
     });
+    if (ses.inbound) {
+      new CfnOutput(this, 'EmailReceivedTopicArn', {
+        description: 'Notified for each received email stored with its content. Subscribe to it.',
+        value: ses.inbound.emailReceivedTopic.topicArn,
+      });
+    }
     // SES starts every account in SANDBOX mode (verified recipients only, ~200/day).
     // Requesting production access is a one-time manual per-account step.
     new CfnOutput(this, 'SesProductionAccessNote', {

@@ -37,6 +37,7 @@ TypeScript · npm workspaces monorepo · Node.js (Lambda) · React (SPA) · AWS 
 ## APIs
 1. **REST API** (React app): login (enrolls on first use), refresh/logout, send email, manage API keys; (with inbound) list/read emails + attachment download.
 2. **MCP server** (agents): `send_email`, plus `list_emails` / `get_email` / `get_email_attachment_url` (read tools, registered only when inbound is enabled). Built with the official **`@modelcontextprotocol/sdk`** Streamable HTTP transport in **stateless mode** behind API GW + Lambda (request/response tool-calling; no server-push needed). API-key auth via the Lambda authorizer.
+3. **Backend services** (other AWS services in the account): `ANY /api/{proxy+}`, authorized by **IAM (SigV4)**, served by the REST handler only to IAM callers — `GET /api/emails/{id}` returns a message with 5-minute presigned attachment URLs. With inbound enabled, an SNS topic notifies them of each received message (metadata only, at-least-once).
 
 ## Sending ✅
 The SES domain identity is normally **created** by FreeMail together with its DKIM/SPF/MAIL-FROM/DMARC records; `sesIdentity.mode: "import"` adopts a domain that is **already** set up for SES, creating neither (both would fail the deploy as "already exists"). Import mode keeps FreeMail's configuration set, because the sender names it on every call rather than relying on the identity's default association — so suppression and bounce/complaint handling are unaffected.
@@ -47,6 +48,32 @@ The SES domain identity is normally **created** by FreeMail together with its DK
 - **Off by default.** Enabled via deploy config (`enableInbound`) with an explicit **MX-override warning** (inbound points the domain's MX at SES → **recommend a dedicated subdomain** so it doesn't clobber existing mail).
 - SES receipt rule → **S3** (raw MIME) → Lambda parses (`mailparser`) → metadata to DDB + attachments to S3. SES spam/virus verdicts handled.
 - Inbound is **region-restricted**; us-east-1 (the default) supports it.
+
+### What happens to each received message
+
+Every processed message gets a row in the **same** emails table; the cases differ in the row's flags and in what is stored. Two terms:
+- **The quarantine bucket** holds the raw `.eml` of a *failed* message, with no expiry.
+- **The `quarantined` flag** on a row means "hidden by default". It's set for both failed and spam messages.
+
+The logic lives in `packages/service/src/processors/inbound-processor.ts`, with the exposure rule in `utils/verdicts.ts` and the limits in `utils/inbound-limits.ts`.
+
+| # | Case | Row | Body and attachments stored | Raw copy to quarantine bucket | Shown in |
+|---|---|---|---|---|---|
+| 1 | Bad S3 key (not `inbound/<id>`) | None: `skipped`, logged, not retried | – | – | Nowhere |
+| 2 | S3 object already gone | None: `skipped` | – | – | Nowhere |
+| 3 | **Too big**: raw message over 40 MB, never downloaded, only the headers are read | `failed` (`oversize`) | No | Yes | Errors, with sender, subject and verdicts |
+| 4 | **Over processing limits**: more than 25 attachments, one over 15 MB, more than 30 MB of attachments, or a body over 10 MB | `failed` (`limit_exceeded`) | No (partial uploads deleted) | Yes | Errors |
+| 5 | **Malformed MIME** | `failed` (`parse_failed`) | No | Yes | Errors |
+| 6 | **Virus verdict not exactly `PASS`**: `FAIL`, `GRAY`, `PROCESSING_FAILED`, or the header missing, duplicated or unknown | `failed` | No | Yes | Errors, with the `.eml` download marked suspicious |
+| 7 | **Spam `FAIL`**, virus `PASS` | `quarantined` | Yes (own-link files skipped) | No | Inbox, tagged spam, content hidden until opened |
+| 8 | **Good**: virus `PASS`, spam not `FAIL`, parsed OK | Normal | Yes, plus own-link files | No | Inbox |
+| 9 | **Duplicate delivery** of the same S3 event | Already exists (conditional write): `duplicate` | Same keys, overwritten | – | No change |
+| 10 | **Infrastructure error** (S3 or DynamoDB failure) | Not yet | – | – | Lambda retries twice, then the dead-letter queue (14 days) |
+
+- **Where content lives:** attachment bytes are always separate S3 objects (`attachments/inbound/<id>/<part>`). The row only holds descriptors. The body is stored inline in the row (up to 256 KB) or as `bodies/inbound/<id>.json` (`storeEmailBody`).
+- **Raw MIME:** once a row is written (cases 3–8), SES's raw copy under `inbound/` is tagged and expires after 14 days. In case 10 it is never tagged, so it stays until the event is redriven.
+- **Case 3 is rare:** SES itself won't store a message over 40 MB in S3, so the check is mostly a safety net.
+- **Notifications:** cases 7, 8 and 9 publish an `email.received` message to the SNS topic (`<stack>-email-received`), right after the row is written and before the raw MIME is tagged. A failed publish fails the invocation; the retry hits case 9 and publishes again, so delivery is at-least-once. See DEPLOY.md, "New-mail notifications".
 
 ## Attachments ✅
 - **Inbound (received):** parsed to S3, downloaded by the **authenticated app user** via **presigned S3 URLs**.

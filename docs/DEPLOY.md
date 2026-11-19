@@ -134,6 +134,7 @@ The Lambda handlers are bundled from source at synth (esbuild), so no separate h
 | **`HostedZoneNameServers`**                                           | Present only when FreeMail **created** the zone. **Delegate the zone to these** to activate it (see [§5](#5-dns-and-email-authentication)). |
 | **`SesProductionAccessNote`**                                         | A link to the SES account dashboard to request production access (see [§4](#4-ses-production-access-sandbox-exit)).                         |
 | **`SesMailFromDomain`**, **`SesBounceComplaintTopicArn`**             | The custom MAIL FROM subdomain and the SNS topic that receives bounce/complaint notifications.                                              |
+| **`EmailReceivedTopicArn`**                                           | Inbound only: the SNS topic notified for each received email (see [§9](#backend-services-iam)).                                             |
 | **`MailBucketName`**, **`QuarantineBucketName`**, **`WebBucketName`** | The S3 buckets (mail and quarantine are retained on teardown — see [§10](#10-troubleshooting)).                                             |
 
 ### After deploying
@@ -328,6 +329,26 @@ Agents send email through the MCP server — no browser, no cookies:
 To attach a file, first call **`create_attachment_upload`** with `{ "filename", "contentType", "sizeBytes" }`, PUT the file's bytes to the returned `uploadUrl` (an ordinary HTTPS PUT, no API key needed), then pass `"attachments": [{ "uploadId": "<from the tool>" }]` to `send_email`. To forward a file that is already on a message in the mailbox (inbound enabled), pass `{ "emailId", "attachmentId" }` from `get_email` instead — the server copies it, nothing is downloaded or uploaded. File bytes are never sent through MCP.
 
 The MCP server is stateless (Streamable HTTP), so no session setup is required. **`send_email`** and **`create_attachment_upload`** are always available; when **inbound is enabled**, the read tools **`list_emails`**, **`get_email`**, and **`get_email_attachment_url`** are also registered, so agents can read received mail and mint short-lived presigned attachment download URLs. Received email is untrusted external content — the read tools return it marked as data (with a `trust` field and a delimited text frame), not as instructions to the agent. With inbound disabled, only `send_email` and `create_attachment_upload` are offered.
+
+### Backend services (IAM)
+
+Other AWS services in your account call `/api/*` with IAM instead of a password or API key. API Gateway's `ANY /api/{proxy+}` route uses IAM authorization and goes to the same REST handler. The handler serves `/api` paths only to IAM-authorized callers, and never lets one reach a web route.
+
+- **Who can call:** any principal in the deployment's account whose IAM policy allows `execute-api:Invoke` on the API. HTTP APIs have no resource policies, so a caller in another account would need to assume a role in this one.
+- **How:** sign each request with SigV4 (service `execute-api`, region `us-east-1`) and send it to `https://<apiDomain>/api/...`. The generated `execute-api` URL is disabled.
+- **Check it works:** `GET /api/test` returns `{ "ok": true, "caller": { "accountId", "userArn" } }`, the identity API Gateway verified. An unsigned request gets a 403 from API Gateway.
+
+#### New-mail notifications
+
+With inbound enabled, the SNS topic `<stack name>-email-received` (stack output `EmailReceivedTopicArn`) gets a message each time a received email is stored with its content: a normal message, a spam-flagged one, or a redelivery of either. Failed messages (the Errors folder) don't notify. Subscribe an SQS queue or a Lambda to it.
+
+- **The message** is metadata only, `EmailReceivedNotification` in `packages/shared/src/service-api.ts`: `id`, `receivedAt`, `from`, `to`, `cc`, `subject`, attachment count, size, and `spam`. It never contains the body or download links. `to` and `cc` come from the message headers, so a BCC'd recipient isn't listed.
+- **At-least-once:** the same message can arrive more than once, so de-duplicate on `id`.
+- **Filtering:** `type` (`email.received`) and `spam` (`"true"` / `"false"`) are also message attributes. For example, a subscription filter policy of `{"spam": ["false"]}` skips spam.
+
+#### `GET /api/emails/{id}`
+
+Returns one message by the notification's `id`, as `ServiceEmailDetail` (also in `service-api.ts`). That's the same detail the web app gets (headers, `text`, `html`, verdicts), and every attachment carries a `downloadUrl` that is valid for 5 minutes (`downloadUrlExpiresAt`). The URL downloads the file straight from S3; call the route again for fresh URLs once they expire. The `html` is raw and untrusted: sanitize it before rendering. An unknown `id` gets `404 not_found`.
 
 ## 10. Troubleshooting
 
