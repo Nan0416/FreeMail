@@ -1,12 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { EmailDetail } from '@freemail/shared';
-import {
-  bodyKind,
-  failureReason,
-  formatSender,
-  quarantineNotice,
-  sentStatusNotice,
-} from '../../src/lib/email-reader.js';
+import { bodyKind, failureReason, formatSender, quarantineNotice, sentStatusNotice } from '../../src/lib/email-reader.js';
 
 function inbound(overrides: Partial<EmailDetail> = {}): EmailDetail {
   return {
@@ -47,9 +41,7 @@ describe('quarantineNotice', () => {
   });
 
   it('spam-flagged with a body → revealable', () => {
-    const notice = quarantineNotice(
-      inbound({ quarantined: true, spamVerdict: 'FAIL', virusVerdict: 'PASS', text: 'body' }),
-    );
+    const notice = quarantineNotice(inbound({ quarantined: true, spamVerdict: 'FAIL', virusVerdict: 'PASS', text: 'body' }));
     expect(notice).toEqual({
       message: 'This message was flagged as spam.',
       canReveal: true,
@@ -59,17 +51,13 @@ describe('quarantineNotice', () => {
   });
 
   it('virus-fail → NOT revealable (no body exists to show)', () => {
-    const notice = quarantineNotice(
-      inbound({ quarantined: true, virusVerdict: 'FAIL', spamVerdict: 'PASS' }),
-    );
+    const notice = quarantineNotice(inbound({ quarantined: true, virusVerdict: 'FAIL', spamVerdict: 'PASS' }));
     expect(notice?.canReveal).toBe(false);
     expect(notice?.message).toMatch(/virus/i);
   });
 
   it('parse-failed → NOT revealable', () => {
-    const notice = quarantineNotice(
-      inbound({ quarantined: true, virusVerdict: 'PASS', parseStatus: 'parse_failed' }),
-    );
+    const notice = quarantineNotice(inbound({ quarantined: true, virusVerdict: 'PASS', parseStatus: 'parse_failed' }));
     expect(notice?.canReveal).toBe(false);
     expect(notice?.message).toMatch(/parse/i);
   });
@@ -101,9 +89,7 @@ describe('quarantineNotice', () => {
   });
 
   it('offers no download when the server does not', () => {
-    const notice = quarantineNotice(
-      inbound({ quarantined: true, failed: true, virusVerdict: 'FAIL', rawAvailable: false }),
-    );
+    const notice = quarantineNotice(inbound({ quarantined: true, failed: true, virusVerdict: 'FAIL', rawAvailable: false }));
     expect(notice).toMatchObject({ offerDownload: false, suspicious: false });
   });
 });
@@ -130,12 +116,8 @@ describe('failureReason', () => {
       label: 'Too large',
       suspicious: false,
     });
-    expect(failureReason({ virusVerdict: 'PASS', parseStatus: 'limit_exceeded' })?.label).toBe(
-      'Over limits',
-    );
-    expect(failureReason({ virusVerdict: 'PASS', parseStatus: 'parse_failed' })?.label).toBe(
-      'Unreadable',
-    );
+    expect(failureReason({ virusVerdict: 'PASS', parseStatus: 'limit_exceeded' })?.label).toBe('Over limits');
+    expect(failureReason({ virusVerdict: 'PASS', parseStatus: 'parse_failed' })?.label).toBe('Unreadable');
   });
 
   it('is null for clean, parsed mail (at most spam)', () => {
@@ -151,12 +133,8 @@ describe('sentStatusNotice', () => {
   });
 
   it('explains a failed or still-sending message', () => {
-    expect(sentStatusNotice(inbound({ direction: 'sent', status: 'send_failed' }))).toMatch(
-      /failed to send/i,
-    );
-    expect(sentStatusNotice(inbound({ direction: 'sent', status: 'sending' }))).toMatch(
-      /still sending/i,
-    );
+    expect(sentStatusNotice(inbound({ direction: 'sent', status: 'send_failed' }))).toMatch(/failed to send/i);
+    expect(sentStatusNotice(inbound({ direction: 'sent', status: 'sending' }))).toMatch(/still sending/i);
   });
 });
 

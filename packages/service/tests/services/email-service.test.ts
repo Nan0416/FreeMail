@@ -1,11 +1,6 @@
 import { DOWNLOAD_TOKEN_TTL_SECONDS, type SendEmailRequest } from '@freemail/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type {
-  ClaimDownloadTokenOutput,
-  CreateDownloadTokenInput,
-  CreateDownloadTokenOutput,
-  DownloadTokensDao,
-} from '../../src/data/download-tokens-dao.js';
+import type { ClaimDownloadTokenOutput, CreateDownloadTokenInput, CreateDownloadTokenOutput, DownloadTokensDao } from '../../src/data/download-tokens-dao.js';
 import type {
   EmailsDao,
   CreateIdempotencyRecordInput,
@@ -91,9 +86,7 @@ class FakeEmails implements EmailsDao {
   readonly keys = new Map<string, IdempotencyRecord>();
   readonly keyCalls: string[] = [];
   failKeyUpdate = false;
-  createIdempotencyRecord(
-    input: CreateIdempotencyRecordInput,
-  ): Promise<CreateIdempotencyRecordOutput> {
+  createIdempotencyRecord(input: CreateIdempotencyRecordInput): Promise<CreateIdempotencyRecordOutput> {
     this.keyCalls.push(`create:${input.key}`);
     const existing = this.keys.get(input.key);
     if (existing) {
@@ -243,15 +236,10 @@ function makeService(overrides: Partial<EmailServiceDeps> = {}): {
 } {
   const ses = overrides.ses instanceof FakeSes ? overrides.ses : new FakeSes();
   const emails = overrides.emails instanceof FakeEmails ? overrides.emails : new FakeEmails();
-  const objectStore =
-    overrides.objectStore instanceof FakeObjectStore
-      ? overrides.objectStore
-      : new FakeObjectStore();
-  const tokens =
-    overrides.tokens instanceof FakeDownloadTokens ? overrides.tokens : new FakeDownloadTokens();
+  const objectStore = overrides.objectStore instanceof FakeObjectStore ? overrides.objectStore : new FakeObjectStore();
+  const tokens = overrides.tokens instanceof FakeDownloadTokens ? overrides.tokens : new FakeDownloadTokens();
   const bodies = overrides.bodies instanceof FakeBodyStore ? overrides.bodies : new FakeBodyStore();
-  const uploads =
-    overrides.uploads instanceof FakeUploadStore ? overrides.uploads : new FakeUploadStore();
+  const uploads = overrides.uploads instanceof FakeUploadStore ? overrides.uploads : new FakeUploadStore();
   const mimeInputs: RawMimeInput[] = [];
   let tokenSeq = 0;
   const service = new EmailService({
@@ -299,9 +287,7 @@ describe('EmailService.sendEmail', () => {
   it('archives the MIME, records the attempt, sends, and marks it sent (write-before-send)', async () => {
     const setup = makeService();
 
-    const result = await setup.service.sendEmail(
-      request({ to: ['a@x.com'], cc: ['c@x.com'], bcc: ['b@x.com'], html: '<p>hi</p>' }),
-    );
+    const result = await setup.service.sendEmail(request({ to: ['a@x.com'], cc: ['c@x.com'], bcc: ['b@x.com'], html: '<p>hi</p>' }));
 
     expect(result).toEqual({
       id: encodeEmailRef({ pk: 'SENT', sk: '2026-07-17T12:00:00.000Z#id-1' }),
@@ -388,16 +374,12 @@ describe('EmailService.sendEmail', () => {
 
   it('rejects a malformed sender address with invalid_sender', async () => {
     const setup = makeService();
-    await expect(setup.service.sendEmail(request({ from: 'not-an-email' }))).rejects.toBeInstanceOf(
-      EmailError,
-    );
+    await expect(setup.service.sendEmail(request({ from: 'not-an-email' }))).rejects.toBeInstanceOf(EmailError);
   });
 
   it('requires at least one recipient', async () => {
     const setup = makeService();
-    await expect(
-      setup.service.sendEmail(request({ to: [], cc: undefined, bcc: undefined })),
-    ).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(setup.service.sendEmail(request({ to: [], cc: undefined, bcc: undefined }))).rejects.toMatchObject({ code: 'invalid_request' });
   });
 
   it('rejects an invalid recipient address', async () => {
@@ -417,24 +399,18 @@ describe('EmailService.sendEmail', () => {
 
   it('requires a text or html body', async () => {
     const setup = makeService();
-    await expect(
-      setup.service.sendEmail(request({ text: undefined, html: undefined })),
-    ).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(setup.service.sendEmail(request({ text: undefined, html: undefined }))).rejects.toMatchObject({ code: 'invalid_request' });
   });
 
   it('rejects an attachment that is not an upload reference (no S3 call, no send)', async () => {
     const setup = makeService();
-    await expect(
-      setup.service.sendEmail(request({ attachments: [{ uploadId: '../uploads/other' }] })),
-    ).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(setup.service.sendEmail(request({ attachments: [{ uploadId: '../uploads/other' }] }))).rejects.toMatchObject({ code: 'invalid_request' });
     expect(setup.ses.calls).toHaveLength(0);
   });
 
   it('rejects an upload that was never uploaded or has expired (no archive, no send)', async () => {
     const setup = makeService();
-    await expect(
-      setup.service.sendEmail(request({ attachments: [{ uploadId: uploadId(9) }] })),
-    ).rejects.toThrow(/was not found/);
+    await expect(setup.service.sendEmail(request({ attachments: [{ uploadId: uploadId(9) }] }))).rejects.toThrow(/was not found/);
     expect(setup.objectStore.archivePuts).toHaveLength(0);
     expect(setup.ses.calls).toHaveLength(0);
   });
@@ -533,9 +509,7 @@ describe('EmailService.sendEmail — stored body', () => {
 
     // 5 MB: over the embed limit, so it becomes a download link.
     const big = setup.uploads.add(1, 'big.bin', 'application/octet-stream', 5 * MB);
-    await setup.service.sendEmail(
-      request({ text: 'See attached.', attachments: [{ uploadId: big }] }),
-    );
+    await setup.service.sendEmail(request({ text: 'See attached.', attachments: [{ uploadId: big }] }));
 
     const body = setup.emails.records[0]?.body;
     expect(body?.kind).toBe('inline');
@@ -565,9 +539,7 @@ describe('EmailService.sendEmail — write-before-send failure paths (#29)', () 
       return meta;
     };
 
-    await expect(
-      setup.service.sendEmail(request({ attachments: [{ uploadId: a }] })),
-    ).rejects.toMatchObject({
+    await expect(setup.service.sendEmail(request({ attachments: [{ uploadId: a }] }))).rejects.toMatchObject({
       code: 'invalid_request',
       message: expect.stringContaining('was not found'),
     });
@@ -580,9 +552,7 @@ describe('EmailService.sendEmail — write-before-send failure paths (#29)', () 
     const a = setup.uploads.add(1, 'a.txt', 'text/plain', Buffer.from('aaa'));
     setup.uploads.failCopy = true;
 
-    await expect(
-      setup.service.sendEmail(request({ attachments: [{ uploadId: a }] })),
-    ).rejects.toThrow(/s3 copy down/);
+    await expect(setup.service.sendEmail(request({ attachments: [{ uploadId: a }] }))).rejects.toThrow(/s3 copy down/);
     expect(setup.emails.records).toEqual([]);
     expect(setup.ses.calls).toHaveLength(0);
   });
@@ -591,9 +561,7 @@ describe('EmailService.sendEmail — write-before-send failure paths (#29)', () 
     const setup = makeService();
     setup.bodies.fail = true;
 
-    await expect(
-      setup.service.sendEmail(request({ text: 'z'.repeat(MAX_INLINE_BODY_BYTES + 1) })),
-    ).rejects.toThrow(/s3 body put down/);
+    await expect(setup.service.sendEmail(request({ text: 'z'.repeat(MAX_INLINE_BODY_BYTES + 1) }))).rejects.toThrow(/s3 body put down/);
 
     expect(setup.emails.records).toEqual([]);
     expect(setup.ses.calls).toEqual([]);
@@ -619,9 +587,7 @@ describe('EmailService.sendEmail — write-before-send failure paths (#29)', () 
     await expect(setup.service.sendEmail(request())).rejects.toThrow('ses boom');
     // Archived + recorded, then marked send_failed with the reason.
     expect(setup.objectStore.archivePuts).toHaveLength(1);
-    expect(setup.emails.statusUpdates).toEqual([
-      { id: 'id-1', sentAt: NOW_ISO, status: 'send_failed', error: 'ses boom' },
-    ]);
+    expect(setup.emails.statusUpdates).toEqual([{ id: 'id-1', sentAt: NOW_ISO, status: 'send_failed', error: 'ses boom' }]);
     expect(setup.emails.records[0]).toMatchObject({ status: 'send_failed', error: 'ses boom' });
     expect(setup.emails.records[0]?.sesMessageId).toBeUndefined();
   });
@@ -637,11 +603,7 @@ describe('EmailService.sendEmail — write-before-send failure paths (#29)', () 
     expect(result.messageId).toBe('ses-msg-1');
     expect(setup.ses.calls).toHaveLength(1);
     expect(emails.records[0]?.status).toBe('sending');
-    expect(console.error).toHaveBeenCalledWith(
-      'Failed to update sent-email status',
-      { emailId: 'id-1', status: 'sent' },
-      expect.any(Error),
-    );
+    expect(console.error).toHaveBeenCalledWith('Failed to update sent-email status', { emailId: 'id-1', status: 'sent' }, expect.any(Error));
   });
 });
 
@@ -651,9 +613,7 @@ describe('EmailService.sendEmail — embed or link (#14)', () => {
     const exact = setup.uploads.add(1, 'exact.bin', 'application/octet-stream', 3 * MB);
     const over = setup.uploads.add(2, 'over.bin', 'application/octet-stream', 3 * MB + 1);
 
-    await setup.service.sendEmail(
-      request({ attachments: [{ uploadId: exact }, { uploadId: over }] }),
-    );
+    await setup.service.sendEmail(request({ attachments: [{ uploadId: exact }, { uploadId: over }] }));
 
     expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual(['exact.bin']);
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['over.bin']);
@@ -662,34 +622,21 @@ describe('EmailService.sendEmail — embed or link (#14)', () => {
   it('links a file that would pass the message’s embed budget', async () => {
     const setup = makeService();
     // Four 3 MB files: three fit the 10 MB budget (9 MB), the fourth is linked.
-    const ids = [1, 2, 3, 4].map((n) =>
-      setup.uploads.add(n, `f${n}.bin`, 'application/octet-stream', 3 * MB),
-    );
+    const ids = [1, 2, 3, 4].map((n) => setup.uploads.add(n, `f${n}.bin`, 'application/octet-stream', 3 * MB));
 
     await setup.service.sendEmail(request({ attachments: ids.map((uploadId) => ({ uploadId })) }));
 
-    expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual([
-      'f1.bin',
-      'f2.bin',
-      'f3.bin',
-    ]);
+    expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual(['f1.bin', 'f2.bin', 'f3.bin']);
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['f4.bin']);
   });
 
   it('still embeds a small file after a linked one (first fit, in request order)', async () => {
     const setup = makeService();
-    const ids = [3, 3, 3, 3, 1].map((size, n) =>
-      setup.uploads.add(n, `f${n}.bin`, 'application/octet-stream', size * MB),
-    );
+    const ids = [3, 3, 3, 3, 1].map((size, n) => setup.uploads.add(n, `f${n}.bin`, 'application/octet-stream', size * MB));
 
     await setup.service.sendEmail(request({ attachments: ids.map((uploadId) => ({ uploadId })) }));
 
-    expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual([
-      'f0.bin',
-      'f1.bin',
-      'f2.bin',
-      'f4.bin',
-    ]);
+    expect(setup.mimeInputs[0]?.attachments.map((a) => a.filename)).toEqual(['f0.bin', 'f1.bin', 'f2.bin', 'f4.bin']);
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['f3.bin']);
   });
 
@@ -701,9 +648,7 @@ describe('EmailService.sendEmail — embed or link (#14)', () => {
 
     expect(setup.mimeInputs[0]?.attachments).toEqual([]);
     expect(setup.uploads.reads).toEqual([]); // never pulled into the Lambda
-    const expiresAt = new Date(
-      Date.parse(NOW_ISO) + DOWNLOAD_TOKEN_TTL_SECONDS * 1000,
-    ).toISOString();
+    const expiresAt = new Date(Date.parse(NOW_ISO) + DOWNLOAD_TOKEN_TTL_SECONDS * 1000).toISOString();
     expect(setup.tokens.created).toEqual([
       {
         token: 'tok-0',
@@ -774,9 +719,7 @@ describe('EmailService.sendEmail — embed or link (#14)', () => {
     const setup = makeService();
     const big = setup.uploads.add(1, 'a&b.pdf', 'application/pdf', 5 * MB);
 
-    await setup.service.sendEmail(
-      request({ text: undefined, html: '<p>hi</p>', attachments: [{ uploadId: big }] }),
-    );
+    await setup.service.sendEmail(request({ text: undefined, html: '<p>hi</p>', attachments: [{ uploadId: big }] }));
 
     expect(setup.mimeInputs[0]?.html).toContain('<a href="https://api.example.test/d/tok-0">');
     expect(setup.mimeInputs[0]?.html).toContain('a&amp;b.pdf');
@@ -788,9 +731,7 @@ describe('EmailService.sendEmail — embed or link (#14)', () => {
     const b = setup.uploads.add(2, 'b.txt', 'text/plain', 100); // would pass the 150 total
     const c = setup.uploads.add(3, 'c.txt', 'text/plain', 101); // over the per-file limit
 
-    await setup.service.sendEmail(
-      request({ attachments: [{ uploadId: a }, { uploadId: b }, { uploadId: c }] }),
-    );
+    await setup.service.sendEmail(request({ attachments: [{ uploadId: a }, { uploadId: b }, { uploadId: c }] }));
 
     expect(setup.mimeInputs[0]?.attachments.map((x) => x.filename)).toEqual(['a.txt']);
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['b.txt', 'c.txt']);
@@ -891,18 +832,12 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
     };
     const setup = withParent(sent, { sesRegion: 'us-east-1' });
 
-    await setup.service.sendEmail(
-      request({ subject: undefined, inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }),
-    );
+    await setup.service.sendEmail(request({ subject: undefined, inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }));
 
     expect(setup.mimeInputs[0]).toMatchObject({
       subject: 'Re: Lunch?',
       inReplyTo: '<0100abc-000000@email.amazonses.com>',
-      references: [
-        '<root@mail.other.com>',
-        '<parent@mail.other.com>',
-        '<0100abc-000000@email.amazonses.com>',
-      ],
+      references: ['<root@mail.other.com>', '<parent@mail.other.com>', '<0100abc-000000@email.amazonses.com>'],
     });
   });
 
@@ -942,9 +877,7 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
     } as GetEmailOutput;
     const setup = withParent(sent);
 
-    const result = await setup.service.sendEmail(
-      request({ inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }),
-    );
+    const result = await setup.service.sendEmail(request({ inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }));
 
     expect(result.threaded).toBe(false);
     expect(setup.mimeInputs[0].inReplyTo).toBeUndefined();
@@ -966,11 +899,7 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
   it('refuses inReplyTo where the mailbox cannot be read, without touching the table', async () => {
     const setup = withParent(inboundParent(), { canReadMailbox: false });
 
-    await expect(
-      setup.service.sendEmail(
-        request({ inReplyTo: encodeEmailRef({ pk: 'INBOUND', sk: INBOUND_SK }) }),
-      ),
-    ).rejects.toMatchObject({
+    await expect(setup.service.sendEmail(request({ inReplyTo: encodeEmailRef({ pk: 'INBOUND', sk: INBOUND_SK }) }))).rejects.toMatchObject({
       code: 'invalid_request',
       message: expect.stringContaining('receiving'),
     });
@@ -1029,9 +958,7 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
     } as GetEmailOutput;
     const setup = withParent(sent, { sesRegion: 'us-east-1' });
 
-    await setup.service.sendEmail(
-      request({ inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }),
-    );
+    await setup.service.sendEmail(request({ inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }));
 
     expect(setup.mimeInputs[0].inReplyTo).toBe('<0100abc-000000@eu-west-1.amazonses.com>');
   });
@@ -1040,9 +967,7 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
     const failed = inboundParent({ pk: 'FAILED', failed: true } as Partial<GetEmailOutput>);
     const setup = withParent(failed);
 
-    const result = await setup.service.sendEmail(
-      request({ inReplyTo: encodeEmailRef({ pk: 'FAILED', sk: INBOUND_SK }) }),
-    );
+    const result = await setup.service.sendEmail(request({ inReplyTo: encodeEmailRef({ pk: 'FAILED', sk: INBOUND_SK }) }));
 
     expect(result.threaded).toBe(true);
     expect(setup.mimeInputs[0].inReplyTo).toBe('<parent@mail.other.com>');
@@ -1133,9 +1058,7 @@ describe('EmailService.sendEmail — forwarding stored attachments', () => {
 
     await setup.service.sendEmail(request({ attachments: [ref('2')] }));
 
-    expect(setup.uploads.copies).toEqual([
-      { source: 'attachments/inbound/ses-in-2/2', dest: 'attachments/sent/id-1/0' },
-    ]);
+    expect(setup.uploads.copies).toEqual([{ source: 'attachments/inbound/ses-in-2/2', dest: 'attachments/sent/id-1/0' }]);
     expect(setup.mimeInputs[0].attachments).toEqual([
       {
         filename: 'report.pdf',
@@ -1161,20 +1084,11 @@ describe('EmailService.sendEmail — forwarding stored attachments', () => {
     const setup = forwarding();
     const upload = setup.uploads.add(1, 'notes.txt', 'text/plain', Buffer.from('hi'));
 
-    await setup.service.sendEmail(
-      request({ attachments: [ref('3'), { uploadId: upload }, ref('2')] }),
-    );
+    await setup.service.sendEmail(request({ attachments: [ref('3'), { uploadId: upload }, ref('2')] }));
 
-    expect(setup.uploads.copies.map((c) => c.source)).toEqual([
-      'attachments/inbound/ses-in-2/3',
-      `uploads/${upload}`,
-      'attachments/inbound/ses-in-2/2',
-    ]);
+    expect(setup.uploads.copies.map((c) => c.source)).toEqual(['attachments/inbound/ses-in-2/3', `uploads/${upload}`, 'attachments/inbound/ses-in-2/2']);
     // The 8 MB zip is linked; the two small files are embedded, in order.
-    expect(setup.mimeInputs[0].attachments.map((a) => a.filename)).toEqual([
-      'notes.txt',
-      'report.pdf',
-    ]);
+    expect(setup.mimeInputs[0].attachments.map((a) => a.filename)).toEqual(['notes.txt', 'report.pdf']);
     expect(setup.tokens.created.map((t) => t.filename)).toEqual(['big.zip']);
     // The forwarded PDF (third, index 2) is embedded from its new copy, like the first test's.
     expect(setup.uploads.reads).toEqual(expect.arrayContaining(['attachments/sent/id-1/2']));
@@ -1195,11 +1109,10 @@ describe('EmailService.sendEmail — forwarding stored attachments', () => {
   ])('refuses %s, sending nothing', async (_label, attachment, message) => {
     const setup = forwarding();
 
-    await expect(
-      setup.service.sendEmail(
-        request({ attachments: [attachment as unknown as { uploadId: string }] }),
-      ),
-    ).rejects.toMatchObject({ code: 'invalid_request', message: expect.stringContaining(message) });
+    await expect(setup.service.sendEmail(request({ attachments: [attachment as unknown as { uploadId: string }] }))).rejects.toMatchObject({
+      code: 'invalid_request',
+      message: expect.stringContaining(message),
+    });
     expect(setup.ses.calls).toHaveLength(0);
     expect(setup.uploads.copies).toEqual([]);
   });
@@ -1207,9 +1120,7 @@ describe('EmailService.sendEmail — forwarding stored attachments', () => {
   it('refuses to forward where the mailbox cannot be read, without touching the table', async () => {
     const setup = forwarding({ canReadMailbox: false });
 
-    await expect(
-      setup.service.sendEmail(request({ attachments: [ref('2')] })),
-    ).rejects.toMatchObject({
+    await expect(setup.service.sendEmail(request({ attachments: [ref('2')] }))).rejects.toMatchObject({
       code: 'invalid_request',
       message: expect.stringContaining('receiving'),
     });
@@ -1220,9 +1131,7 @@ describe('EmailService.sendEmail — forwarding stored attachments', () => {
     const setup = forwarding();
     setup.uploads.objects.delete('attachments/inbound/ses-in-2/2');
 
-    await expect(
-      setup.service.sendEmail(request({ attachments: [ref('2')] })),
-    ).rejects.toMatchObject({ message: expect.stringContaining('no longer stored') });
+    await expect(setup.service.sendEmail(request({ attachments: [ref('2')] }))).rejects.toMatchObject({ message: expect.stringContaining('no longer stored') });
   });
 });
 
@@ -1244,9 +1153,7 @@ describe('EmailService.sendEmail — idempotency keys', () => {
     expect(setup.emails.keyCalls).toEqual(['create:k-1', 'update:k-1']);
     expect(setup.emails.keys.get('k-1')).toMatchObject({ state: 'sent', response: result });
     // Remembered for a day.
-    expect(setup.emails.keys.get('k-1')?.ttl).toBe(
-      Math.floor(Date.parse(NOW_ISO) / 1000) + 24 * 60 * 60,
-    );
+    expect(setup.emails.keys.get('k-1')?.ttl).toBe(Math.floor(Date.parse(NOW_ISO) / 1000) + 24 * 60 * 60);
   });
 
   it('replays the first response for a retry of the same message, sending nothing', async () => {
@@ -1264,9 +1171,7 @@ describe('EmailService.sendEmail — idempotency keys', () => {
     const setup = makeService();
     await setup.service.sendEmail(request({ idempotencyKey: 'k-3' }));
 
-    await expect(
-      setup.service.sendEmail(request({ idempotencyKey: 'k-3', text: 'something else' })),
-    ).rejects.toMatchObject({
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'k-3', text: 'something else' }))).rejects.toMatchObject({
       code: 'invalid_request',
       message: expect.stringContaining('different message'),
     });
@@ -1283,9 +1188,7 @@ describe('EmailService.sendEmail — idempotency keys', () => {
       ttl: 0,
     });
 
-    await expect(setup.service.sendEmail(request({ idempotencyKey: 'k-4' }))).rejects.toMatchObject(
-      { message: expect.stringContaining('still in progress') },
-    );
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'k-4' }))).rejects.toMatchObject({ message: expect.stringContaining('still in progress') });
     expect(setup.ses.calls).toHaveLength(0);
   });
 
@@ -1322,9 +1225,7 @@ describe('EmailService.sendEmail — idempotency keys', () => {
   it('does not claim a key for a request that fails validation', async () => {
     const setup = makeService();
 
-    await expect(
-      setup.service.sendEmail(request({ idempotencyKey: 'k-7', to: [] })),
-    ).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'k-7', to: [] }))).rejects.toMatchObject({ code: 'invalid_request' });
     expect(setup.emails.keyCalls).toEqual([]);
   });
 
@@ -1449,36 +1350,17 @@ describe('EmailService.sendEmail — forwarding: which messages', () => {
   it('finds nothing to forward on a sent row from before attachments were recorded', async () => {
     const setup = withRow(sentRow());
 
-    await expect(
-      setup.service.sendEmail(request({ attachments: [ref('SENT', '0')] })),
-    ).rejects.toMatchObject({ message: expect.stringContaining('no such attachment') });
+    await expect(setup.service.sendEmail(request({ attachments: [ref('SENT', '0')] }))).rejects.toMatchObject({ message: expect.stringContaining('no such attachment') });
   });
 
   it.each([
-    [
-      'an Errors-folder message',
-      inbound({ pk: 'FAILED', virusVerdict: 'FAIL', failed: true }),
-      'FAILED',
-      'no attachments to forward',
-    ],
-    [
-      'a message whose content was withheld, even with a stale descriptor',
-      inbound({ parseStatus: 'parse_failed' }),
-      'INBOUND',
-      'no attachments to forward',
-    ],
-    [
-      'a message flagged as spam',
-      inbound({ spamVerdict: 'FAIL', quarantined: true }),
-      'INBOUND',
-      'spam',
-    ],
+    ['an Errors-folder message', inbound({ pk: 'FAILED', virusVerdict: 'FAIL', failed: true }), 'FAILED', 'no attachments to forward'],
+    ['a message whose content was withheld, even with a stale descriptor', inbound({ parseStatus: 'parse_failed' }), 'INBOUND', 'no attachments to forward'],
+    ['a message flagged as spam', inbound({ spamVerdict: 'FAIL', quarantined: true }), 'INBOUND', 'spam'],
   ])('refuses to forward from %s', async (_label, row, pk, message) => {
     const setup = withRow(row);
 
-    await expect(
-      setup.service.sendEmail(request({ attachments: [ref(pk)] })),
-    ).rejects.toMatchObject({
+    await expect(setup.service.sendEmail(request({ attachments: [ref(pk)] }))).rejects.toMatchObject({
       code: 'invalid_request',
       message: expect.stringContaining(message),
     });
@@ -1496,13 +1378,9 @@ describe('EmailService.sendEmail — forwarding: which messages', () => {
 
   it('counts forwarded files and uploads together against the attachment cap', async () => {
     const setup = withRow(inbound({}));
-    const refs = Array.from({ length: 21 }, (_v, i) =>
-      i % 2 === 0 ? ref('INBOUND') : { uploadId: uploadId(i) },
-    );
+    const refs = Array.from({ length: 21 }, (_v, i) => (i % 2 === 0 ? ref('INBOUND') : { uploadId: uploadId(i) }));
 
-    await expect(
-      setup.service.sendEmail(request({ attachments: refs as { uploadId: string }[] })),
-    ).rejects.toMatchObject({ message: expect.stringContaining('at most 20 attachments') });
+    await expect(setup.service.sendEmail(request({ attachments: refs as { uploadId: string }[] }))).rejects.toMatchObject({ message: expect.stringContaining('at most 20 attachments') });
   });
 });
 
@@ -1517,19 +1395,14 @@ describe('EmailService.sendEmail — idempotency under failure and concurrency',
     await expect(setup.service.sendEmail(request({ idempotencyKey: 'u-1' }))).rejects.toThrow();
     expect(setup.emails.keys.get('u-1')?.state).toBe('pending');
 
-    await expect(setup.service.sendEmail(request({ idempotencyKey: 'u-1' }))).rejects.toMatchObject(
-      { message: expect.stringContaining('may have gone out') },
-    );
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'u-1' }))).rejects.toMatchObject({ message: expect.stringContaining('may have gone out') });
     expect(setup.ses.calls).toHaveLength(1);
   });
 
   it('lets exactly one of two concurrent identical sends go out', async () => {
     const setup = makeService();
 
-    const results = await Promise.allSettled([
-      setup.service.sendEmail(request({ idempotencyKey: 'c-1' })),
-      setup.service.sendEmail(request({ idempotencyKey: 'c-1' })),
-    ]);
+    const results = await Promise.allSettled([setup.service.sendEmail(request({ idempotencyKey: 'c-1' })), setup.service.sendEmail(request({ idempotencyKey: 'c-1' }))]);
 
     expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
     expect(setup.ses.calls).toHaveLength(1);
@@ -1550,11 +1423,7 @@ describe('EmailService.sendEmail — idempotency under failure and concurrency',
   it('frees the key when a storage check fails after the claim (an upload never made)', async () => {
     const setup = makeService();
 
-    await expect(
-      setup.service.sendEmail(
-        request({ idempotencyKey: 'v-1', attachments: [{ uploadId: uploadId(9) }] }),
-      ),
-    ).rejects.toMatchObject({ message: expect.stringContaining('was not found') });
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'v-1', attachments: [{ uploadId: uploadId(9) }] }))).rejects.toMatchObject({ message: expect.stringContaining('was not found') });
     expect(setup.emails.keyCalls).toEqual(['create:v-1', 'delete:v-1']);
   });
 
@@ -1562,9 +1431,7 @@ describe('EmailService.sendEmail — idempotency under failure and concurrency',
     const setup = makeService({ canReadMailbox: false });
     await setup.service.sendEmail(request({ idempotencyKey: 'w-1' }));
 
-    await expect(
-      setup.service.sendEmail(request({ idempotencyKey: 'w-1', text: 'changed' })),
-    ).rejects.toMatchObject({ message: expect.not.stringContaining('list_emails') });
+    await expect(setup.service.sendEmail(request({ idempotencyKey: 'w-1', text: 'changed' }))).rejects.toMatchObject({ message: expect.not.stringContaining('list_emails') });
   });
 });
 
@@ -1572,10 +1439,7 @@ describe('EmailService.sendEmail — an unclear SES outcome', () => {
   it.each([
     ['a timeout', Object.assign(new Error('socket hang up'), { name: 'TimeoutError' })],
     ['a 5xx', Object.assign(new Error('internal'), { $fault: 'server' })],
-    [
-      'a refusal after an SDK retry',
-      Object.assign(new Error('throttled'), { $fault: 'client', $metadata: { attempts: 2 } }),
-    ],
+    ['a refusal after an SDK retry', Object.assign(new Error('throttled'), { $fault: 'client', $metadata: { attempts: 2 } })],
   ])('leaves the row "sending" after %s, rather than claiming it failed', async (_label, error) => {
     const setup = makeService();
     setup.ses.send = (params) => {

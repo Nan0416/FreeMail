@@ -41,12 +41,7 @@ type Method = 'GET' | 'POST' | 'DELETE';
  * PUT a file to a presigned URL, calling `onProgress` with the bytes sent so far. Resolves
  * with the HTTP status; rejects only when the request never completes (network failure).
  */
-export type UploadTransport = (
-  url: string,
-  file: Blob,
-  contentType: string,
-  onProgress: (loadedBytes: number) => void,
-) => Promise<number>;
+export type UploadTransport = (url: string, file: Blob, contentType: string, onProgress: (loadedBytes: number) => void) => Promise<number>;
 
 /**
  * The browser's upload transport. XMLHttpRequest rather than `fetch`, because only XHR
@@ -163,19 +158,10 @@ export class FreeMailClient {
    * The URL is the whole credential: no cookies, no auth header (S3 would reject them anyway).
    * `onProgress` hears the bytes sent so far.
    */
-  async putUpload(
-    uploadUrl: string,
-    file: Blob,
-    onProgress: (loadedBytes: number) => void = () => {},
-  ): Promise<void> {
+  async putUpload(uploadUrl: string, file: Blob, onProgress: (loadedBytes: number) => void = () => {}): Promise<void> {
     let status: number;
     try {
-      status = await this.uploadImpl(
-        uploadUrl,
-        file,
-        file.type || 'application/octet-stream',
-        onProgress,
-      );
+      status = await this.uploadImpl(uploadUrl, file, file.type || 'application/octet-stream', onProgress);
     } catch {
       status = 0;
     }
@@ -224,33 +210,18 @@ export class FreeMailClient {
   }
 
   /** Mint a short-lived presigned URL that downloads (never renders) one attachment. */
-  async getAttachmentUrl(
-    emailId: string,
-    attachmentId: string,
-  ): Promise<AttachmentDownloadResponse> {
-    return this.request<AttachmentDownloadResponse>(
-      'GET',
-      `/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`,
-      { auth: true },
-    );
+  async getAttachmentUrl(emailId: string, attachmentId: string): Promise<AttachmentDownloadResponse> {
+    return this.request<AttachmentDownloadResponse>('GET', `/emails/${encodeURIComponent(emailId)}/attachments/${encodeURIComponent(attachmentId)}`, { auth: true });
   }
 
   /** Mint a short-lived presigned URL that downloads the original message as an `.eml` file. */
   async getRawUrl(emailId: string): Promise<RawEmailDownloadResponse> {
-    return this.request<RawEmailDownloadResponse>(
-      'GET',
-      `/emails/${encodeURIComponent(emailId)}/raw`,
-      { auth: true },
-    );
+    return this.request<RawEmailDownloadResponse>('GET', `/emails/${encodeURIComponent(emailId)}/raw`, { auth: true });
   }
 
   // --- core ---
 
-  private async request<T = void>(
-    method: Method,
-    path: string,
-    opts: { body?: unknown; auth: boolean },
-  ): Promise<T> {
+  private async request<T = void>(method: Method, path: string, opts: { body?: unknown; auth: boolean }): Promise<T> {
     const response = await this.rawRequest(method, path, opts.body);
     // An expired access cookie is denied by the authorizer as a 403; a 401 is handled
     // the same. Refresh once and retry only for authenticated requests.
@@ -312,8 +283,7 @@ export class FreeMailClient {
     if (!response.ok) {
       const body = (data ?? {}) as { error?: unknown; message?: unknown };
       const code = typeof body.error === 'string' ? body.error : 'invalid_request';
-      const message =
-        typeof body.message === 'string' ? body.message : `Request failed (${response.status}).`;
+      const message = typeof body.message === 'string' ? body.message : `Request failed (${response.status}).`;
       throw new ApiError(response.status, code, message);
     }
     return data as T;

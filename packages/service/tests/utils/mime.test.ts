@@ -113,9 +113,7 @@ describe('buildRawMime', () => {
     ).toString('utf8');
 
     // Pull the base64 payload out of the composed message and decode it back.
-    const match = raw.match(
-      /application\/octet-stream[\s\S]*?\r\n\r\n([A-Za-z0-9+/\r\n=]+?)\r\n--/,
-    );
+    const match = raw.match(/application\/octet-stream[\s\S]*?\r\n\r\n([A-Za-z0-9+/\r\n=]+?)\r\n--/);
     expect(match).not.toBeNull();
     const decoded = Buffer.from((match?.[1] ?? '').replace(/[\r\n]/g, ''), 'base64');
     expect(decoded.equals(content)).toBe(true);

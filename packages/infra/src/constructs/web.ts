@@ -3,16 +3,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { Certificate, CertificateValidation } from 'aws-cdk-lib/aws-certificatemanager';
-import {
-  AllowedMethods,
-  CachePolicy,
-  Distribution,
-  HeadersFrameOption,
-  HeadersReferrerPolicy,
-  PriceClass,
-  ResponseHeadersPolicy,
-  ViewerProtocolPolicy,
-} from 'aws-cdk-lib/aws-cloudfront';
+import { AllowedMethods, CachePolicy, Distribution, HeadersFrameOption, HeadersReferrerPolicy, PriceClass, ResponseHeadersPolicy, ViewerProtocolPolicy } from 'aws-cdk-lib/aws-cloudfront';
 import { S3BucketOrigin } from 'aws-cdk-lib/aws-cloudfront-origins';
 import { AaaaRecord, ARecord, RecordTarget, type IHostedZone } from 'aws-cdk-lib/aws-route53';
 import { CloudFrontTarget } from 'aws-cdk-lib/aws-route53-targets';
@@ -258,11 +249,7 @@ export class WebConstruct extends Construct {
     new BucketDeployment(this, 'SpaAssets', {
       destinationBucket: this.webBucket,
       sources: [Source.asset(props.assetPath, { exclude: ['index.html'] })],
-      cacheControl: [
-        CacheControl.setPublic(),
-        CacheControl.maxAge(Duration.days(365)),
-        CacheControl.immutable(),
-      ],
+      cacheControl: [CacheControl.setPublic(), CacheControl.maxAge(Duration.days(365)), CacheControl.immutable()],
       prune: false,
     });
 
@@ -271,13 +258,7 @@ export class WebConstruct extends Construct {
     // (#47), so config.json carries the absolute api origin.
     new BucketDeployment(this, 'SpaRoot', {
       destinationBucket: this.webBucket,
-      sources: [
-        Source.asset(props.assetPath, { exclude: ['assets/**'] }),
-        Source.jsonData(
-          'config.json',
-          webRuntimeConfigJson(props.apiBaseUrl, props.inboundEnabled),
-        ),
-      ],
+      sources: [Source.asset(props.assetPath, { exclude: ['assets/**'] }), Source.jsonData('config.json', webRuntimeConfigJson(props.apiBaseUrl, props.inboundEnabled))],
       cacheControl: [CacheControl.noCache(), CacheControl.mustRevalidate()],
       prune: false,
       distribution: this.distribution,

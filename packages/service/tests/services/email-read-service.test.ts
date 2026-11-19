@@ -16,19 +16,12 @@ import {
   type QueryEmailsByDirectionOutput,
   type UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
-import type {
-  AttachmentPresigner,
-  PresignRequest,
-} from '../../src/facades/s3-attachment-presigner.js';
+import type { AttachmentPresigner, PresignRequest } from '../../src/facades/s3-attachment-presigner.js';
 import type { MailBodyContent, MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
 import type { ParsedInbound } from '../../src/utils/inbound-parse.js';
 import { EmailError } from '../../src/utils/errors.js';
 import { decodeEmailRef, encodeEmailRef } from '../../src/utils/email-ref.js';
-import {
-  EmailReadService,
-  type ParseInbound,
-  type RawMimeSource,
-} from '../../src/services/email-read-service.js';
+import { EmailReadService, type ParseInbound, type RawMimeSource } from '../../src/services/email-read-service.js';
 
 function sentRow(overrides: Partial<GetEmailOutput & { direction: 'sent' }> = {}): GetEmailOutput {
   return {
@@ -66,9 +59,7 @@ const SENT_ATTACHMENTS = [
   },
 ];
 
-function inboundRow(
-  overrides: Partial<GetEmailOutput & { direction: 'inbound' }> = {},
-): GetEmailOutput {
+function inboundRow(overrides: Partial<GetEmailOutput & { direction: 'inbound' }> = {}): GetEmailOutput {
   return {
     direction: 'inbound',
     pk: 'INBOUND',
@@ -106,8 +97,7 @@ function inboundRow(
 
 class FakeDao implements EmailsDao {
   private readonly byKey = new Map<string, GetEmailOutput>();
-  queryImpl: (direction: QueryEmailsByDirectionInput['direction']) => Promise<GetEmailOutput[]> =
-    () => Promise.resolve([]);
+  queryImpl: (direction: QueryEmailsByDirectionInput['direction']) => Promise<GetEmailOutput[]> = () => Promise.resolve([]);
 
   put(pk: string, row: GetEmailOutput): string {
     // A stored row always carries the partition it lives in.
@@ -243,10 +233,7 @@ describe('EmailReadService.getEmail', () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
     const parser = fakeParse({ textBody: 'my sent body', htmlBody: '<p>sent</p>' });
-    const handle = repo.put(
-      SENT_PARTITION,
-      sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>),
-    );
+    const handle = repo.put(SENT_PARTITION, sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>));
 
     const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
@@ -260,17 +247,12 @@ describe('EmailReadService.getEmail', () => {
     expect(rawMime.getStreamCalls).toEqual(['sent/s1']);
     expect(parser.calls).toHaveLength(1);
     expect(parser.calls[0].options).toEqual({ assumeExposed: true });
-    expect((parser.calls[0].limits as { maxRetainedBodyChars: number }).maxRetainedBodyChars).toBe(
-      MAX_READ_BODY_BYTES,
-    );
+    expect((parser.calls[0].limits as { maxRetainedBodyChars: number }).maxRetainedBodyChars).toBe(MAX_READ_BODY_BYTES);
   });
 
   it('sent row with recorded attachments → lists them WITHOUT the S3 key', async () => {
     const repo = new FakeDao();
-    const handle = repo.put(
-      SENT_PARTITION,
-      sentRow({ attachments: SENT_ATTACHMENTS } as Partial<GetEmailOutput>),
-    );
+    const handle = repo.put(SENT_PARTITION, sentRow({ attachments: SENT_ATTACHMENTS } as Partial<GetEmailOutput>));
     const detail = await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({
       handle,
     });
@@ -286,10 +268,7 @@ describe('EmailReadService.getEmail', () => {
     const rawMime = new FakeRawMime();
     // A corrupt archive → parseInbound resolves with exposed:false; the reader falls back.
     const parser = fakeParse({ parseStatus: 'parse_failed', exposed: false });
-    const handle = repo.put(
-      SENT_PARTITION,
-      sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>),
-    );
+    const handle = repo.put(SENT_PARTITION, sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>));
 
     const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
@@ -303,10 +282,7 @@ describe('EmailReadService.getEmail', () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
     const parser = fakeParse({ textBody: 'the message we tried to send' });
-    const handle = repo.put(
-      SENT_PARTITION,
-      sentRow({ rawS3Key: 'sent/s1', status: 'send_failed' } as Partial<GetEmailOutput>),
-    );
+    const handle = repo.put(SENT_PARTITION, sentRow({ rawS3Key: 'sent/s1', status: 'send_failed' } as Partial<GetEmailOutput>));
 
     const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
@@ -319,22 +295,8 @@ describe('EmailReadService.getEmail', () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
     // Our own composed MIME has no X-SES-*-Verdict headers — assumeExposed must still yield a body.
-    rawMime.streams.set(
-      'sent/s1',
-      [
-        'From: me@mydomain.com',
-        'To: a@b.com',
-        'Subject: My sent message',
-        'Content-Type: text/html; charset=utf-8',
-        '',
-        '<p>This is what I sent</p>',
-        '',
-      ].join('\r\n'),
-    );
-    const handle = repo.put(
-      SENT_PARTITION,
-      sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>),
-    );
+    rawMime.streams.set('sent/s1', ['From: me@mydomain.com', 'To: a@b.com', 'Subject: My sent message', 'Content-Type: text/html; charset=utf-8', '', '<p>This is what I sent</p>', ''].join('\r\n'));
+    const handle = repo.put(SENT_PARTITION, sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>));
 
     // No injected parse → uses the real parseInbound with the sent (assumeExposed) branch.
     const detail = await service(repo, new FakePresigner(), rawMime).getEmail({ handle: handle });
@@ -343,10 +305,7 @@ describe('EmailReadService.getEmail', () => {
 
   it("surfaces a message's Reply-To, and omits it when there is none", async () => {
     const repo = new FakeDao();
-    const withReplyTo = repo.put(
-      INBOUND_PARTITION,
-      inboundRow({ sk: '2026-07-17T10:00:00.000Z#r1', id: 'r1', replyTo: ['desk@x.com'] }),
-    );
+    const withReplyTo = repo.put(INBOUND_PARTITION, inboundRow({ sk: '2026-07-17T10:00:00.000Z#r1', id: 'r1', replyTo: ['desk@x.com'] }));
     const without = repo.put(INBOUND_PARTITION, inboundRow());
     const reader = service(repo, new FakePresigner(), new FakeRawMime(), fakeParse({}).fn);
 
@@ -369,13 +328,9 @@ describe('EmailReadService.getEmail', () => {
     expect(rawMime.getStreamCalls).toEqual(['inbound/i1']);
     // Re-parse uses the no-op sink and the read limits (full body retention).
     expect(parser.calls).toHaveLength(1);
-    expect((parser.calls[0].limits as { maxRetainedBodyChars: number }).maxRetainedBodyChars).toBe(
-      MAX_READ_BODY_BYTES,
-    );
+    expect((parser.calls[0].limits as { maxRetainedBodyChars: number }).maxRetainedBodyChars).toBe(MAX_READ_BODY_BYTES);
     // The S3 key is stripped from the public descriptor.
-    expect(detail.attachments).toEqual([
-      { id: '0', filename: 'r.pdf', contentType: 'application/pdf', sizeBytes: 9 },
-    ]);
+    expect(detail.attachments).toEqual([{ id: '0', filename: 'r.pdf', contentType: 'application/pdf', sizeBytes: 9 }]);
     expect(JSON.stringify(detail)).not.toContain('attachments/inbound');
   });
 
@@ -411,10 +366,7 @@ describe('EmailReadService.getEmail', () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
     const parser = fakeParse({ htmlBody: '<p>spammy</p>' });
-    const handle = repo.put(
-      INBOUND_PARTITION,
-      inboundRow({ spamVerdict: 'FAIL', quarantined: true }),
-    );
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ spamVerdict: 'FAIL', quarantined: true }));
 
     const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle: handle,
@@ -474,9 +426,7 @@ describe('EmailReadService.getEmail', () => {
     expect(Buffer.byteLength(detail.html ?? '', 'utf8')).toBeLessThanOrEqual(MAX_READ_BODY_BYTES);
     // Truncation never splits a multi-byte char (no replacement char introduced).
     expect(detail.html ?? '').not.toContain('�');
-    expect(Buffer.byteLength(JSON.stringify(detail), 'utf8')).toBeLessThanOrEqual(
-      MAX_EMAIL_RESPONSE_BYTES,
-    );
+    expect(Buffer.byteLength(JSON.stringify(detail), 'utf8')).toBeLessThanOrEqual(MAX_EMAIL_RESPONSE_BYTES);
   });
 
   it('materializes a real body end-to-end through #10 parseInbound', async () => {
@@ -506,9 +456,7 @@ describe('EmailReadService.getEmail', () => {
   it('missing row → not_found', async () => {
     const repo = new FakeDao();
     const handle = encodeEmailRef({ pk: INBOUND_PARTITION, sk: '2026-07-17T10:00:00.000Z#nope' });
-    await expect(
-      service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle: handle }),
-    ).rejects.toMatchObject({ code: 'not_found', status: 404 });
+    await expect(service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle: handle })).rejects.toMatchObject({ code: 'not_found', status: 404 });
   });
 });
 
@@ -535,9 +483,7 @@ describe('EmailReadService.getAttachmentUrl', () => {
     const repo = new FakeDao();
     const presigner = new FakePresigner();
     const handle = repo.put(INBOUND_PARTITION, inboundRow());
-    await expect(
-      service(repo, presigner, new FakeRawMime()).getAttachmentUrl({ handle, attachmentId: '99' }),
-    ).rejects.toBeInstanceOf(EmailError);
+    await expect(service(repo, presigner, new FakeRawMime()).getAttachmentUrl({ handle, attachmentId: '99' })).rejects.toBeInstanceOf(EmailError);
     expect(presigner.last).toBeUndefined();
   });
 
@@ -553,9 +499,7 @@ describe('EmailReadService.getAttachmentUrl', () => {
         hasAttachments: false,
       }),
     );
-    await expect(
-      service(repo, presigner, new FakeRawMime()).getAttachmentUrl({ handle, attachmentId: '0' }),
-    ).rejects.toMatchObject({ code: 'not_found' });
+    await expect(service(repo, presigner, new FakeRawMime()).getAttachmentUrl({ handle, attachmentId: '0' })).rejects.toMatchObject({ code: 'not_found' });
     expect(presigner.last).toBeUndefined();
   });
 
@@ -563,19 +507,14 @@ describe('EmailReadService.getAttachmentUrl', () => {
     const repo = new FakeDao();
     const presigner = new FakePresigner();
     const handle = repo.put(SENT_PARTITION, sentRow());
-    await expect(
-      service(repo, presigner, new FakeRawMime()).getAttachmentUrl({ handle, attachmentId: '0' }),
-    ).rejects.toMatchObject({ code: 'not_found' });
+    await expect(service(repo, presigner, new FakeRawMime()).getAttachmentUrl({ handle, attachmentId: '0' })).rejects.toMatchObject({ code: 'not_found' });
     expect(presigner.last).toBeUndefined();
   });
 
   it('sent message → presigns its stored descriptor (embedded copy or linked upload)', async () => {
     const repo = new FakeDao();
     const presigner = new FakePresigner();
-    const handle = repo.put(
-      SENT_PARTITION,
-      sentRow({ attachments: SENT_ATTACHMENTS } as Partial<GetEmailOutput>),
-    );
+    const handle = repo.put(SENT_PARTITION, sentRow({ attachments: SENT_ATTACHMENTS } as Partial<GetEmailOutput>));
 
     await service(repo, presigner, new FakeRawMime()).getAttachmentUrl({
       handle,
@@ -593,10 +532,7 @@ describe('EmailReadService.getEmail — stored bodies', () => {
     const repo = new FakeDao();
     const rawMime = new FakeRawMime();
     const parser = fakeParse({});
-    const handle = repo.put(
-      INBOUND_PARTITION,
-      inboundRow({ body: { kind: 'inline', text: 'Stored text', html: '<p>Stored</p>' } }),
-    );
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ body: { kind: 'inline', text: 'Stored text', html: '<p>Stored</p>' } }));
 
     const detail = await service(repo, new FakePresigner(), rawMime, parser.fn).getEmail({
       handle,
@@ -615,10 +551,7 @@ describe('EmailReadService.getEmail — stored bodies', () => {
     const parser = fakeParse({});
     const bodies = new FakeBodyStore();
     bodies.bodies.set('bodies/inbound/i1.json', { html: '<p>Big</p>' });
-    const handle = repo.put(
-      INBOUND_PARTITION,
-      inboundRow({ body: { kind: 's3', s3Key: 'bodies/inbound/i1.json' } }),
-    );
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ body: { kind: 's3', s3Key: 'bodies/inbound/i1.json' } }));
 
     const detail = await service(repo, new FakePresigner(), rawMime, parser.fn, bodies).getEmail({
       handle,
@@ -632,10 +565,7 @@ describe('EmailReadService.getEmail — stored bodies', () => {
 
   it('reads envelope-only when a stored S3 body is missing (no throw)', async () => {
     const repo = new FakeDao();
-    const handle = repo.put(
-      INBOUND_PARTITION,
-      inboundRow({ body: { kind: 's3', s3Key: 'bodies/inbound/gone.json' } }),
-    );
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ body: { kind: 's3', s3Key: 'bodies/inbound/gone.json' } }));
 
     const detail = await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle });
 
@@ -645,10 +575,7 @@ describe('EmailReadService.getEmail — stored bodies', () => {
 
   it('keeps a body cut at storage time flagged truncated', async () => {
     const repo = new FakeDao();
-    const handle = repo.put(
-      INBOUND_PARTITION,
-      inboundRow({ body: { kind: 'inline', text: 'cut', truncated: true } }),
-    );
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ body: { kind: 'inline', text: 'cut', truncated: true } }));
 
     const detail = await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle });
 
@@ -715,9 +642,7 @@ describe('EmailReadService.getEmail — legacy fallback failures', () => {
     rawMime.failWith = Object.assign(new Error('Access Denied'), { name: 'AccessDenied' });
     const handle = repo.put(INBOUND_PARTITION, inboundRow());
 
-    await expect(service(repo, new FakePresigner(), rawMime).getEmail({ handle })).rejects.toThrow(
-      /Access Denied/,
-    );
+    await expect(service(repo, new FakePresigner(), rawMime).getEmail({ handle })).rejects.toThrow(/Access Denied/);
   });
 });
 
@@ -746,10 +671,7 @@ describe('EmailReadService — original (.eml) retention window', () => {
 
   it('stops offering it once the tagged raw copy has aged out (lifecycle-expired)', async () => {
     const repo = new FakeDao();
-    const handle = repo.put(
-      INBOUND_PARTITION,
-      inboundRow({ ...STORED, receivedAt: receivedDaysAgo(14) }),
-    );
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ ...STORED, receivedAt: receivedDaysAgo(14) }));
     const read = service(repo, new FakePresigner(), new FakeRawMime());
 
     expect((await read.getEmail({ handle })).rawAvailable).toBe(false);
@@ -767,20 +689,14 @@ describe('EmailReadService — original (.eml) retention window', () => {
       }),
     );
 
-    expect(
-      (await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle }))
-        .rawAvailable,
-    ).toBe(true);
+    expect((await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle })).rawAvailable).toBe(true);
   });
 
   it('keeps offering it for a legacy row (no stored body) however old', async () => {
     const repo = new FakeDao();
     const handle = repo.put(INBOUND_PARTITION, inboundRow({ receivedAt: receivedDaysAgo(30) }));
 
-    expect(
-      (await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle }))
-        .rawAvailable,
-    ).toBe(true);
+    expect((await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle })).rawAvailable).toBe(true);
   });
 
   it('keeps offering the sent archive however old (it never expires)', async () => {
@@ -793,10 +709,7 @@ describe('EmailReadService — original (.eml) retention window', () => {
       } as Partial<GetEmailOutput>),
     );
 
-    expect(
-      (await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle }))
-        .rawAvailable,
-    ).toBe(true);
+    expect((await service(repo, new FakePresigner(), new FakeRawMime()).getEmail({ handle })).rawAvailable).toBe(true);
   });
 });
 
@@ -804,10 +717,7 @@ describe('EmailReadService.getRawUrl', () => {
   it('presigns a sent archive as a forced <subject>.eml download', async () => {
     const repo = new FakeDao();
     const presigner = new FakePresigner();
-    const handle = repo.put(
-      SENT_PARTITION,
-      sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>),
-    );
+    const handle = repo.put(SENT_PARTITION, sentRow({ rawS3Key: 'sent/s1', status: 'sent' } as Partial<GetEmailOutput>));
 
     const result = await service(repo, presigner, new FakeRawMime()).getRawUrl({ handle });
 
@@ -821,58 +731,42 @@ describe('EmailReadService.getRawUrl', () => {
   it('presigns a received message that passed the virus scan, even if spam-flagged', async () => {
     const repo = new FakeDao();
     const presigner = new FakePresigner();
-    const handle = repo.put(
-      INBOUND_PARTITION,
-      inboundRow({ spamVerdict: 'FAIL', quarantined: true }),
-    );
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ spamVerdict: 'FAIL', quarantined: true }));
 
     await service(repo, presigner, new FakeRawMime()).getRawUrl({ handle });
 
     expect(presigner.last?.key).toBe('inbound/i1');
   });
 
-  it.each(['FAIL', 'GRAY', 'PROCESSING_FAILED', 'ABSENT', 'UNKNOWN'] as const)(
-    'never offers a fully processed (stored-body) message with virus verdict %s',
-    async (virusVerdict) => {
-      const repo = new FakeDao();
-      const presigner = new FakePresigner();
-      const handle = repo.put(
-        INBOUND_PARTITION,
-        inboundRow({ virusVerdict, quarantined: true, body: { kind: 'inline' } }),
-      );
+  it.each(['FAIL', 'GRAY', 'PROCESSING_FAILED', 'ABSENT', 'UNKNOWN'] as const)('never offers a fully processed (stored-body) message with virus verdict %s', async (virusVerdict) => {
+    const repo = new FakeDao();
+    const presigner = new FakePresigner();
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict, quarantined: true, body: { kind: 'inline' } }));
 
-      await expect(
-        service(repo, presigner, new FakeRawMime()).getRawUrl({ handle }),
-      ).rejects.toMatchObject({ code: 'not_found' });
-      expect(presigner.last).toBeUndefined();
-    },
-  );
+    await expect(service(repo, presigner, new FakeRawMime()).getRawUrl({ handle })).rejects.toMatchObject({ code: 'not_found' });
+    expect(presigner.last).toBeUndefined();
+  });
 
-  it.each(['FAIL', 'GRAY', 'ABSENT'] as const)(
-    'offers a pre-stored-body message with virus verdict %s — its kept raw copy, flagged suspicious',
-    async (virusVerdict) => {
-      const repo = new FakeDao();
-      const presigner = new FakePresigner();
-      const handle = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict, quarantined: true }));
-      const read = service(repo, presigner, new FakeRawMime());
+  it.each(['FAIL', 'GRAY', 'ABSENT'] as const)('offers a pre-stored-body message with virus verdict %s — its kept raw copy, flagged suspicious', async (virusVerdict) => {
+    const repo = new FakeDao();
+    const presigner = new FakePresigner();
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict, quarantined: true }));
+    const read = service(repo, presigner, new FakeRawMime());
 
-      const detail = await read.getEmail({ handle });
-      expect(detail).toMatchObject({ rawAvailable: true, rawSuspicious: true });
-      await read.getRawUrl({ handle });
-      expect(presigner.last).toMatchObject({
-        key: 'inbound/i1',
-        contentType: 'application/octet-stream',
-      });
-    },
-  );
+    const detail = await read.getEmail({ handle });
+    expect(detail).toMatchObject({ rawAvailable: true, rawSuspicious: true });
+    await read.getRawUrl({ handle });
+    expect(presigner.last).toMatchObject({
+      key: 'inbound/i1',
+      contentType: 'application/octet-stream',
+    });
+  });
 
   it('refuses a sent row without an archive → not_found', async () => {
     const repo = new FakeDao();
     const presigner = new FakePresigner();
     const handle = repo.put(SENT_PARTITION, sentRow());
-    await expect(
-      service(repo, presigner, new FakeRawMime()).getRawUrl({ handle }),
-    ).rejects.toMatchObject({ code: 'not_found' });
+    await expect(service(repo, presigner, new FakeRawMime()).getRawUrl({ handle })).rejects.toMatchObject({ code: 'not_found' });
     expect(presigner.last).toBeUndefined();
   });
 
@@ -885,10 +779,7 @@ describe('EmailReadService.getRawUrl', () => {
     for (const [subject, expected] of cases) {
       const repo = new FakeDao();
       const presigner = new FakePresigner();
-      const handle = repo.put(
-        SENT_PARTITION,
-        sentRow({ subject, rawS3Key: 'sent/s1' } as Partial<GetEmailOutput>),
-      );
+      const handle = repo.put(SENT_PARTITION, sentRow({ subject, rawS3Key: 'sent/s1' } as Partial<GetEmailOutput>));
       await service(repo, presigner, new FakeRawMime()).getRawUrl({ handle });
       expect(presigner.last?.contentDisposition).toMatch(expected);
     }
@@ -898,10 +789,7 @@ describe('EmailReadService.getRawUrl', () => {
     const repo = new FakeDao();
     const read = service(repo, new FakePresigner(), new FakeRawMime());
     const legacySent = repo.put(SENT_PARTITION, sentRow());
-    const virusFailed = repo.put(
-      INBOUND_PARTITION,
-      inboundRow({ virusVerdict: 'FAIL', quarantined: true, attachments: [] }),
-    );
+    const virusFailed = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict: 'FAIL', quarantined: true, attachments: [] }));
     const clean = repo.put(INBOUND_PARTITION, { ...inboundRow(), sk: 'other#i2' });
 
     expect((await read.getEmail({ handle: legacySent })).rawAvailable).toBe(false);
@@ -934,9 +822,7 @@ describe('EmailReadService — Errors folder', () => {
     const asked: string[] = [];
     repo.queryImpl = (direction) => {
       asked.push(direction);
-      return Promise.resolve(
-        direction === 'failed' ? [failedRow({ parseStatus: 'parse_failed' })] : [],
-      );
+      return Promise.resolve(direction === 'failed' ? [failedRow({ parseStatus: 'parse_failed' })] : []);
     };
 
     const page = await service(repo, new FakePresigner(), new FakeRawMime()).listEmails({
@@ -974,14 +860,7 @@ describe('EmailReadService — Errors folder', () => {
     const quarantine = new FakePresigner();
     quarantine.url = 'https://quarantine.example/presigned';
     const handle = repo.put(FAILED_PARTITION, failedRow());
-    const read = service(
-      repo,
-      new FakePresigner(),
-      new FakeRawMime(),
-      undefined,
-      undefined,
-      quarantine,
-    );
+    const read = service(repo, new FakePresigner(), new FakeRawMime(), undefined, undefined, quarantine);
 
     const detail = await read.getEmail({ handle });
     expect(detail).toMatchObject({ failed: true, rawAvailable: true, rawSuspicious: true });
@@ -997,19 +876,9 @@ describe('EmailReadService — Errors folder', () => {
 
   it('does not flag a clean-but-unparsed original as suspicious', async () => {
     const repo = new FakeDao();
-    const handle = repo.put(
-      FAILED_PARTITION,
-      failedRow({ virusVerdict: 'PASS', parseStatus: 'limit_exceeded' }),
-    );
+    const handle = repo.put(FAILED_PARTITION, failedRow({ virusVerdict: 'PASS', parseStatus: 'limit_exceeded' }));
 
-    const detail = await service(
-      repo,
-      new FakePresigner(),
-      new FakeRawMime(),
-      undefined,
-      undefined,
-      new FakePresigner(),
-    ).getEmail({ handle });
+    const detail = await service(repo, new FakePresigner(), new FakeRawMime(), undefined, undefined, new FakePresigner()).getEmail({ handle });
 
     expect(detail.rawAvailable).toBe(true);
     expect(detail.rawSuspicious).toBeUndefined();
@@ -1028,8 +897,7 @@ describe('EmailReadService — Errors folder', () => {
 describe('EmailReadService.listEmails', () => {
   it('maps rows to list items, strips S3 keys, passes the cursor through', async () => {
     const repo = new FakeDao();
-    repo.queryImpl = (direction) =>
-      Promise.resolve(direction === 'inbound' ? [inboundRow()] : [sentRow()]);
+    repo.queryImpl = (direction) => Promise.resolve(direction === 'inbound' ? [inboundRow()] : [sentRow()]);
 
     const page = await service(repo, new FakePresigner(), new FakeRawMime()).listEmails({
       limit: 25,
@@ -1102,10 +970,7 @@ describe('EmailReadService.listEmails — search filters', () => {
       const inRange = (direction: string) =>
         direction === 'inbound'
           ? rows.filter(
-              (row) =>
-                (input.afterSk === undefined || row.sk < input.afterSk) &&
-                (input.minSk === undefined || row.sk >= input.minSk) &&
-                (input.maxSk === undefined || row.sk <= input.maxSk),
+              (row) => (input.afterSk === undefined || row.sk < input.afterSk) && (input.minSk === undefined || row.sk >= input.minSk) && (input.maxSk === undefined || row.sk <= input.maxSk),
             )
           : [];
       return Promise.resolve({
@@ -1125,13 +990,7 @@ describe('EmailReadService.listEmails — search filters', () => {
       filters: { subject: 'MATCH' },
     });
 
-    expect(page.emails.map((e) => e.subject)).toEqual([
-      'match 0',
-      'match 50',
-      'match 100',
-      'match 150',
-      'match 200',
-    ]);
+    expect(page.emails.map((e) => e.subject)).toEqual(['match 0', 'match 50', 'match 100', 'match 150', 'match 200']);
     expect(page.nextCursor).toBeDefined();
     // Stopped at the 5th match (row 200), in batches of 200 rows.
     expect(dao.calls.map((c) => c.limit)).toEqual([200, 200]);
@@ -1185,12 +1044,7 @@ describe('EmailReadService.listEmails — search filters', () => {
       const rows = input.direction === 'sent' ? sent : inbound;
       return Promise.resolve({
         emails: rows
-          .filter(
-            (row) =>
-              (input.afterSk === undefined || row.sk < input.afterSk) &&
-              (input.minSk === undefined || row.sk >= input.minSk) &&
-              (input.maxSk === undefined || row.sk <= input.maxSk),
-          )
+          .filter((row) => (input.afterSk === undefined || row.sk < input.afterSk) && (input.minSk === undefined || row.sk >= input.minSk) && (input.maxSk === undefined || row.sk <= input.maxSk))
           .slice(0, input.limit) as unknown as EmailSummary[],
       });
     };
@@ -1201,10 +1055,7 @@ describe('EmailReadService.listEmails — search filters', () => {
       before: '2026-10-01T00:08:00.000Z',
     };
     const expected = [...sent, ...inbound]
-      .filter(
-        (row) =>
-          row.subject.startsWith('match') && row.sk >= filters.after && row.sk <= filters.before,
-      )
+      .filter((row) => row.subject.startsWith('match') && row.sk >= filters.after && row.sk <= filters.before)
       .map((row) => row.sk)
       .sort()
       .reverse();
@@ -1270,12 +1121,7 @@ describe('EmailReadService — delivery reports', () => {
       deliveryEvents: [delivered, bounced, delivered],
     } as GetEmailOutput);
 
-    const detail = await service(
-      repo,
-      new FakePresigner(),
-      new FakeRawMime(),
-      fakeParse({}).fn,
-    ).getEmail({
+    const detail = await service(repo, new FakePresigner(), new FakeRawMime(), fakeParse({}).fn).getEmail({
       handle,
     });
 

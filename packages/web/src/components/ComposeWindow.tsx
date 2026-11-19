@@ -2,12 +2,7 @@ import { useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Placeholder } from '@tiptap/extensions';
-import {
-  MAX_ATTACHMENTS,
-  MAX_UPLOAD_BYTES,
-  type EmailAttachmentRef,
-  type SendEmailRequest,
-} from '@freemail/shared';
+import { MAX_ATTACHMENTS, MAX_UPLOAD_BYTES, type EmailAttachmentRef, type SendEmailRequest } from '@freemail/shared';
 import { Maximize2, Minimize2, Minus, Paperclip, Trash2, Type, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -15,14 +10,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { ApiError } from '../api/client.js';
 import { useAuth } from '../auth/auth-context.js';
 import { forEachConcurrently } from '../lib/concurrency.js';
-import {
-  deleteDraft,
-  getDraft,
-  newDraftId,
-  saveDraft,
-  setLastSender,
-  type Draft,
-} from '../lib/drafts.js';
+import { deleteDraft, getDraft, newDraftId, saveDraft, setLastSender, type Draft } from '../lib/drafts.js';
 import { formatBytes } from '../lib/format.js';
 import { parseRecipients } from '../lib/people.js';
 import type { ForwardedAttachment } from '../lib/reply.js';
@@ -100,9 +88,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   const [html, setHtml] = useState(props.init.html ?? '');
   const [text, setText] = useState('');
   const [files, setFiles] = useState<File[]>([]);
-  const [forwarded, setForwarded] = useState<readonly ForwardedAttachment[]>(
-    props.init.forwardAttachments ?? [],
-  );
+  const [forwarded, setForwarded] = useState<readonly ForwardedAttachment[]>(props.init.forwardAttachments ?? []);
   const [mode, setMode] = useState<WindowMode>('normal');
   /** Files are being dragged over the page. */
   const [dropping, setDropping] = useState(false);
@@ -123,10 +109,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
   const finished = useRef(false);
 
   const editor = useEditor({
-    extensions: [
-      StarterKit.configure({ link: { openOnClick: false, autolink: true } }),
-      Placeholder.configure({ placeholder: 'Write your message…' }),
-    ],
+    extensions: [StarterKit.configure({ link: { openOnClick: false, autolink: true } }), Placeholder.configure({ placeholder: 'Write your message…' })],
     content: props.init.html ?? '',
     editorProps: {
       // A file dropped on the body is attached by the window, never inserted: a drag can carry
@@ -140,11 +123,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     },
   });
 
-  const hasContent =
-    [to, cc, bcc, subject].some((v) => v.trim() !== '') ||
-    text.trim() !== '' ||
-    files.length > 0 ||
-    forwarded.length > 0;
+  const hasContent = [to, cc, bcc, subject].some((v) => v.trim() !== '') || text.trim() !== '' || files.length > 0 || forwarded.length > 0;
 
   const snapshot = (): Draft => ({
     id: draftId.current,
@@ -221,9 +200,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
       }
     }
     function onDragLeave(event: DragEvent): void {
-      entered = entered.filter(
-        (target) => target !== event.target && target instanceof Node && target.isConnected,
-      );
+      entered = entered.filter((target) => target !== event.target && target instanceof Node && target.isConnected);
       if (entered.length === 0) {
         setDragging(false);
       }
@@ -343,10 +320,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     }
     const tooLarge = files.find((file) => file.size > MAX_UPLOAD_BYTES);
     if (tooLarge) {
-      setError(
-        `"${tooLarge.name}" is ${formatBytes(tooLarge.size)} — the limit is ` +
-          `${MAX_UPLOAD_BYTES / (1024 * 1024)} MB per attachment.`,
-      );
+      setError(`"${tooLarge.name}" is ${formatBytes(tooLarge.size)} — the limit is ` + `${MAX_UPLOAD_BYTES / (1024 * 1024)} MB per attachment.`);
       return;
     }
 
@@ -366,9 +340,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
         }
       }
       if (files.length > 0) {
-        setUploadProgress(
-          new Map(files.map((file) => [file, uploadIds.has(file) ? file.size : 0])),
-        );
+        setUploadProgress(new Map(files.map((file) => [file, uploadIds.has(file) ? file.size : 0])));
       }
       await forEachConcurrently(pending, UPLOAD_CONCURRENCY, async (file) => {
         const upload = await auth.client.createUpload({
@@ -376,9 +348,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
           contentType: file.type || 'application/octet-stream',
           sizeBytes: file.size,
         });
-        await auth.client.putUpload(upload.uploadUrl, file, (loadedBytes) =>
-          setUploadProgress((prev) => new Map(prev).set(file, loadedBytes)),
-        );
+        await auth.client.putUpload(upload.uploadUrl, file, (loadedBytes) => setUploadProgress((prev) => new Map(prev).set(file, loadedBytes)));
         uploaded.current.set(file, { uploadId: upload.uploadId, uploadedAt: Date.now() });
         uploadIds.set(file, upload.uploadId);
       });
@@ -438,11 +408,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
     return (
       <div className="fixed right-4 bottom-0 z-40 w-72 max-md:right-0 max-md:w-full">
         <div className="flex h-10 items-center gap-1 rounded-t-lg border border-b-0 bg-foreground pr-1 pl-3 text-background shadow-lg">
-          <button
-            type="button"
-            onClick={() => setMode('normal')}
-            className="min-w-0 flex-1 truncate text-left text-[13px] font-medium focus-visible:underline focus-visible:outline-none"
-          >
+          <button type="button" onClick={() => setMode('normal')} className="min-w-0 flex-1 truncate text-left text-[13px] font-medium focus-visible:underline focus-visible:outline-none">
             {title}
           </button>
           <WindowButton label="Restore" onClick={() => setMode('normal')} dark>
@@ -460,13 +426,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
 
   return (
     <>
-      {maximized && (
-        <div
-          aria-hidden
-          className="fixed inset-0 z-40 bg-foreground/20 animate-in fade-in-0"
-          onClick={() => setMode('normal')}
-        />
-      )}
+      {maximized && <div aria-hidden className="fixed inset-0 z-40 bg-foreground/20 animate-in fade-in-0" onClick={() => setMode('normal')} />}
       <section
         role="dialog"
         aria-label={title}
@@ -501,26 +461,16 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
         }}
         className={cn(
           'fixed z-50 flex flex-col overflow-hidden border bg-background shadow-2xl shadow-black/10 animate-in fade-in-0 slide-in-from-bottom-2 duration-150',
-          maximized
-            ? 'inset-6 m-auto h-[min(860px,calc(100vh-3rem))] w-[min(1000px,calc(100vw-3rem))] rounded-lg'
-            : 'right-4 bottom-0 h-[min(600px,calc(100vh-4rem))] w-[540px] rounded-t-lg',
+          maximized ? 'inset-6 m-auto h-[min(860px,calc(100vh-3rem))] w-[min(1000px,calc(100vw-3rem))] rounded-lg' : 'right-4 bottom-0 h-[min(600px,calc(100vh-4rem))] w-[540px] rounded-t-lg',
           'max-md:inset-0 max-md:h-full max-md:w-full max-md:rounded-none',
         )}
       >
         <header className="flex h-10 shrink-0 items-center gap-1 border-b bg-sidebar pr-1 pl-4">
           <h2 className="min-w-0 flex-1 truncate text-[13px] font-medium">{title}</h2>
-          <WindowButton
-            label="Minimize"
-            onClick={() => setMode('minimized')}
-            className="max-md:hidden"
-          >
+          <WindowButton label="Minimize" onClick={() => setMode('minimized')} className="max-md:hidden">
             <Minus />
           </WindowButton>
-          <WindowButton
-            label={maximized ? 'Exit full screen' : 'Full screen'}
-            onClick={() => setMode(maximized ? 'normal' : 'maximized')}
-            className="max-md:hidden"
-          >
+          <WindowButton label={maximized ? 'Exit full screen' : 'Full screen'} onClick={() => setMode(maximized ? 'normal' : 'maximized')} className="max-md:hidden">
             {maximized ? <Minimize2 /> : <Maximize2 />}
           </WindowButton>
           <WindowButton label="Close" onClick={close}>
@@ -530,34 +480,17 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
 
         <div className="shrink-0 divide-y px-4 text-[13px]">
           <Field label="From" htmlFor="compose-from">
-            <input
-              id="compose-from"
-              value={from}
-              onChange={(e) => setFrom(e.target.value)}
-              placeholder="you@your-domain.com"
-              autoComplete="email"
-              className={fieldInput}
-            />
+            <input id="compose-from" value={from} onChange={(e) => setFrom(e.target.value)} placeholder="you@your-domain.com" autoComplete="email" className={fieldInput} />
             <input
               aria-label="Sender name"
               value={fromName}
               onChange={(e) => setFromName(e.target.value)}
               placeholder="Name (optional)"
-              className={cn(
-                fieldInput,
-                'max-w-40 text-right text-muted-foreground focus:text-foreground',
-              )}
+              className={cn(fieldInput, 'max-w-40 text-right text-muted-foreground focus:text-foreground')}
             />
           </Field>
           <Field label="To" htmlFor="compose-to">
-            <input
-              id="compose-to"
-              ref={toInput}
-              value={to}
-              onChange={(e) => setTo(e.target.value)}
-              placeholder="Recipients, comma-separated"
-              className={fieldInput}
-            />
+            <input id="compose-to" ref={toInput} value={to} onChange={(e) => setTo(e.target.value)} placeholder="Recipients, comma-separated" className={fieldInput} />
             {!showCcBcc && (
               <button
                 type="button"
@@ -571,37 +504,19 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
           {showCcBcc && (
             <>
               <Field label="Cc" htmlFor="compose-cc">
-                <input
-                  id="compose-cc"
-                  value={cc}
-                  onChange={(e) => setCc(e.target.value)}
-                  className={fieldInput}
-                />
+                <input id="compose-cc" value={cc} onChange={(e) => setCc(e.target.value)} className={fieldInput} />
               </Field>
               <Field label="Bcc" htmlFor="compose-bcc">
-                <input
-                  id="compose-bcc"
-                  value={bcc}
-                  onChange={(e) => setBcc(e.target.value)}
-                  className={fieldInput}
-                />
+                <input id="compose-bcc" value={bcc} onChange={(e) => setBcc(e.target.value)} className={fieldInput} />
               </Field>
             </>
           )}
           <Field label="Subject" htmlFor="compose-subject" hideLabel>
-            <input
-              id="compose-subject"
-              value={subject}
-              onChange={(e) => setSubject(e.target.value)}
-              placeholder="Subject"
-              className={cn(fieldInput, 'font-medium')}
-            />
+            <input id="compose-subject" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" className={cn(fieldInput, 'font-medium')} />
           </Field>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto border-t px-4 py-3">
-          {editor && <RichTextBody editor={editor} className="h-full" />}
-        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto border-t px-4 py-3">{editor && <RichTextBody editor={editor} className="h-full" />}</div>
 
         {forwarded.length + files.length > 0 && (
           <ul aria-label="Attachments" className="flex shrink-0 flex-wrap gap-1.5 px-4 pb-2">
@@ -612,9 +527,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
               >
                 <Paperclip className="size-3 shrink-0 text-muted-foreground" />
                 <span className="truncate">{attachment.filename}</span>
-                <span className="shrink-0 text-muted-foreground tabular-nums">
-                  {formatBytes(attachment.sizeBytes)}
-                </span>
+                <span className="shrink-0 text-muted-foreground tabular-nums">{formatBytes(attachment.sizeBytes)}</span>
                 <button
                   type="button"
                   aria-label={`Remove forwarded ${attachment.filename}`}
@@ -628,18 +541,12 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
             ))}
             {files.map((file, index) => {
               const sent = uploadProgress.get(file);
-              const percent =
-                sent === undefined ? null : percentOf(Math.min(sent, file.size), file.size);
+              const percent = sent === undefined ? null : percentOf(Math.min(sent, file.size), file.size);
               return (
-                <li
-                  key={`${file.name}-${index}`}
-                  className="relative flex max-w-56 items-center gap-1.5 overflow-hidden rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs"
-                >
+                <li key={`${file.name}-${index}`} className="relative flex max-w-56 items-center gap-1.5 overflow-hidden rounded-md border bg-muted/50 py-1 pr-1 pl-2 text-xs">
                   <Paperclip className="size-3 shrink-0 text-muted-foreground" />
                   <span className="truncate">{file.name}</span>
-                  <span className="shrink-0 text-muted-foreground tabular-nums">
-                    {percent === null ? formatBytes(file.size) : `${percent}%`}
-                  </span>
+                  <span className="shrink-0 text-muted-foreground tabular-nums">{percent === null ? formatBytes(file.size) : `${percent}%`}</span>
                   <button
                     type="button"
                     aria-label={`Remove ${file.name}`}
@@ -658,10 +565,7 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
                       aria-valuenow={percent}
                       className="absolute inset-x-0 bottom-0 h-0.5 bg-primary/15"
                     >
-                      <span
-                        className="block h-full bg-primary transition-[width] duration-200 ease-out motion-reduce:transition-none"
-                        style={{ width: `${percent}%` }}
-                      />
+                      <span className="block h-full bg-primary transition-[width] duration-200 ease-out motion-reduce:transition-none" style={{ width: `${percent}%` }} />
                     </span>
                   )}
                 </li>
@@ -677,31 +581,14 @@ export function ComposeWindow(props: ComposeWindowProps): React.JSX.Element {
         )}
 
         <footer className="flex shrink-0 items-center gap-1 border-t px-3 py-2">
-          <Button
-            size="sm"
-            onClick={() => void send()}
-            disabled={busy}
-            className="px-4 tabular-nums"
-          >
-            {!busy
-              ? 'Send'
-              : uploading
-                ? `Uploading ${percentOf(uploadSent, uploadTotal)}%`
-                : 'Sending…'}
+          <Button size="sm" onClick={() => void send()} disabled={busy} className="px-4 tabular-nums">
+            {!busy ? 'Send' : uploading ? `Uploading ${percentOf(uploadSent, uploadTotal)}%` : 'Sending…'}
           </Button>
           <span className="ml-1 hidden text-[11px] text-muted-foreground sm:inline">⌘↵</span>
-          <WindowButton
-            label={showToolbar ? 'Hide formatting' : 'Show formatting'}
-            onClick={() => setShowToolbar((v) => !v)}
-            className={cn('ml-2', showToolbar && 'text-foreground')}
-          >
+          <WindowButton label={showToolbar ? 'Hide formatting' : 'Show formatting'} onClick={() => setShowToolbar((v) => !v)} className={cn('ml-2', showToolbar && 'text-foreground')}>
             <Type />
           </WindowButton>
-          <WindowButton
-            label="Attach files"
-            onClick={() => fileInput.current?.click()}
-            disabled={busy}
-          >
+          <WindowButton label="Attach files" onClick={() => fileInput.current?.click()} disabled={busy}>
             <Paperclip />
           </WindowButton>
           <input
@@ -778,21 +665,12 @@ function percentOf(part: number, whole: number): number {
   return Math.floor((part / whole) * 100);
 }
 
-const fieldInput =
-  'h-9 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground/80';
+const fieldInput = 'h-9 min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground/80';
 
-function Field(props: {
-  label: string;
-  htmlFor: string;
-  hideLabel?: boolean;
-  children: React.ReactNode;
-}): React.JSX.Element {
+function Field(props: { label: string; htmlFor: string; hideLabel?: boolean; children: React.ReactNode }): React.JSX.Element {
   return (
     <div className="flex items-center gap-2 focus-within:border-primary/40">
-      <label
-        htmlFor={props.htmlFor}
-        className={cn('w-12 shrink-0 text-muted-foreground', props.hideLabel && 'sr-only')}
-      >
+      <label htmlFor={props.htmlFor} className={cn('w-12 shrink-0 text-muted-foreground', props.hideLabel && 'sr-only')}>
         {props.label}
       </label>
       {props.children}
@@ -800,14 +678,7 @@ function Field(props: {
   );
 }
 
-function WindowButton(props: {
-  label: string;
-  onClick: () => void;
-  className?: string;
-  dark?: boolean;
-  disabled?: boolean;
-  children: React.ReactNode;
-}): React.JSX.Element {
+function WindowButton(props: { label: string; onClick: () => void; className?: string; dark?: boolean; disabled?: boolean; children: React.ReactNode }): React.JSX.Element {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -818,11 +689,7 @@ function WindowButton(props: {
           aria-label={props.label}
           onClick={props.onClick}
           disabled={props.disabled}
-          className={cn(
-            'size-7 text-muted-foreground [&_svg]:size-4',
-            props.dark && 'text-background/70 hover:bg-white/10 hover:text-background',
-            props.className,
-          )}
+          className={cn('size-7 text-muted-foreground [&_svg]:size-4', props.dark && 'text-background/70 hover:bg-white/10 hover:text-background', props.className)}
         >
           {props.children}
         </Button>

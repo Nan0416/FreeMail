@@ -54,9 +54,7 @@ describe('S3MailBodyStore', () => {
 
 describe('parseStoredBody', () => {
   it('keeps only well-typed fields from a damaged object', () => {
-    expect(
-      parseStoredBody(JSON.stringify({ text: 42, html: '<p>ok</p>', truncated: 'yes' })),
-    ).toEqual({ html: '<p>ok</p>' });
+    expect(parseStoredBody(JSON.stringify({ text: 42, html: '<p>ok</p>', truncated: 'yes' }))).toEqual({ html: '<p>ok</p>' });
   });
 
   it('yields no body for malformed JSON or a non-object', () => {

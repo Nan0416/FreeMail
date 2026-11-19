@@ -41,10 +41,7 @@ export function main(argv: string[] = process.argv.slice(2)): number {
 
 async function runInitCommand(): Promise<void> {
   try {
-    const [initModule, promptsModule] = await Promise.all([
-      import('./init.js'),
-      import('./prompts.js'),
-    ]);
+    const [initModule, promptsModule] = await Promise.all([import('./init.js'), import('./prompts.js')]);
     process.exit(await initModule.runInit(promptsModule.createInitIo()));
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);

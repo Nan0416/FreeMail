@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildActivateHandlerSource,
-  decideActivation,
-} from '../../src/inbound/activate-rule-set.js';
+import { buildActivateHandlerSource, decideActivation } from '../../src/inbound/activate-rule-set.js';
 
 const OURS = 'FreeMailRuleSet';
 const FOREIGN = 'SomeoneElsesRuleSet';
@@ -97,9 +94,7 @@ describe('buildActivateHandlerSource (deployed inline handler)', () => {
 
   it('throws (aborts the deploy) on Create when a foreign set is active, and calls no Set', async () => {
     const loaded = loadHandler(FOREIGN);
-    await expect(
-      loaded.handler({ RequestType: 'Create', ResourceProperties: { RuleSetName: OURS } }),
-    ).rejects.toThrow(FOREIGN);
+    await expect(loaded.handler({ RequestType: 'Create', ResourceProperties: { RuleSetName: OURS } })).rejects.toThrow(FOREIGN);
     expect(loaded.sent).toEqual([]);
   });
 

@@ -20,10 +20,7 @@ vi.mock('../../src/services/api-key-service.js', () => ({
 vi.mock('../../src/data/ddb-api-keys-dao.js', () => ({ DdbApiKeysDao: class {} }));
 vi.mock('../../src/data/ddb-auth-dao.js', () => ({ DdbAuthDao: class {} }));
 
-function event(opts: {
-  cookies?: string[];
-  headers?: Record<string, string>;
-}): APIGatewayRequestAuthorizerEventV2 {
+function event(opts: { cookies?: string[]; headers?: Record<string, string> }): APIGatewayRequestAuthorizerEventV2 {
   return {
     cookies: opts.cookies,
     headers: opts.headers ?? {},

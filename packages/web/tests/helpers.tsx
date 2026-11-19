@@ -17,14 +17,8 @@ export function pathOf(url: unknown): string {
 }
 
 /** Calls the mock made to one path (optionally one method). */
-export function callsTo(
-  fetchMock: ReturnType<typeof vi.fn<typeof fetch>>,
-  path: string,
-  method?: string,
-): Parameters<typeof fetch>[] {
-  return fetchMock.mock.calls.filter(
-    ([url, init]) => pathOf(url) === path && (!method || (init?.method ?? 'GET') === method),
-  );
+export function callsTo(fetchMock: ReturnType<typeof vi.fn<typeof fetch>>, path: string, method?: string): Parameters<typeof fetch>[] {
+  return fetchMock.mock.calls.filter(([url, init]) => pathOf(url) === path && (!method || (init?.method ?? 'GET') === method));
 }
 
 /**
@@ -44,11 +38,7 @@ export function uploadVia(fetchImpl: typeof fetch): UploadTransport {
 }
 
 /** Mount inside the providers the app mounts (auth, tooltips, toasts). */
-export function renderWithApp(
-  ui: React.ReactNode,
-  fetchImpl: typeof fetch,
-  uploadImpl: UploadTransport = uploadVia(fetchImpl),
-) {
+export function renderWithApp(ui: React.ReactNode, fetchImpl: typeof fetch, uploadImpl: UploadTransport = uploadVia(fetchImpl)) {
   return render(
     <AuthProvider apiBaseUrl="http://api.test" fetchImpl={fetchImpl} uploadImpl={uploadImpl}>
       <TooltipProvider>

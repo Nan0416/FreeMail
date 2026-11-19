@@ -7,9 +7,7 @@ try {
   cli = await import('../dist/index.js');
 } catch (error) {
   if (error instanceof Error && 'code' in error && error.code === 'ERR_MODULE_NOT_FOUND') {
-    process.stderr.write(
-      `The FreeMail CLI is not built yet. Run \`npm run build\` at the repo root, then retry.\n(${error.message})\n`,
-    );
+    process.stderr.write(`The FreeMail CLI is not built yet. Run \`npm run build\` at the repo root, then retry.\n(${error.message})\n`);
     process.exit(1);
   }
   throw error;

@@ -63,10 +63,7 @@ export function sanitizeReferences(value: unknown): string[] {
 }
 
 /** The `References` for a reply: the parent's chain, then the parent's own id — trimmed. */
-export function replyReferences(
-  parentReferences: readonly string[] | undefined,
-  parentMessageId: string,
-): string[] {
+export function replyReferences(parentReferences: readonly string[] | undefined, parentMessageId: string): string[] {
   const chain = (parentReferences ?? []).filter((id) => id !== parentMessageId);
   return trimReferences([...chain, parentMessageId]);
 }

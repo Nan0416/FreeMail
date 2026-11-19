@@ -10,9 +10,7 @@ import { parseWebRuntimeConfig, type WebRuntimeConfig } from '@freemail/shared';
  * missing/unreachable one only happens in local `vite dev` (no deploy), where we
  * fall back to the `VITE_API_BASE_URL` dev env var if set.
  */
-export async function loadRuntimeConfig(
-  fetchImpl: typeof fetch = (input, init) => fetch(input, init),
-): Promise<WebRuntimeConfig> {
+export async function loadRuntimeConfig(fetchImpl: typeof fetch = (input, init) => fetch(input, init)): Promise<WebRuntimeConfig> {
   let response: Response | null = null;
   try {
     response = await fetchImpl('/config.json', { cache: 'no-store' });
@@ -31,8 +29,5 @@ export async function loadRuntimeConfig(
     return parseWebRuntimeConfig({ apiBaseUrl: devBaseUrl });
   }
 
-  throw new Error(
-    'FreeMail: could not load /config.json and VITE_API_BASE_URL is not set. ' +
-      'The API endpoint is unknown.',
-  );
+  throw new Error('FreeMail: could not load /config.json and VITE_API_BASE_URL is not set. ' + 'The API endpoint is unknown.');
 }

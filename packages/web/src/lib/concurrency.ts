@@ -3,11 +3,7 @@
  * but the ones already running are waited for before the first error is thrown — so nothing
  * is still in flight once this settles.
  */
-export async function forEachConcurrently<T>(
-  items: readonly T[],
-  limit: number,
-  task: (item: T) => Promise<void>,
-): Promise<void> {
+export async function forEachConcurrently<T>(items: readonly T[], limit: number, task: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
   const errors: unknown[] = [];
   const worker = async (): Promise<void> => {

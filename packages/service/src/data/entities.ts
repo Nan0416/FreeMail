@@ -13,12 +13,7 @@
  * exact key a command was issued against.
  */
 import type { EmailListFilter } from '@freemail/shared';
-import {
-  FAILED_PARTITION,
-  IDEMPOTENCY_PARTITION,
-  INBOUND_PARTITION,
-  SENT_PARTITION,
-} from './emails-dao.js';
+import { FAILED_PARTITION, IDEMPOTENCY_PARTITION, INBOUND_PARTITION, SENT_PARTITION } from './emails-dao.js';
 
 /** A full DynamoDB primary key for the single-table auth and emails layouts. */
 export interface TableKey {
@@ -61,8 +56,7 @@ export const EmailEntity = {
   SENT_PARTITION,
   INBOUND_PARTITION,
   FAILED_PARTITION,
-  partitionFor: (filter: EmailListFilter): string =>
-    filter === 'sent' ? SENT_PARTITION : filter === 'failed' ? FAILED_PARTITION : INBOUND_PARTITION,
+  partitionFor: (filter: EmailListFilter): string => (filter === 'sent' ? SENT_PARTITION : filter === 'failed' ? FAILED_PARTITION : INBOUND_PARTITION),
   sent: (sentAtIso: string, id: string): TableKey => ({
     pk: SENT_PARTITION,
     sk: `${sentAtIso}#${id}`,

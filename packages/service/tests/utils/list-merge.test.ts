@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GetEmailOutput } from '../../src/data/emails-dao.js';
 import { EmailError } from '../../src/utils/errors.js';
-import {
-  decodeListCursor,
-  encodeListCursor,
-  listEmailsPage,
-  pageQuery,
-  type MergeQuery,
-  type MergeQueryResult,
-} from '../../src/utils/list-merge.js';
+import { decodeListCursor, encodeListCursor, listEmailsPage, pageQuery, type MergeQuery, type MergeQueryResult } from '../../src/utils/list-merge.js';
 
 /** Minimal row for a given direction + sort key (`<iso>#<id>`). */
 function rowFor(direction: 'sent' | 'inbound', sk: string): GetEmailOutput {
@@ -85,10 +78,7 @@ function makeStore(
 }
 
 /** Drain every page and return the flat row list, guarding against a runaway loop. */
-async function drainAll(
-  query: MergeQuery,
-  opts: { direction?: 'sent' | 'inbound'; limit: number },
-): Promise<GetEmailOutput[]> {
+async function drainAll(query: MergeQuery, opts: { direction?: 'sent' | 'inbound'; limit: number }): Promise<GetEmailOutput[]> {
   const out: GetEmailOutput[] = [];
   let cursor: string | undefined;
   for (let i = 0; i < 1000; i++) {
@@ -274,11 +264,7 @@ describe('listEmailsPage — filtered folders with a scan budget', () => {
    * A store whose query matches rows by a predicate and examines at most `budget` rows per call
    * — the shape of the read service's filtered scan.
    */
-  function filteringStore(
-    partitions: Record<'sent' | 'inbound', string[]>,
-    matches: (sk: string) => boolean,
-    budget: number,
-  ): MergeQuery {
+  function filteringStore(partitions: Record<'sent' | 'inbound', string[]>, matches: (sk: string) => boolean, budget: number): MergeQuery {
     const rows = {
       sent: skDescending(partitions.sent).map((sk) => rowFor('sent', sk)),
       inbound: skDescending(partitions.inbound).map((sk) => rowFor('inbound', sk)),
@@ -320,22 +306,19 @@ describe('listEmailsPage — filtered folders with a scan budget', () => {
     { limit: 3, budget: 2 },
     { limit: 5, budget: 7 },
     { limit: 10, budget: 1000 },
-  ])(
-    'returns every match exactly once, newest first (limit $limit, budget $budget)',
-    async (opts) => {
-      const partitions = { sent: sks('s', 40, 3, 0), inbound: sks('i', 40, 3, 1) };
-      // Sparse, uneven matches: a few sent rows, a run of inbound rows.
-      const wanted = (sk: string) => /#s0(00[0-9]|09[0-9])$/.test(sk) || /#i00[3-6]\d$/.test(sk);
-      const expected = skDescending([...partitions.sent, ...partitions.inbound]).filter(wanted);
-      expect(expected.length).toBeGreaterThan(5);
+  ])('returns every match exactly once, newest first (limit $limit, budget $budget)', async (opts) => {
+    const partitions = { sent: sks('s', 40, 3, 0), inbound: sks('i', 40, 3, 1) };
+    // Sparse, uneven matches: a few sent rows, a run of inbound rows.
+    const wanted = (sk: string) => /#s0(00[0-9]|09[0-9])$/.test(sk) || /#i00[3-6]\d$/.test(sk);
+    const expected = skDescending([...partitions.sent, ...partitions.inbound]).filter(wanted);
+    expect(expected.length).toBeGreaterThan(5);
 
-      const rows = await drainAll(filteringStore(partitions, wanted, opts.budget), {
-        limit: opts.limit,
-      });
+    const rows = await drainAll(filteringStore(partitions, wanted, opts.budget), {
+      limit: opts.limit,
+    });
 
-      expect(rows.map((r) => r.sk)).toEqual(expected);
-    },
-  );
+    expect(rows.map((r) => r.sk)).toEqual(expected);
+  });
 
   it('makes progress through pages with no matches at all, then ends', async () => {
     const partitions = { sent: sks('s', 30, 2, 0), inbound: sks('i', 30, 2, 1) };

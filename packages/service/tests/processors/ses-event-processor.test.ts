@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type {
-  EmailsDao,
-  UpdateSentEmailDeliveryInput,
-  UpdateSentEmailDeliveryOutput,
-} from '../../src/data/emails-dao.js';
+import type { EmailsDao, UpdateSentEmailDeliveryInput, UpdateSentEmailDeliveryOutput } from '../../src/data/emails-dao.js';
 import { SesEventProcessor } from '../../src/processors/ses-event-processor.js';
 
 const SENT_MS = Date.parse('2026-10-10T12:00:00.123Z');
@@ -15,9 +11,7 @@ function fakeDao(found = true): {
 } {
   const updates: UpdateSentEmailDeliveryInput[] = [];
   const dao = {
-    updateSentEmailDelivery(
-      input: UpdateSentEmailDeliveryInput,
-    ): Promise<UpdateSentEmailDeliveryOutput> {
+    updateSentEmailDelivery(input: UpdateSentEmailDeliveryInput): Promise<UpdateSentEmailDeliveryOutput> {
       updates.push(input);
       return Promise.resolve({ found });
     },
@@ -193,11 +187,7 @@ describe('SesEventProcessor', () => {
   it.each([
     ['not JSON', 'not json', 'not JSON'],
     ['a report without FreeMail tags', event({ eventType: 'Delivery' }, null), 'no FreeMail tags'],
-    [
-      'a report with a malformed send time',
-      event({ eventType: 'Delivery' }, { 'freemail-id': ['row-1'], 'freemail-sent': ['soon'] }),
-      'no FreeMail tags',
-    ],
+    ['a report with a malformed send time', event({ eventType: 'Delivery' }, { 'freemail-id': ['row-1'], 'freemail-sent': ['soon'] }), 'no FreeMail tags'],
     ['an event it does not track', event({ eventType: 'Open' }), 'untracked event Open'],
   ])('skips %s without writing', async (_label, message, reason) => {
     const fake = fakeDao();

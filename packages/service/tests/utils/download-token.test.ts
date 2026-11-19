@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  downloadUrl,
-  generateDownloadToken,
-  isValidDownloadToken,
-} from '../../src/utils/download-token.js';
+import { downloadUrl, generateDownloadToken, isValidDownloadToken } from '../../src/utils/download-token.js';
 
 describe('generateDownloadToken', () => {
   it('mints a URL-safe, high-entropy token', () => {
@@ -53,8 +49,6 @@ describe('downloadUrl', () => {
 
   it('needs no encoding — base64url tokens are already path-safe', () => {
     const token = generateDownloadToken();
-    expect(downloadUrl('https://api.example.com', token)).toBe(
-      `https://api.example.com/d/${token}`,
-    );
+    expect(downloadUrl('https://api.example.com', token)).toBe(`https://api.example.com/d/${token}`);
   });
 });

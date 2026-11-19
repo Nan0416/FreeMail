@@ -1,12 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  deleteDraft,
-  getLastSender,
-  resetDraftsCache,
-  saveDraft,
-  setLastSender,
-  type Draft,
-} from '../../src/lib/drafts.js';
+import { deleteDraft, getLastSender, resetDraftsCache, saveDraft, setLastSender, type Draft } from '../../src/lib/drafts.js';
 
 function draft(id: string, subject = id): Draft {
   return {

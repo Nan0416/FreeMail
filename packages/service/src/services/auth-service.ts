@@ -3,12 +3,7 @@
  * refresh, logout. All I/O goes through the injected `AuthDao`, and time through
  * the injected clock, so every branch here is unit-testable without AWS.
  */
-import {
-  ACCESS_TOKEN_TTL_SECONDS,
-  REFRESH_TOKEN_TTL_SECONDS,
-  passwordPolicyError,
-  type TokenPair,
-} from '@freemail/shared';
+import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS, passwordPolicyError, type TokenPair } from '@freemail/shared';
 import type { AuthDao } from '../data/auth-dao.js';
 import type { SigningKeyProvider } from '../facades/signing-key-provider.js';
 import { authErrors } from '../utils/errors.js';

@@ -55,12 +55,7 @@ import { extractVerdicts, type Verdicts } from './verdicts.js';
  * tracks written keys, so it can clean them up if parsing then fails.
  */
 export interface AttachmentSink {
-  store(
-    partIndex: number,
-    filename: string | undefined,
-    contentType: string,
-    bytes: Buffer,
-  ): Promise<InboundAttachmentDescriptor>;
+  store(partIndex: number, filename: string | undefined, contentType: string, bytes: Buffer): Promise<InboundAttachmentDescriptor>;
 }
 
 export interface ParsedInbound {
@@ -155,12 +150,7 @@ const DEFAULT_LIMITS: ParseLimits = {
  * failures — the `parseStatus` distinguishes them. Rejects only for a real infra
  * failure from the sink or the source stream, so those retry.
  */
-export function parseInbound(
-  source: Readable,
-  sink: AttachmentSink,
-  limits: ParseLimits = DEFAULT_LIMITS,
-  options: ParseOptions = {},
-): Promise<ParsedInbound> {
+export function parseInbound(source: Readable, sink: AttachmentSink, limits: ParseLimits = DEFAULT_LIMITS, options: ParseOptions = {}): Promise<ParsedInbound> {
   return new Promise<ParsedInbound>((resolve, reject) => {
     const rawLimiter = new RawByteLimiter(limits.maxRawBytes);
     const splitter = new Splitter({
@@ -283,9 +273,7 @@ export function parseInbound(
     // The Splitter errors EMAXLEN when maxChildNodes/maxHeadSize is exceeded; other
     // Splitter/Joiner errors are malformed content. Both are handled (no retry).
     // (mailsplit's `.on` types only declare the 'data' overload; cast for 'error'.)
-    (splitter as unknown as Transform).on('error', (err: ErrorWithCode) =>
-      degrade(err?.code === 'EMAXLEN' ? 'limit_exceeded' : 'parse_failed'),
-    );
+    (splitter as unknown as Transform).on('error', (err: ErrorWithCode) => degrade(err?.code === 'EMAXLEN' ? 'limit_exceeded' : 'parse_failed'));
     (joiner as unknown as Transform).on('error', () => degrade('parse_failed'));
     parser.on('error', () => degrade('parse_failed'));
     // The S3 source erroring mid-download is infra → retry.
@@ -302,13 +290,10 @@ export function parseInbound(
       const rawSubject = headers.get('subject');
       subject = sanitizeSubject(typeof rawSubject === 'string' ? rawSubject : undefined);
       const date = headers.get('date');
-      headerDate =
-        date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined;
+      headerDate = date instanceof Date && !Number.isNaN(date.getTime()) ? date.toISOString() : undefined;
       messageIdHeader = sanitizeMessageId(headers.get('message-id'));
       references = sanitizeReferences(headers.get('references'));
-      replyTo = normalizeAddressList(
-        headers.get('reply-to') as AddressObject | AddressObject[] | undefined,
-      ).slice(0, MAX_REPLY_TO_ADDRESSES);
+      replyTo = normalizeAddressList(headers.get('reply-to') as AddressObject | AddressObject[] | undefined).slice(0, MAX_REPLY_TO_ADDRESSES);
     });
 
     parser.on('data', (data) => {

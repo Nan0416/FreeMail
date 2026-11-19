@@ -1,9 +1,4 @@
-import {
-  EMAIL_LIST_INDEX_ATTRIBUTES,
-  EMAIL_LIST_INDEX_NAME,
-  INBOUND_INGESTED_TAG,
-  INBOUND_RAW_RETENTION_DAYS,
-} from '@freemail/shared/storage';
+import { EMAIL_LIST_INDEX_ATTRIBUTES, EMAIL_LIST_INDEX_NAME, INBOUND_INGESTED_TAG, INBOUND_RAW_RETENTION_DAYS } from '@freemail/shared/storage';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import { AttributeType, BillingMode, ProjectionType, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { BlockPublicAccess, Bucket, BucketEncryption, HttpMethods } from 'aws-cdk-lib/aws-s3';

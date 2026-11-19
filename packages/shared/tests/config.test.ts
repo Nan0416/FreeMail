@@ -60,9 +60,7 @@ describe('parseFreeMailConfig', () => {
   it('still rejects an app and api domain that are the same host', () => {
     // They would collide as alias records, and it would collapse the cross-origin
     // boundary the #47 CORS model depends on.
-    expect(() =>
-      parseFreeMailConfig({ ...base, appDomain: 'x.example.com', apiDomain: 'x.example.com' }),
-    ).toThrow(/must be different domains/);
+    expect(() => parseFreeMailConfig({ ...base, appDomain: 'x.example.com', apiDomain: 'x.example.com' })).toThrow(/must be different domains/);
   });
 
   it('reports EVERY problem at once, not just the first', () => {
@@ -96,14 +94,11 @@ describe('parseFreeMailConfig', () => {
   });
 
   it('rejects an unknown sesIdentity mode', () => {
-    expect(() => parseFreeMailConfig({ ...base, sesIdentity: { mode: 'adopt' } })).toThrow(
-      /"create" or "import"/,
-    );
+    expect(() => parseFreeMailConfig({ ...base, sesIdentity: { mode: 'adopt' } })).toThrow(/"create" or "import"/);
   });
 
   describe('sesIdentity.extraTxtValues', () => {
-    const withExtra = (extraTxtValues: unknown, mode = 'create') =>
-      parseFreeMailConfig({ ...base, sesIdentity: { mode, extraTxtValues } });
+    const withExtra = (extraTxtValues: unknown, mode = 'create') => parseFreeMailConfig({ ...base, sesIdentity: { mode, extraTxtValues } });
 
     it('accepts extra values in create mode, trimmed and in order', () => {
       expect(withExtra(['  google-site-verification=abc123 ', 'MS=ms42']).sesIdentity).toEqual({
@@ -113,9 +108,7 @@ describe('parseFreeMailConfig', () => {
     });
 
     it('rejects them in import mode, where FreeMail writes no TXT record', () => {
-      expect(() => withExtra(['google-site-verification=abc123'], 'import')).toThrow(
-        /only valid when mode is "create"/,
-      );
+      expect(() => withExtra(['google-site-verification=abc123'], 'import')).toThrow(/only valid when mode is "create"/);
     });
 
     it('rejects an SPF value, which would make two and break SPF', () => {
@@ -144,9 +137,7 @@ describe('parseFreeMailConfig', () => {
   });
 
   it('requires a hostedZoneId when importing', () => {
-    expect(() =>
-      parseFreeMailConfig({ ...base, hostedZone: { mode: 'import', zoneName: 'example.com' } }),
-    ).toThrow(/hostedZoneId/);
+    expect(() => parseFreeMailConfig({ ...base, hostedZone: { mode: 'import', zoneName: 'example.com' } })).toThrow(/hostedZoneId/);
   });
 
   it('rejects a hostedZoneId when creating', () => {
@@ -159,9 +150,7 @@ describe('parseFreeMailConfig', () => {
   });
 
   it('rejects an emailDomain outside the hosted zone', () => {
-    expect(() => parseFreeMailConfig({ ...base, emailDomain: 'mail.other.com' })).toThrow(
-      /subdomain/,
-    );
+    expect(() => parseFreeMailConfig({ ...base, emailDomain: 'mail.other.com' })).toThrow(/subdomain/);
   });
 
   it('accepts app/api custom domains inside the hosted zone', () => {
@@ -175,15 +164,11 @@ describe('parseFreeMailConfig', () => {
   });
 
   it('rejects an appDomain outside the hosted zone', () => {
-    expect(() => parseFreeMailConfig({ ...base, appDomain: 'app.other.com' })).toThrow(
-      /"appDomain".*subdomain/,
-    );
+    expect(() => parseFreeMailConfig({ ...base, appDomain: 'app.other.com' })).toThrow(/"appDomain".*subdomain/);
   });
 
   it('rejects an apiDomain outside the hosted zone', () => {
-    expect(() => parseFreeMailConfig({ ...base, apiDomain: 'api.other.com' })).toThrow(
-      /"apiDomain".*subdomain/,
-    );
+    expect(() => parseFreeMailConfig({ ...base, apiDomain: 'api.other.com' })).toThrow(/"apiDomain".*subdomain/);
   });
 
   it('rejects appDomain and apiDomain being the same host', () => {
@@ -197,21 +182,15 @@ describe('parseFreeMailConfig', () => {
   });
 
   it('rejects an invalid hosted-zone mode', () => {
-    expect(() =>
-      parseFreeMailConfig({ ...base, hostedZone: { mode: 'nope', zoneName: 'example.com' } }),
-    ).toThrow(/"import" or "create"/);
+    expect(() => parseFreeMailConfig({ ...base, hostedZone: { mode: 'nope', zoneName: 'example.com' } })).toThrow(/"import" or "create"/);
   });
 
   it('rejects a non-boolean inbound flag', () => {
-    expect(() =>
-      parseFreeMailConfig({ ...base, inbound: { enabled: 'yes', confirmInboundMx: false } }),
-    ).toThrow(/must be a boolean/);
+    expect(() => parseFreeMailConfig({ ...base, inbound: { enabled: 'yes', confirmInboundMx: false } })).toThrow(/must be a boolean/);
   });
 
   it('rejects a region other than us-east-1', () => {
-    expect(() => parseFreeMailConfig({ ...base, region: 'us-west-2' })).toThrow(
-      /must be us-east-1/,
-    );
+    expect(() => parseFreeMailConfig({ ...base, region: 'us-west-2' })).toThrow(/must be us-east-1/);
   });
 
   it('canonicalizes domains (case + trailing dot) before validating', () => {
@@ -227,13 +206,9 @@ describe('parseFreeMailConfig', () => {
   });
 
   it('enforces the inbound MX acknowledgement (enabled ⇒ confirmed)', () => {
-    expect(() =>
-      parseFreeMailConfig({ ...base, inbound: { enabled: true, confirmInboundMx: false } }),
-    ).toThrow(/confirmInboundMx/);
+    expect(() => parseFreeMailConfig({ ...base, inbound: { enabled: true, confirmInboundMx: false } })).toThrow(/confirmInboundMx/);
     // enabled + confirmed is accepted.
-    expect(
-      parseFreeMailConfig({ ...base, inbound: { enabled: true, confirmInboundMx: true } }).inbound,
-    ).toEqual({ enabled: true, confirmInboundMx: true });
+    expect(parseFreeMailConfig({ ...base, inbound: { enabled: true, confirmInboundMx: true } }).inbound).toEqual({ enabled: true, confirmInboundMx: true });
   });
 
   it('rejects non-object input', () => {
@@ -257,15 +232,9 @@ describe('parseFreeMailConfig — attachments', () => {
   });
 
   it('rejects an embed limit past its cap, or not a whole number', () => {
-    expect(() =>
-      parseFreeMailConfig({ ...base, attachments: { embedMaxBytes: 16 * 1024 * 1024 } }),
-    ).toThrow(/at most 15 MB/);
-    expect(() =>
-      parseFreeMailConfig({ ...base, attachments: { embedTotalBytes: 21 * 1024 * 1024 } }),
-    ).toThrow(/at most 20 MB/);
-    expect(() => parseFreeMailConfig({ ...base, attachments: { embedMaxBytes: 1.5 } })).toThrow(
-      /whole number/,
-    );
+    expect(() => parseFreeMailConfig({ ...base, attachments: { embedMaxBytes: 16 * 1024 * 1024 } })).toThrow(/at most 15 MB/);
+    expect(() => parseFreeMailConfig({ ...base, attachments: { embedTotalBytes: 21 * 1024 * 1024 } })).toThrow(/at most 20 MB/);
+    expect(() => parseFreeMailConfig({ ...base, attachments: { embedMaxBytes: 1.5 } })).toThrow(/whole number/);
   });
 });
 

@@ -22,19 +22,10 @@
  * The MCP server (#7) is a separate handler on the same HTTP API, behind the same
  * dual-scheme authorizer, and is assembled from these same pieces — see `mcp.ts`.
  */
-import type {
-  APIGatewayProxyEventV2,
-  APIGatewayProxyStructuredResultV2,
-  Context,
-} from 'aws-lambda';
+import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
 import { DependencyFactory } from '../dependencies/index.js';
 import { authMiddleware, errorHandler, notFoundHandler } from '../middleware/index.js';
-import {
-  AuthEndpoints,
-  DownloadEndpoints,
-  EmailEndpoints,
-  KeysEndpoints,
-} from '../routes/index.js';
+import { AuthEndpoints, DownloadEndpoints, EmailEndpoints, KeysEndpoints } from '../routes/index.js';
 import { FreeMailService } from './service.js';
 import { getServiceConfig } from './service-config.js';
 import { toApiGatewayHandler, type ApiGatewayHandler } from './serverless-express.js';
@@ -71,10 +62,7 @@ function buildHandler(): ApiGatewayHandler {
   return apigHandler;
 }
 
-export const handler = async (
-  event: APIGatewayProxyEventV2,
-  context: Context,
-): Promise<APIGatewayProxyStructuredResultV2> => {
+export const handler = async (event: APIGatewayProxyEventV2, context: Context): Promise<APIGatewayProxyStructuredResultV2> => {
   try {
     const processor = buildHandler();
     return await processor(event, context, () => {});

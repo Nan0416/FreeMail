@@ -1,11 +1,4 @@
-import {
-  DeleteCommand,
-  GetCommand,
-  PutCommand,
-  ScanCommand,
-  type PutCommandInput,
-  DynamoDBDocumentClient,
-} from '@aws-sdk/lib-dynamodb';
+import { DeleteCommand, GetCommand, PutCommand, ScanCommand, type PutCommandInput, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { DdbApiKeysDao } from '../../src/data/ddb-api-keys-dao.js';
 import type { GetApiKeyOutput } from '../../src/data/api-keys-dao.js';
@@ -46,10 +39,7 @@ class FakeDoc {
     if (command instanceof PutCommand) {
       const item = command.input.Item as Record<string, unknown>;
       const key = String(item.keyId);
-      if (
-        command.input.ConditionExpression === 'attribute_not_exists(keyId)' &&
-        this.store.has(key)
-      ) {
+      if (command.input.ConditionExpression === 'attribute_not_exists(keyId)' && this.store.has(key)) {
         return Promise.reject(conditionalCheckFailed());
       }
       this.store.set(key, item);
@@ -61,9 +51,7 @@ class FakeDoc {
     }
     if (command instanceof ScanCommand) {
       const all = [...this.store.values()];
-      const start = command.input.ExclusiveStartKey
-        ? all.findIndex((i) => i.keyId === command.input.ExclusiveStartKey?.keyId) + 1
-        : 0;
+      const start = command.input.ExclusiveStartKey ? all.findIndex((i) => i.keyId === command.input.ExclusiveStartKey?.keyId) + 1 : 0;
       const page = all.slice(start, start + this.scanPageSize);
       const last = page[page.length - 1];
       const more = start + this.scanPageSize < all.length;

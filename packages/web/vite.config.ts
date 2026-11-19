@@ -69,11 +69,7 @@ export default defineConfig((env) => {
   // Vitest also runs as 'serve'; only a real dev server talks to the deployed API.
   const deployConfig = env.command === 'serve' && env.mode !== 'test' ? loadDeployConfig() : null;
   return {
-    plugins: [
-      react(),
-      tailwindcss(),
-      ...(deployConfig ? [devAgainstDeployedApi(deployConfig)] : []),
-    ],
+    plugins: [react(), tailwindcss(), ...(deployConfig ? [devAgainstDeployedApi(deployConfig)] : [])],
     resolve: {
       alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
     },

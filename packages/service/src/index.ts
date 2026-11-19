@@ -20,20 +20,8 @@ export * from './data/index.js';
 export { AuthError, EmailError, authErrors, emailErrors } from './utils/errors.js';
 export { InboundParseError, InboundLimitError, isHandledInboundError } from './utils/errors.js';
 export { hashPassword, verifyPassword } from './utils/password.js';
-export {
-  signAccessToken,
-  verifyAccessToken,
-  type AccessTokenClaims,
-  type VerifyResult,
-} from './utils/jwt.js';
+export { signAccessToken, verifyAccessToken, type AccessTokenClaims, type VerifyResult } from './utils/jwt.js';
 export { generateRefreshToken, hashRefreshToken } from './utils/refresh-token.js';
 export * from './utils/lockout.js';
-export {
-  generateApiKey,
-  parseApiKey,
-  hashApiKeySecret,
-  verifyApiKeySecret,
-  type GeneratedApiKey,
-  type ParsedApiKey,
-} from './utils/api-key.js';
+export { generateApiKey, parseApiKey, hashApiKeySecret, verifyApiKeySecret, type GeneratedApiKey, type ParsedApiKey } from './utils/api-key.js';
 export { buildRawMime, type RawMimeInput } from './utils/mime.js';

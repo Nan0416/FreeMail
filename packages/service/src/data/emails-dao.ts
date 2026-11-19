@@ -8,12 +8,7 @@
  * folder) — each `sk='<iso>#<id>'` so the read slice lists any partition newest-first and
  * merges sent + received into one timeline.
  */
-import type {
-  DeliveryEvent,
-  EmailListFilter,
-  SendEmailResponse,
-  SentStatus,
-} from '@freemail/shared';
+import type { DeliveryEvent, EmailListFilter, SendEmailResponse, SentStatus } from '@freemail/shared';
 import type { EmailListIndexAttribute } from '@freemail/shared/storage';
 
 /** Most delivery reports kept on one sent row; later ones still move its status. */
@@ -37,11 +32,7 @@ export const FAILED_PARTITION = 'FAILED';
 export const IDEMPOTENCY_PARTITION = 'SEND_KEY';
 
 /** The only valid partitions — used to validate a decoded message handle. */
-export const EMAIL_PARTITIONS: ReadonlySet<string> = new Set([
-  SENT_PARTITION,
-  INBOUND_PARTITION,
-  FAILED_PARTITION,
-]);
+export const EMAIL_PARTITIONS: ReadonlySet<string> = new Set([SENT_PARTITION, INBOUND_PARTITION, FAILED_PARTITION]);
 
 /**
  * A message's decoded body, stored once when the message is ingested or sent so opening it
@@ -174,8 +165,7 @@ export interface UpdateSentEmailDeliveryOutput {
  * and `UNKNOWN` (unrecognized value) are all fail-closed alongside `FAIL` / `GRAY`
  * / `PROCESSING_FAILED`. Attachments and the snippet are exposed only on `PASS`.
  */
-export type InboundVerdict =
-  'PASS' | 'FAIL' | 'GRAY' | 'PROCESSING_FAILED' | 'CONFLICTING' | 'ABSENT' | 'UNKNOWN';
+export type InboundVerdict = 'PASS' | 'FAIL' | 'GRAY' | 'PROCESSING_FAILED' | 'CONFLICTING' | 'ABSENT' | 'UNKNOWN';
 
 /** Outcome of parsing the raw MIME. Only `ok` is a fully-processed message. */
 export type InboundParseStatus = 'ok' | 'oversize' | 'limit_exceeded' | 'parse_failed';
@@ -319,14 +309,8 @@ export interface QueryEmailsByDirectionOutput {
  * reading one (in the list mapper, say) is a compile error rather than a silent `undefined`.
  */
 export type EmailSummary =
-  | ({ readonly direction: 'sent'; readonly pk: string; readonly sk: string } & Pick<
-      CreateSentEmailInput,
-      EmailListIndexAttribute & keyof CreateSentEmailInput
-    >)
-  | ({ readonly direction: 'inbound'; readonly pk: string; readonly sk: string } & Pick<
-      CreateInboundEmailInput,
-      EmailListIndexAttribute & keyof CreateInboundEmailInput
-    >);
+  | ({ readonly direction: 'sent'; readonly pk: string; readonly sk: string } & Pick<CreateSentEmailInput, EmailListIndexAttribute & keyof CreateSentEmailInput>)
+  | ({ readonly direction: 'inbound'; readonly pk: string; readonly sk: string } & Pick<CreateInboundEmailInput, EmailListIndexAttribute & keyof CreateInboundEmailInput>);
 
 /** Same paging contract as {@link QueryEmailsByDirectionInput}, answered from the list index. */
 export interface ListEmailSummariesInput extends QueryEmailsByDirectionInput {}
@@ -369,8 +353,7 @@ export interface CreateIdempotencyRecordInput {
 }
 
 /** Created, or the record already holding the key (the same request's earlier send, or not). */
-export type CreateIdempotencyRecordOutput =
-  { readonly created: true } | { readonly created: false; readonly existing: IdempotencyRecord };
+export type CreateIdempotencyRecordOutput = { readonly created: true } | { readonly created: false; readonly existing: IdempotencyRecord };
 
 /** Mark a claimed key's send done, with the response a replay returns. */
 export interface UpdateIdempotencyRecordInput {
@@ -405,9 +388,7 @@ export interface EmailsDao {
   updateSentEmailStatus(input: UpdateSentEmailStatusInput): Promise<UpdateSentEmailStatusOutput>;
 
   /** Append SES's delivery reports to a sent message and advance its status (see the input). */
-  updateSentEmailDelivery(
-    input: UpdateSentEmailDeliveryInput,
-  ): Promise<UpdateSentEmailDeliveryOutput>;
+  updateSentEmailDelivery(input: UpdateSentEmailDeliveryInput): Promise<UpdateSentEmailDeliveryOutput>;
 
   /** Record a received message, idempotently. */
   createInboundEmail(input: CreateInboundEmailInput): Promise<CreateInboundEmailOutput>;
@@ -435,17 +416,11 @@ export interface EmailsDao {
    * record already there otherwise — from the write itself, so it needs no read grant (the MCP
    * role has none without inbound).
    */
-  createIdempotencyRecord(
-    input: CreateIdempotencyRecordInput,
-  ): Promise<CreateIdempotencyRecordOutput>;
+  createIdempotencyRecord(input: CreateIdempotencyRecordInput): Promise<CreateIdempotencyRecordOutput>;
 
   /** Record that a claimed key's send succeeded, with its response. */
-  updateIdempotencyRecord(
-    input: UpdateIdempotencyRecordInput,
-  ): Promise<UpdateIdempotencyRecordOutput>;
+  updateIdempotencyRecord(input: UpdateIdempotencyRecordInput): Promise<UpdateIdempotencyRecordOutput>;
 
   /** Drop a still-`pending` claim (the send failed before SES accepted it). */
-  deleteIdempotencyRecord(
-    input: DeleteIdempotencyRecordInput,
-  ): Promise<DeleteIdempotencyRecordOutput>;
+  deleteIdempotencyRecord(input: DeleteIdempotencyRecordInput): Promise<DeleteIdempotencyRecordOutput>;
 }

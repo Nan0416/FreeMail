@@ -28,9 +28,7 @@ it('discarding a draft whose window is still loading keeps that window from open
       },
     ]),
   );
-  const fetchMock = vi.fn<typeof fetch>(async (url) =>
-    pathOf(url) === '/me' ? json(200, { subject: 'owner' }) : json(200, { emails: [] }),
-  );
+  const fetchMock = vi.fn<typeof fetch>(async (url) => (pathOf(url) === '/me' ? json(200, { subject: 'owner' }) : json(200, { emails: [] })));
   renderWithApp(<AppShell inboundEnabled />, fetchMock);
   fireEvent.click(screen.getByRole('button', { name: /Drafts/ }));
   const drafts = screen.getByRole('list', { name: 'Drafts' });

@@ -2,11 +2,7 @@ import { App } from 'aws-cdk-lib';
 import { Annotations, Match, Template } from 'aws-cdk-lib/assertions';
 import { describe, expect, it } from 'vitest';
 import type { FreeMailConfig } from '@freemail/shared/config';
-import {
-  EMAIL_LIST_INDEX_ATTRIBUTES,
-  INBOUND_INGESTED_TAG,
-  INBOUND_RAW_RETENTION_DAYS,
-} from '@freemail/shared/storage';
+import { EMAIL_LIST_INDEX_ATTRIBUTES, INBOUND_INGESTED_TAG, INBOUND_RAW_RETENTION_DAYS } from '@freemail/shared/storage';
 import { FreeMailStack } from '../src/freemail-stack.js';
 
 function makeConfig(overrides: Partial<FreeMailConfig> = {}): FreeMailConfig {
@@ -29,28 +25,17 @@ function synth(config: FreeMailConfig): Template {
 }
 
 /** True when the role named by `rolePrefix` holds `action` on the mail bucket's `prefix` keys. */
-function canOnMailPrefix(
-  template: Template,
-  rolePrefix: string,
-  action: string,
-  prefix: string,
-): boolean {
+function canOnMailPrefix(template: Template, rolePrefix: string, action: string, prefix: string): boolean {
   const policies = Object.values(template.findResources('AWS::IAM::Policy'));
   return policies.some((policy) => {
     if (!JSON.stringify(policy.Properties.Roles).includes(rolePrefix)) {
       return false;
     }
-    return (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some(
-      (statement) => {
-        const actions = ([] as unknown[]).concat(statement.Action);
-        const resources = JSON.stringify(statement.Resource);
-        return (
-          actions.includes(action) &&
-          resources.includes('MailBucket') &&
-          resources.includes(`/${prefix}`)
-        );
-      },
-    );
+    return (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some((statement) => {
+      const actions = ([] as unknown[]).concat(statement.Action);
+      const resources = JSON.stringify(statement.Resource);
+      return actions.includes(action) && resources.includes('MailBucket') && resources.includes(`/${prefix}`);
+    });
   });
 }
 
@@ -62,17 +47,11 @@ function canQueryEmailIndexes(template: Template, rolePrefix: string): boolean {
     if (!roles.includes(rolePrefix)) {
       return false;
     }
-    return (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some(
-      (statement) => {
-        const actions = ([] as unknown[]).concat(statement.Action);
-        const resources = JSON.stringify(statement.Resource);
-        return (
-          actions.includes('dynamodb:Query') &&
-          resources.includes('EmailsTable') &&
-          resources.includes('/index/*')
-        );
-      },
-    );
+    return (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some((statement) => {
+      const actions = ([] as unknown[]).concat(statement.Action);
+      const resources = JSON.stringify(statement.Resource);
+      return actions.includes('dynamodb:Query') && resources.includes('EmailsTable') && resources.includes('/index/*');
+    });
   });
 }
 
@@ -144,9 +123,7 @@ describe('FreeMailStack', () => {
         (policy) =>
           JSON.stringify(policy.Properties.Roles).includes(rolePrefix) &&
           (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some(
-            (statement) =>
-              ([] as unknown[]).concat(statement.Action).includes('dynamodb:DescribeTable') &&
-              JSON.stringify(statement.Resource).includes('EmailsTable'),
+            (statement) => ([] as unknown[]).concat(statement.Action).includes('dynamodb:DescribeTable') && JSON.stringify(statement.Resource).includes('EmailsTable'),
           ),
       );
     expect(canDescribe('RestHandler')).toBe(true);
@@ -201,12 +178,8 @@ describe('FreeMailStack', () => {
   it('lets the parser look up download tokens (GetItem only) by the same link base REST mints', () => {
     const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
     const functions = Object.values(template.findResources('AWS::Lambda::Function'));
-    const envOf = (description: string): Record<string, unknown> =>
-      functions.find((f) => f.Properties.Description === description)?.Properties.Environment
-        .Variables;
-    const parserEnv = envOf(
-      'FreeMail inbound MIME parser (S3 raw MIME → DDB index + attachments to S3).',
-    );
+    const envOf = (description: string): Record<string, unknown> => functions.find((f) => f.Properties.Description === description)?.Properties.Environment.Variables;
+    const parserEnv = envOf('FreeMail inbound MIME parser (S3 raw MIME → DDB index + attachments to S3).');
     const restEnv = envOf('FreeMail REST API (auth + app routes).');
     // Links are recognized exactly as they are built.
     expect(parserEnv.DOWNLOAD_BASE_URL).toEqual(restEnv.DOWNLOAD_BASE_URL);
@@ -225,9 +198,7 @@ describe('FreeMailStack', () => {
 
   it('gives a send-only deploy no parser to wire', () => {
     const template = synth(makeConfig());
-    const parsers = Object.values(template.findResources('AWS::Lambda::Function')).filter((f) =>
-      String(f.Properties.Description).startsWith('FreeMail inbound MIME parser'),
-    );
+    const parsers = Object.values(template.findResources('AWS::Lambda::Function')).filter((f) => String(f.Properties.Description).startsWith('FreeMail inbound MIME parser'));
     expect(parsers).toHaveLength(0);
   });
 
@@ -243,9 +214,7 @@ describe('FreeMailStack', () => {
         (policy) =>
           JSON.stringify(policy.Properties.Roles).includes(rolePrefix) &&
           (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some(
-            (statement) =>
-              ([] as unknown[]).concat(statement.Action).includes(action) &&
-              JSON.stringify(statement.Resource).includes('QuarantineBucket'),
+            (statement) => ([] as unknown[]).concat(statement.Action).includes(action) && JSON.stringify(statement.Resource).includes('QuarantineBucket'),
           ),
       );
     expect(roleCan('ParserFn', 's3:PutObject')).toBe(true);
@@ -255,9 +224,7 @@ describe('FreeMailStack', () => {
     expect(roleCan('RestHandler', 's3:PutObject')).toBe(false);
     // Both Lambdas that use it are told where it is.
     const envOf = (idPart: string): Record<string, unknown> => {
-      const fn = Object.entries(template.findResources('AWS::Lambda::Function')).find(([id]) =>
-        id.includes(idPart),
-      );
+      const fn = Object.entries(template.findResources('AWS::Lambda::Function')).find(([id]) => id.includes(idPart));
       return (fn?.[1].Properties.Environment?.Variables ?? {}) as Record<string, unknown>;
     };
     expect(JSON.stringify(envOf('ParserFn').QUARANTINE_BUCKET)).toContain('QuarantineBucket');
@@ -273,12 +240,8 @@ describe('FreeMailStack', () => {
     // Negative controls: neither send path may write inbound bodies (only the parser does),
     // and the body grant is put-only — no deletes.
     expect(canOnMailPrefix(template, 'RestHandler', 's3:PutObject', 'bodies/*')).toBe(false);
-    expect(canOnMailPrefix(template, 'RestHandler', 's3:DeleteObject*', 'bodies/sent/*')).toBe(
-      false,
-    );
-    expect(canOnMailPrefix(template, 'McpHandler', 's3:DeleteObject*', 'bodies/sent/*')).toBe(
-      false,
-    );
+    expect(canOnMailPrefix(template, 'RestHandler', 's3:DeleteObject*', 'bodies/sent/*')).toBe(false);
+    expect(canOnMailPrefix(template, 'McpHandler', 's3:DeleteObject*', 'bodies/sent/*')).toBe(false);
   });
 
   it('buckets block public access and enforce SSL', () => {
@@ -312,18 +275,12 @@ describe('FreeMailStack', () => {
     // AccessDeniedException naming the configuration set.
     const template = synth(makeConfig({ emailDomain: 'mail.example.com' }));
     const policies = Object.values(template.findResources('AWS::IAM::Policy')).filter((policy) =>
-      (policy.Properties?.PolicyDocument?.Statement ?? []).some(
-        (statement: { Action?: unknown }) =>
-          Array.isArray(statement.Action) && statement.Action.includes('ses:SendRawEmail'),
-      ),
+      (policy.Properties?.PolicyDocument?.Statement ?? []).some((statement: { Action?: unknown }) => Array.isArray(statement.Action) && statement.Action.includes('ses:SendRawEmail')),
     );
     // Both senders: the REST /emails route and the MCP send_email tool.
     expect(policies).toHaveLength(2);
     for (const policy of policies) {
-      const statement = policy.Properties.PolicyDocument.Statement.find(
-        (candidate: { Action?: unknown }) =>
-          Array.isArray(candidate.Action) && candidate.Action.includes('ses:SendRawEmail'),
-      );
+      const statement = policy.Properties.PolicyDocument.Statement.find((candidate: { Action?: unknown }) => Array.isArray(candidate.Action) && candidate.Action.includes('ses:SendRawEmail'));
       expect(statement.Effect).toBe('Allow');
       expect(statement.Action).toEqual(['ses:SendEmail', 'ses:SendRawEmail']);
       // Two ARNs, not one — the identity AND the configuration set.
@@ -341,9 +298,7 @@ describe('FreeMailStack', () => {
   });
 
   it('imports a hosted zone when mode is "import" (no zone resource, no NS output)', () => {
-    const template = synth(
-      makeConfig({ hostedZone: { mode: 'import', zoneName: 'example.com', hostedZoneId: 'Z123' } }),
-    );
+    const template = synth(makeConfig({ hostedZone: { mode: 'import', zoneName: 'example.com', hostedZoneId: 'Z123' } }));
     template.resourceCountIs('AWS::Route53::HostedZone', 0);
     expect(() => template.hasOutput('HostedZoneNameServers', {})).toThrow();
     template.hasOutput('HostedZoneId', {});
@@ -354,9 +309,7 @@ describe('FreeMailStack', () => {
     template.resourceCountIs('AWS::SES::ReceiptRuleSet', 0);
     template.resourceCountIs('AWS::SES::ReceiptRule', 0);
     // Only the SES sending records exist; no inbound MX on the email domain.
-    const mxRecords = Object.values(template.findResources('AWS::Route53::RecordSet')).filter(
-      (r) => r.Properties?.Type === 'MX',
-    );
+    const mxRecords = Object.values(template.findResources('AWS::Route53::RecordSet')).filter((r) => r.Properties?.Type === 'MX');
     expect(mxRecords.every((r) => r.Properties?.Name !== 'example.com')).toBe(true);
   });
 
@@ -393,10 +346,7 @@ describe('FreeMailStack', () => {
 
   it('does not warn when inbound is disabled', () => {
     const stack = new FreeMailStack(new App(), 'TestStack', { config: makeConfig() });
-    Annotations.fromStack(stack).hasNoWarning(
-      '*',
-      Match.stringLikeRegexp('Inbound email is ENABLED'),
-    );
+    Annotations.fromStack(stack).hasNoWarning('*', Match.stringLikeRegexp('Inbound email is ENABLED'));
   });
 
   it('refuses to synth inbound without the MX acknowledgement', () => {
@@ -412,10 +362,7 @@ describe('FreeMailStack', () => {
     const stack = new FreeMailStack(new App(), 'TestStack', { config: makeConfig() });
     const annotations = Annotations.fromStack(stack);
     // Actionable: names the hang and the fix (delegate the zone's name servers).
-    annotations.hasWarning(
-      '*',
-      Match.stringLikeRegexp('Custom domains are configured on a CREATED'),
-    );
+    annotations.hasWarning('*', Match.stringLikeRegexp('Custom domains are configured on a CREATED'));
     annotations.hasWarning('*', Match.stringLikeRegexp('HANG on certificate validation'));
     annotations.hasWarning('*', Match.stringLikeRegexp('name servers'));
   });
@@ -458,24 +405,16 @@ describe('FreeMailStack', () => {
         hostedZone: { mode: 'import', zoneName: 'example.com', hostedZoneId: 'Z123' },
       }),
     });
-    Annotations.fromStack(stack).hasNoWarning(
-      '*',
-      Match.stringLikeRegexp('Custom domains are configured'),
-    );
+    Annotations.fromStack(stack).hasNoWarning('*', Match.stringLikeRegexp('Custom domains are configured'));
   });
 
   it('does NOT warn about custom domains when none are configured', () => {
     const stack = new FreeMailStack(new App(), 'TestStack', { config: makeConfig() });
-    Annotations.fromStack(stack).hasNoWarning(
-      '*',
-      Match.stringLikeRegexp('custom domain is configured'),
-    );
+    Annotations.fromStack(stack).hasNoWarning('*', Match.stringLikeRegexp('custom domain is configured'));
   });
 
   it('outputs custom URLs + the raw CloudFront domain when app/api domains are set', () => {
-    const template = synth(
-      makeConfig({ appDomain: 'mail.example.com', apiDomain: 'api.example.com' }),
-    );
+    const template = synth(makeConfig({ appDomain: 'mail.example.com', apiDomain: 'api.example.com' }));
     template.hasOutput('WebAppUrl', { Value: 'https://mail.example.com' });
     template.hasOutput('WebDistributionDomainName', {});
     template.hasOutput('ApiCustomDomainUrl', { Value: 'https://api.example.com' });
