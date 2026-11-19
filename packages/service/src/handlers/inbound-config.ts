@@ -16,6 +16,8 @@ export interface InboundConfig {
   readonly downloadTokensTable: string;
   /** The API's public base — how this deployment's own download links begin. */
   readonly downloadBaseUrl: string;
+  /** SNS topic notified for each received message stored with its content. */
+  readonly emailReceivedTopicArn: string;
 }
 
 const ENV_SCHEMA = z.object({
@@ -24,6 +26,7 @@ const ENV_SCHEMA = z.object({
   QUARANTINE_BUCKET: envString(),
   DOWNLOAD_TOKENS_TABLE: envString(),
   DOWNLOAD_BASE_URL: envString(),
+  EMAIL_RECEIVED_TOPIC_ARN: envString(),
 });
 
 export function getInboundConfig(env: NodeJS.ProcessEnv = process.env): InboundConfig {
@@ -34,5 +37,6 @@ export function getInboundConfig(env: NodeJS.ProcessEnv = process.env): InboundC
     quarantineBucket: parsed.QUARANTINE_BUCKET,
     downloadTokensTable: parsed.DOWNLOAD_TOKENS_TABLE,
     downloadBaseUrl: parsed.DOWNLOAD_BASE_URL,
+    emailReceivedTopicArn: parsed.EMAIL_RECEIVED_TOPIC_ARN,
   };
 }

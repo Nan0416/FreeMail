@@ -10,7 +10,7 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { AaaaRecord, ARecord, RecordTarget } from 'aws-cdk-lib/aws-route53';
 import { ApiGatewayv2DomainProperties } from 'aws-cdk-lib/aws-route53-targets';
 import type { IBucket } from 'aws-cdk-lib/aws-s3';
-import { HttpLambdaAuthorizer, HttpLambdaResponseType } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+import { HttpIamAuthorizer, HttpLambdaAuthorizer, HttpLambdaResponseType } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { Construct } from 'constructs';
 import type { AttachmentsConfig } from '@freemail/shared/config';
@@ -317,6 +317,16 @@ export class ApiConstruct extends Construct {
       methods: [HttpMethod.POST],
       integration: new HttpLambdaIntegration('McpIntegration', this.mcpHandler),
       authorizer: this.authorizer,
+    });
+
+    // Other backend services in the account: SigV4-signed requests, authorized by IAM. The
+    // handler serves `/api` paths only to IAM callers, and an IAM caller passes none of the
+    // session/API-key guards on the other routes.
+    this.httpApi.addRoutes({
+      path: '/api/{proxy+}',
+      methods: [HttpMethod.ANY],
+      integration: this.restIntegration,
+      authorizer: new HttpIamAuthorizer(),
     });
 
     // The API's custom domain — where the browser AND agents both reach it (#47). A

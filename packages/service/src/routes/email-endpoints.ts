@@ -20,7 +20,7 @@ import { parseListEmailsQuery } from '../utils/list-query.js';
 import type { EmailReadService, ListEmailsServiceRequest } from '../services/email-read-service.js';
 import type { AttachmentUploader } from '../services/attachment-service.js';
 import type { EmailService } from '../services/email-service.js';
-import { requireAccessScheme } from '../middleware/auth-middleware.js';
+import { requireAccessScheme, requireAuthenticated } from '../middleware/auth-middleware.js';
 import { requireJsonContentType } from '../middleware/json-content-type.js';
 import { getLogger } from '../utils/logger.js';
 import { optionalString, requireBody, requirePathParam, requireString } from '../utils/request-validation.js';
@@ -35,8 +35,9 @@ export class EmailEndpoints implements Endpoints {
     this.router = Router();
 
     // Step one of sending an attachment: a presigned PUT straight to S3 (the bytes never come
-    // through here). Dual-scheme like the send it serves: NO requireAccessScheme.
-    this.router.post('/attachments/uploads', requireJsonContentType, async (req: Request, res: Response, next: NextFunction) => {
+    // through here). Dual-scheme like the send it serves: any authorizer identity, not just
+    // the session (and never an IAM caller, which has none).
+    this.router.post('/attachments/uploads', requireJsonContentType, requireAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
       try {
         const request = parseCreateUploadBody(requireBody(req));
         logger.info('POST /attachments/uploads.');
@@ -46,8 +47,8 @@ export class EmailEndpoints implements Endpoints {
       }
     });
 
-    // Dual-scheme by design: NO requireAccessScheme here.
-    this.router.post('/emails', requireJsonContentType, async (req: Request, res: Response, next: NextFunction) => {
+    // Dual-scheme by design: any authorizer identity, not just the session.
+    this.router.post('/emails', requireJsonContentType, requireAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
       try {
         const request = parseSendEmailBody(requireBody(req));
         logger.info('POST /emails.');

@@ -202,3 +202,22 @@ describe('InboundConstruct', () => {
     });
   });
 });
+
+describe('InboundConstruct — email-received topic', () => {
+  it('creates the topic under a fixed, stack-derived name', () => {
+    synth().hasResourceProperties('AWS::SNS::Topic', { TopicName: 'TestStack-email-received' });
+  });
+
+  it('gives the parser the topic ARN and permission to publish to it', () => {
+    const template = synth();
+    const topicId = Object.keys(template.findResources('AWS::SNS::Topic'))[0]!;
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ EMAIL_RECEIVED_TOPIC_ARN: { Ref: topicId } }) },
+    });
+    template.hasResourceProperties('AWS::IAM::Policy', {
+      PolicyDocument: {
+        Statement: Match.arrayWith([Match.objectLike({ Action: 'sns:Publish', Effect: 'Allow', Resource: { Ref: topicId } })]),
+      },
+    });
+  });
+});
