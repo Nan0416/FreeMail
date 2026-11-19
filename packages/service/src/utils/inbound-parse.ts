@@ -375,7 +375,7 @@ export function parseInbound(source: Readable, sink: AttachmentSink, limits: Par
   });
 }
 
-function safeRelease(data: { release?: () => void }): void {
+function safeRelease(data: { release?: (() => void) | null }): void {
   try {
     data.release?.();
   } catch {

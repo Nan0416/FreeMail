@@ -16,7 +16,7 @@
   ],
   "scripts": {
     "build": "tsc -b && npm run build -w @freemail/web",
-    "clean": "tsc -b --clean && rimraf \"packages/*/dist\" \"packages/web/dist\"",
+    "clean": "rimraf --glob \"packages/*/dist\"",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -35,6 +35,6 @@
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.19.0",
     "vite": "^7.0.0",
-    "vitest": "^3.0.0"
+    "vitest": "^5.1.0"
   }
 }
