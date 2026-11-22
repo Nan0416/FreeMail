@@ -926,6 +926,18 @@ describe('rest handler — public token download (GET /d/{token})', () => {
   });
 });
 
+describe('rest handler — the dual-scheme routes still need an authorizer identity', () => {
+  // The authorizer guards these in API Gateway; `requireAuthenticated` fails closed if that
+  // wiring ever regresses, so an unauthenticated request can never send mail.
+  it.each(['POST /emails', 'POST /attachments/uploads', 'GET /me'])('refuses %s with no authorizer context (401)', async (routeKey) => {
+    attachmentMocks.createAttachmentUpload.mockReset();
+    const res = await invoke(routeKey, { body: { from: 'me@example.com', filename: 'a.txt', contentType: 'text/plain', sizeBytes: 1 } });
+    expect(res.statusCode).toBe(401);
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(attachmentMocks.createAttachmentUpload).not.toHaveBeenCalled();
+  });
+});
+
 describe('rest handler — GET /api/emails/{id} (API key, like MCP)', () => {
   const DETAIL = {
     id: 'handle-1',
@@ -964,6 +976,7 @@ describe('rest handler — GET /api/emails/{id} (API key, like MCP)', () => {
     const res = await get({ lambda: lambdaContext('apiKey'), params: { id: 'nope' } });
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body ?? '{}')).toMatchObject({ error: 'not_found' });
+    expect(readMocks.getEmailWithDownloadUrls).toHaveBeenCalledWith({ handle: 'nope' });
   });
 
   it('refuses a request with no authorizer context (401), without reading the message', async () => {

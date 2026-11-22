@@ -366,6 +366,8 @@ The MCP server is stateless (Streamable HTTP), so no session setup is required. 
 
 Other services call `/api/*` with an API key, the same **`x-api-key: fm_<key>`** header the MCP server takes. Create the key on the web app's **MCP server** page (one key per service lets you revoke one without the others) and send requests to `https://<apiDomain>/api/...`. A missing or revoked key gets a 403 from API Gateway.
 
+- **Check a key works:** `GET https://<apiDomain>/me` with the key returns `{ "subject": "owner" }`.
+
 #### New-mail notifications
 
 With inbound enabled, the SNS topic `<stack name>-email-received` (stack output `EmailReceivedTopicArn`) gets a message each time a received email is stored with its content: a normal message, a spam-flagged one, or a redelivery of either. Failed messages (the Errors folder) don't notify. Subscribe an SQS queue or a Lambda to it.
