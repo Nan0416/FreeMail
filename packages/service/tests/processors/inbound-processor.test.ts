@@ -18,7 +18,7 @@ import { MAX_INLINE_BODY_BYTES } from '../../src/services/email-body-storage.js'
 import { MAX_ATTACHMENTS, MAX_HEADER_BLOCK_BYTES } from '../../src/utils/inbound-limits.js';
 import { ATTACHMENTS_PREFIX, InboundProcessor } from '../../src/processors/inbound-processor.js';
 import { type LinkedAttachmentResolver, OwnLinkAttachments } from '../../src/processors/own-link-attachments.js';
-import type { EmailReceivedNotifier } from '../../src/processors/email-received-notification.js';
+import type { EmailReceivedNotifier } from '../../src/facades/sns-email-received-notifier.js';
 import type { EmailReceivedNotification } from '@freemail/shared';
 import { decodeEmailRef } from '../../src/utils/email-ref.js';
 

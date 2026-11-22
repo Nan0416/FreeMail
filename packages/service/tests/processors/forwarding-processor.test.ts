@@ -122,6 +122,8 @@ function harness(
     rules?: readonly ForwardingRule[];
     raw?: Buffer | null;
     sendFails?: boolean;
+    /** SES's error, by name (`sendFails` throws a plain Error). */
+    sendError?: string;
     recorded?: boolean;
   } = {},
 ): Harness {
@@ -148,6 +150,11 @@ function harness(
   const ses: SesSender = {
     send(params: SendRawParams): Promise<{ messageId: string }> {
       sends.push(params);
+      if (options.sendError !== undefined) {
+        const err = new Error(`SES says no (${options.sendError})`);
+        err.name = options.sendError;
+        return Promise.reject(err);
+      }
       return options.sendFails ? Promise.reject(new Error('TooManyRequestsException')) : Promise.resolve({ messageId: 'ses-fwd-1' });
     },
   };
@@ -456,5 +463,55 @@ describe('ForwardingProcessor — a sender rule (Amazon returns)', () => {
     expect((await h.processor.forwardReceivedEmail({ message: notification({ from: 'a@amazon.com' }) })).reason).toBe('no matching rule');
     expect(h.gets).toEqual([]);
     expect(h.reads).toEqual([]);
+  });
+});
+
+describe('ForwardingProcessor — loop guards, unverified senders, SES rejections', () => {
+  const headersOfSent = (h: Harness) => parseHeaderLines(rootHeaderBlock(h.sends[0]!.raw)!.toString('latin1'));
+
+  it('never forwards mail addressed to the forwarding address (a reply to a forward), before reading it', async () => {
+    const h = harness({ row: row({ to: ['Forwarding@Warehouse.example'], cc: ['R9@returns.amazon.com'] }) });
+    const result = await h.processor.forwardReceivedEmail({ message: notification({ to: ['Forwarding@Warehouse.example'], cc: ['R9@returns.amazon.com'] }) });
+    expect(result).toMatchObject({ outcome: 'skipped', reason: 'addressed to the forwarding address' });
+    expect(h.reads).toEqual([]);
+    expect(h.sends).toEqual([]);
+  });
+
+  it('never forwards an automatic reply (Auto-Submitted: auto-replied)', async () => {
+    const h = harness({ raw: rawMessage(['Auto-Submitted: Auto-Replied; owner-email="x@y.example"']) });
+    const result = await h.processor.forwardReceivedEmail({ message: notification() });
+    expect(result).toMatchObject({ outcome: 'skipped', reason: 'an automatic reply' });
+    expect(h.sends).toEqual([]);
+  });
+
+  it('forwards auto-generated mail (notifications, receipts) like any other', async () => {
+    const h = harness({ raw: rawMessage(['Auto-Submitted: auto-generated']) });
+    expect((await h.processor.forwardReceivedEmail({ message: notification() })).outcome).toBe('forwarded');
+  });
+
+  it('marks the copy when a DMARC-skipping rule forwards an unverified sender', async () => {
+    const h = harness({ rules: [{ ...AMAZON_RULE, ignoreDmarcVerification: true }], raw: rawMessage([], 'fail') });
+    expect((await h.processor.forwardReceivedEmail({ message: notification() })).outcome).toBe('forwarded');
+    const lines = headersOfSent(h);
+    expect(headerValues(lines, 'x-freemail-sender-verified')).toEqual(['no']);
+    expect(headerValues(lines, 'from')[0]).toContain('(unverified) via warehouse.example');
+  });
+
+  it('leaves a verified sender’s copy unmarked, even under a DMARC-skipping rule', async () => {
+    const h = harness({ rules: [{ ...AMAZON_RULE, ignoreDmarcVerification: true }] });
+    await h.processor.forwardReceivedEmail({ message: notification() });
+    expect(headerValues(headersOfSent(h), 'x-freemail-sender-verified')).toEqual([]);
+    expect(headerValues(headersOfSent(h), 'from')[0]).not.toContain('unverified');
+  });
+
+  it.each(['MessageRejected', 'BadRequestException'])('skips, without a retry, a copy SES rejects (%s) — and records no forward', async (name) => {
+    const h = harness({ sendError: name });
+    const result = await h.processor.forwardReceivedEmail({ message: notification() });
+    expect(result).toMatchObject({ outcome: 'skipped', reason: `rejected by SES (${name})` });
+    expect(h.forwards).toEqual([]);
+  });
+
+  it.each(['TooManyRequestsException', 'SendingPausedException'])('throws on %s, so the queue retries', async (name) => {
+    await expect(harness({ sendError: name }).processor.forwardReceivedEmail({ message: notification() })).rejects.toThrow(name);
   });
 });

@@ -28,7 +28,7 @@ import type { RawMessageReader } from '../facades/s3-raw-message-reader.js';
 import type { SesSender } from '../facades/ses-email-facade.js';
 import { decodeEmailRef, type EmailRef } from '../utils/email-ref.js';
 import { FORWARDED_MARKER_HEADER, buildForwardedMime } from '../utils/forward-mime.js';
-import { domainOf, matchForwardingRules } from '../utils/forwarding-match.js';
+import { domainOf, isSenderAuthenticated, matchForwardingRules } from '../utils/forwarding-match.js';
 import { headerValues, parseHeaderLines, rootHeaderBlock } from '../utils/inbound-headers.js';
 import { getLogger } from '../utils/logger.js';
 import { dmarcPassDomain } from '../utils/sender-auth.js';
@@ -37,6 +37,9 @@ import { dmarcPassDomain } from '../utils/sender-auth.js';
 export const FORWARDER_LOCAL_PART = 'forwarding';
 /** SES's cap on one message's recipients. */
 export const MAX_FORWARD_RECIPIENTS = 50;
+
+/** SES errors that a retry can't fix. Throttling, a paused account and AWS faults still retry. */
+const PERMANENT_SES_ERRORS: ReadonlySet<string> = new Set(['MessageRejected', 'BadRequestException']);
 
 const logger = getLogger('ForwardingProcessor');
 
@@ -103,8 +106,14 @@ export class ForwardingProcessor {
     if (row.quarantined || row.virusVerdict !== 'PASS' || row.parseStatus !== 'ok') {
       return { outcome: 'skipped', messageId, reason: 'not clean' };
     }
-    // The row's full recipient lists: the only check when the notification's were cut short.
+    // The row's recipient lists: the only check when the notification's were cut short.
     const candidate: Candidate = { from: row.from, recipients: [...row.to, ...row.cc] };
+    // A reply to the forwarding address (an auto-acknowledgement of a forward, say) is never
+    // forwarded on: otherwise a rule on this domain and an outside auto-responder would loop.
+    const forwarderAddress = this.forwarderAddress().toLowerCase();
+    if (candidate.recipients.some((address) => address.trim().toLowerCase() === forwarderAddress)) {
+      return { outcome: 'skipped', messageId, reason: 'addressed to the forwarding address' };
+    }
     if (!couldMatch(rules, candidate)) {
       return { outcome: 'skipped', messageId, reason: 'no matching rule' };
     }
@@ -121,10 +130,13 @@ export class ForwardingProcessor {
     if (headerValues(lines, FORWARDED_MARKER_HEADER).length > 0) {
       return { outcome: 'skipped', messageId, reason: 'already a forwarded copy' };
     }
-    const match = matchForwardingRules(rules, {
-      ...candidate,
-      authenticatedDomain: dmarcPassDomain(lines),
-    });
+    // An automatic reply (RFC 3834) is never forwarded, the other half of the loop guard.
+    // `auto-generated` mail (notifications, receipts) is forwarded like any other.
+    if (headerValues(lines, 'auto-submitted').some((value) => value.split(';')[0]?.trim().toLowerCase() === 'auto-replied')) {
+      return { outcome: 'skipped', messageId, reason: 'an automatic reply' };
+    }
+    const authenticatedDomain = dmarcPassDomain(lines);
+    const match = matchForwardingRules(rules, { ...candidate, authenticatedDomain });
     if (match.ruleIds.length === 0) {
       return {
         outcome: 'skipped',
@@ -144,19 +156,32 @@ export class ForwardingProcessor {
       from: row.from,
       fromName: row.fromName,
       messageId,
+      // Only a rule that skips DMARC matches an unverified sender; the copy then says so.
+      senderVerified: isSenderAuthenticated(row.from, authenticatedDomain),
     });
     if (forwarded === undefined) {
       return { outcome: 'skipped', messageId, reason: 'no header block' };
     }
-    const sent = await this.deps.ses.send({
-      from: this.forwarderAddress(),
-      // The SMTP envelope only: a raw message keeps its own To/Cc headers (the original's), so
-      // the targets never appear in it or see each other.
-      to: targets,
-      cc: [],
-      bcc: [],
-      raw: forwarded,
-    });
+    let sent: { readonly messageId: string };
+    try {
+      sent = await this.deps.ses.send({
+        from: this.forwarderAddress(),
+        // The SMTP envelope only: a raw message keeps its own To/Cc headers (the original's), so
+        // the targets never appear in it or see each other.
+        to: targets,
+        cc: [],
+        bcc: [],
+        raw: forwarded,
+      });
+    } catch (err) {
+      // A rejection retries the same way every time (an unverified target in the SES sandbox, a
+      // message SES won't send): skip it rather than retry for half an hour into the DLQ.
+      if (err instanceof Error && PERMANENT_SES_ERRORS.has(err.name)) {
+        logger.warn(`SES rejected the forward of message ${messageId} (${err.name}): ${err.message}`);
+        return { outcome: 'skipped', messageId, reason: `rejected by SES (${err.name})` };
+      }
+      throw err;
+    }
     const recorded = await this.deps.emails.updateInboundEmailForward({
       id: row.id,
       receivedAt: row.receivedAt,

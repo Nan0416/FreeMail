@@ -291,15 +291,16 @@ A rule has a name, conditions, and the addresses to forward to:
 - **From** (`senderDomains` / `senderAddresses`) matches the From address.
 - **To or Cc** (`recipientDomains` / `recipientAddresses`) matches any To or Cc header address. These are the addresses the message was written to. The SMTP recipient is always one of your own addresses, and a Bcc'd recipient isn't listed.
 - Any one entry of a kind is enough. A rule with both kinds needs both to match. Domains match exactly (`example.com` doesn't match `mail.example.com`), case-insensitively. A message that matches several rules is sent once, to all their addresses together.
-- A paused rule matches nothing. A rule needs at least one condition and one target; there can be up to 100 rules with up to 50 entries per list, and a target on your own email domain is refused (it would loop).
+- A paused rule matches nothing. A rule needs at least one condition and one target; there can be up to 100 rules with up to 50 entries per list, and a target on your own email domain is refused (it would loop). One message is forwarded to at most 50 addresses in all: if the rules it matches name more, the first 50 are used (and a warning is logged).
 
 The forwarded copy is the original message with a few headers rewritten. It comes from `forwarding@<email domain>`, with the display name `Alice (alice@x.com) via <email domain>`, and its Reply-To is the original sender, so replies go to them. The body and attachments are unchanged. Because SES signs the copy with your domain, it passes SPF, DKIM and DMARC as your domain.
 
-- **Never forwarded:** spam-flagged and Errors-folder mail, mail that fails DMARC (unless its rule opts out), a message carrying the `X-FreeMail-Forwarded` header (a copy that came back here), and targets on your own email domain.
-- **At most once:** the forward is recorded on the received message's row (`forward`), and a repeated notification finds it there.
+- **Never forwarded:** spam-flagged and Errors-folder mail, mail that fails DMARC (unless its rule opts out), a message carrying the `X-FreeMail-Forwarded` header (a copy that came back here), mail addressed to `forwarding@<email domain>` or marked `Auto-Submitted: auto-replied` (replies to a forward, which could otherwise loop between a rule and an outside auto-responder), and targets on your own email domain. Automatic notifications (`Auto-Submitted: auto-generated`) are forwarded like any other mail.
+- **Unverified senders:** when a rule that skips DMARC forwards mail whose sender didn't pass, the copy's From name says `(unverified)` and it carries `X-FreeMail-Sender-Verified: no`.
+- **Once, normally:** the forward is recorded on the received message's row (`forward`), and a repeated notification finds it there. Two copies of one notification processed at the same moment, or a crash between the send and the record, can forward a message twice.
 - **Failures:** notifications reach the forwarder through an SQS queue. One it fails on (SES or AWS errors) is retried for about half an hour (5 tries, 6 minutes apart), then kept for 14 days in the dead-letter queue whose name contains `ForwarderDlq`. To retry those, use **Start DLQ redrive** on that queue in the SQS console. To pause forwarding, disable the forwarder Lambda's SQS trigger; notifications wait in the queue (up to 14 days) until it's enabled again.
 - **Bounces:** a bounce from a target goes through the configuration set like any send, so SES suppresses that address afterwards.
-- **SES sandbox:** until the account has production access ([§4](#4-ses-production-access-sandbox-exit)), SES delivers only to verified addresses, so a forward to any other address is rejected, retried, and ends up in the dead-letter queue.
+- **SES sandbox:** until the account has production access ([§4](#4-ses-production-access-sandbox-exit)), SES delivers only to verified addresses, so a forward to any other address is rejected. A rejection like that (or any message SES refuses to send) is logged and skipped, not retried; throttling and AWS errors are retried as above.
 - Forwarded copies don't appear in the Sent folder.
 
 ## 8. Attachments
@@ -364,7 +365,7 @@ Other AWS services in your account call `/api/*` with IAM instead of a password 
 With inbound enabled, the SNS topic `<stack name>-email-received` (stack output `EmailReceivedTopicArn`) gets a message each time a received email is stored with its content: a normal message, a spam-flagged one, or a redelivery of either. Failed messages (the Errors folder) don't notify. Subscribe an SQS queue or a Lambda to it.
 
 - **The message** is metadata only, `EmailReceivedNotification` in `packages/shared/src/service-api.ts`: `id`, `receivedAt`, `from`, `to`, `cc`, `subject`, attachment count, size, and `spam`. It never contains the body or download links. `to` and `cc` come from the message headers, so a BCC'd recipient isn't listed.
-- **At-least-once:** the same message can arrive more than once, so de-duplicate on `id`.
+- **At-least-once:** the same message can arrive more than once, so de-duplicate on `id`. If SNS fails for longer than the parser's retries (a few minutes), the message is still stored, but its notification waits in the parser's dead-letter queue (the queue whose name contains `ParserDlq`); redrive it from the SQS console to send it.
 - **Filtering:** `type` (`email.received`) and `spam` (`"true"` / `"false"`) are also message attributes. For example, a subscription filter policy of `{"spam": ["false"]}` skips spam.
 
 #### `GET /api/emails/{id}`

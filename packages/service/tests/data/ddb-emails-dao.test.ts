@@ -428,6 +428,8 @@ describe('DdbEmailsDao — reads', () => {
     const row = await dao.getEmail({ pk: 'INBOUND', sk: 'sk-7' });
     const input = (doc.lastCommand as GetCommand).input;
     expect(input.Key).toEqual({ pk: 'INBOUND', sk: 'sk-7' });
+    // A notified service (or the forwarder) reads the row right after it is written.
+    expect(input.ConsistentRead).toBe(true);
     expect(row).toMatchObject({ direction: 'inbound', sk: 'sk-7' });
 
     doc.result = {};

@@ -3,11 +3,6 @@ import type { CreateInboundEmailInput } from '../data/emails-dao.js';
 import { EmailEntity } from '../data/entities.js';
 import { encodeEmailRef } from '../utils/email-ref.js';
 
-/** Publishes {@link EmailReceivedNotification}s (SNS in production). */
-export interface EmailReceivedNotifier {
-  emailReceived(notification: EmailReceivedNotification): Promise<void>;
-}
-
 /**
  * The notification for a stored message whose content was kept. Only such rows live in the
  * INBOUND partition, so the `id` is the same handle the list API mints for the row.
