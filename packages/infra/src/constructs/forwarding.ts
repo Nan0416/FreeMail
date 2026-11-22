@@ -81,13 +81,17 @@ export class ForwardingConstruct extends Construct {
     // Reads a received row and records the forward on it — nothing else. Both actions are held to
     // the INBOUND partition (never a sent row, the Errors folder or an idempotency record), and the
     // update to the `forward` attribute (plus the key attributes, which DynamoDB requires listed),
-    // returning nothing. It never creates, deletes or queries a row.
+    // returning nothing. The code never creates a row (its update is conditional on one existing);
+    // IAM can't enforce that, so at worst this role could write a stub INBOUND row's `forward`.
+    // The Null guard makes a request without a partition key fail the condition rather than pass
+    // `ForAllValues` vacuously, as AWS recommends.
     const onlyInbound = { 'dynamodb:LeadingKeys': [INBOUND_PARTITION] };
+    const hasPartitionKey = { Null: { 'dynamodb:LeadingKeys': 'false' } };
     this.forwarder.addToRolePolicy(
       new PolicyStatement({
         actions: ['dynamodb:GetItem'],
         resources: [props.emailsTable.tableArn],
-        conditions: { 'ForAllValues:StringEquals': onlyInbound },
+        conditions: { 'ForAllValues:StringEquals': onlyInbound, ...hasPartitionKey },
       }),
     );
     this.forwarder.addToRolePolicy(
@@ -97,6 +101,7 @@ export class ForwardingConstruct extends Construct {
         conditions: {
           'ForAllValues:StringEquals': { ...onlyInbound, 'dynamodb:Attributes': ['pk', 'sk', 'forward'] },
           StringEqualsIfExists: { 'dynamodb:ReturnValues': ['NONE'] },
+          ...hasPartitionKey,
         },
       }),
     );
