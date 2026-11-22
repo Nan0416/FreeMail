@@ -53,30 +53,25 @@ export class McpEndpoints implements Endpoints {
     // is JSON by definition, so every real MCP client already sends this; a no-`Origin`
     // agent call with `x-api-key` is unaffected. Both guards run before the server and
     // transport are built, so nothing is constructed for a request we are going to refuse.
-    this.router.post(
-      '/mcp',
-      requireJsonContentType,
-      requireAuthenticated,
-      async (req: Request, res: Response, next: NextFunction) => {
-        logger.info('POST /mcp.');
-        const server = buildMcpServer(deps);
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined,
-          enableJsonResponse: true,
-        });
-        try {
-          await server.connect(transport);
-          await transport.handleRequest(req, res, req.body);
-        } catch (err) {
-          // The transport renders protocol-level failures itself; this is for the case
-          // where it could not. `errorHandler` delegates to Express once headers are sent.
-          next(err);
-        } finally {
-          // Closing the server closes its connected transport.
-          await server.close();
-        }
-      },
-    );
+    this.router.post('/mcp', requireJsonContentType, requireAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
+      logger.info('POST /mcp.');
+      const server = buildMcpServer(deps);
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true,
+      });
+      try {
+        await server.connect(transport);
+        await transport.handleRequest(req, res, req.body);
+      } catch (err) {
+        // The transport renders protocol-level failures itself; this is for the case
+        // where it could not. `errorHandler` delegates to Express once headers are sent.
+        next(err);
+      } finally {
+        // Closing the server closes its connected transport.
+        await server.close();
+      }
+    });
   }
 
   bind(app: Express): void {

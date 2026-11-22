@@ -33,10 +33,7 @@ function encodeRfc5987(value: string): string {
   // encodeURIComponent leaves ! ' ( ) * ~ and alphanumerics; of those, ' ( ) * are NOT
   // RFC 5987 attr-chars, so percent-encode them too. (Encoding a char that IS allowed is
   // still valid, so we don't need to un-encode the rest.)
-  return encodeURIComponent(value).replace(
-    /['()*]/g,
-    (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase(),
-  );
+  return encodeURIComponent(value).replace(/['()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase());
 }
 
 /**

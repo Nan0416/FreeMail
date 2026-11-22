@@ -40,10 +40,7 @@ export class InboundDependencyFactory {
         emailsDao,
         new S3MailBodyStore(s3, this.config.mailBucket),
         new S3QuarantineStore(s3, this.config.mailBucket, this.config.quarantineBucket),
-        new OwnLinkAttachments(
-          new DdbDownloadTokensDao(doc, this.config.downloadTokensTable),
-          this.config.downloadBaseUrl,
-        ),
+        new OwnLinkAttachments(new DdbDownloadTokensDao(doc, this.config.downloadTokensTable), this.config.downloadBaseUrl),
       ),
     };
   }

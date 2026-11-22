@@ -33,11 +33,7 @@ export const envPositiveInt = () =>
  * An empty string is treated as ABSENT: an unset CDK value can surface either way, and `""`
  * is never a usable table name, bucket, or domain.
  */
-export function parseEnv<Shape extends z.ZodRawShape>(
-  schema: z.ZodObject<Shape>,
-  component: string,
-  env: NodeJS.ProcessEnv = process.env,
-): z.infer<z.ZodObject<Shape>> {
+export function parseEnv<Shape extends z.ZodRawShape>(schema: z.ZodObject<Shape>, component: string, env: NodeJS.ProcessEnv = process.env): z.infer<z.ZodObject<Shape>> {
   const present: Record<string, string> = {};
   for (const key of Object.keys(schema.shape)) {
     const value = env[key];
@@ -49,9 +45,7 @@ export function parseEnv<Shape extends z.ZodRawShape>(
   const parsed = schema.safeParse(present);
   if (!parsed.success) {
     const names = [...new Set(parsed.error.issues.map((issue) => issue.path.join('.')))].sort();
-    throw new Error(
-      `FreeMail ${component} is misconfigured: missing or empty environment variable(s): ${names.join(', ')}.`,
-    );
+    throw new Error(`FreeMail ${component} is misconfigured: missing or empty environment variable(s): ${names.join(', ')}.`);
   }
   return parsed.data;
 }

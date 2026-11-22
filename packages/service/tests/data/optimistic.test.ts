@@ -6,8 +6,7 @@ class VersionedCell {
   value: number | null = null;
   version = 0;
 
-  read = (): Promise<{ value: number | null; version: number }> =>
-    Promise.resolve({ value: this.value, version: this.version });
+  read = (): Promise<{ value: number | null; version: number }> => Promise.resolve({ value: this.value, version: this.version });
 
   writeIfVersion = (next: number, expectedVersion: number): Promise<boolean> => {
     if (expectedVersion !== this.version) {
@@ -22,8 +21,7 @@ class VersionedCell {
 describe('optimisticUpdate', () => {
   it('does not lose updates under concurrent increments', async () => {
     const cell = new VersionedCell();
-    const increment = () =>
-      optimisticUpdate<number>(cell.read, (current) => (current ?? 0) + 1, cell.writeIfVersion);
+    const increment = () => optimisticUpdate<number>(cell.read, (current) => (current ?? 0) + 1, cell.writeIfVersion);
 
     // Interleaved at their await points, several of these read the same version and
     // collide — the CAS retries until every increment lands.

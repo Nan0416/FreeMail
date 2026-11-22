@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  hasJsonContentType,
-  isJsonContentType,
-  readContentType,
-} from '../../src/utils/content-type.js';
+import { hasJsonContentType, isJsonContentType, readContentType } from '../../src/utils/content-type.js';
 
 describe('isJsonContentType', () => {
   it('accepts the bare media type', () => {

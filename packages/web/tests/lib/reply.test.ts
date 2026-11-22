@@ -34,12 +34,8 @@ describe('buildPrefill', () => {
   });
 
   it('does not stack prefixes', () => {
-    expect(buildPrefill({ ...INBOUND, subject: 'RE: Plans' }, 'reply', '').subject).toBe(
-      'RE: Plans',
-    );
-    expect(buildPrefill({ ...INBOUND, subject: 'Fwd: Plans' }, 'forward', '').subject).toBe(
-      'Fwd: Plans',
-    );
+    expect(buildPrefill({ ...INBOUND, subject: 'RE: Plans' }, 'reply', '').subject).toBe('RE: Plans');
+    expect(buildPrefill({ ...INBOUND, subject: 'Fwd: Plans' }, 'forward', '').subject).toBe('Fwd: Plans');
   });
 
   it("carries the original's attachments into a forward, by reference", () => {
@@ -47,15 +43,11 @@ describe('buildPrefill', () => {
       ...INBOUND,
       attachments: [{ id: '2', filename: 'a.pdf', contentType: 'application/pdf', sizeBytes: 9 }],
     };
-    expect(buildPrefill(withFiles, 'forward', '').forwardAttachments).toEqual([
-      { emailId: 'h1', attachmentId: '2', filename: 'a.pdf', sizeBytes: 9 },
-    ]);
+    expect(buildPrefill(withFiles, 'forward', '').forwardAttachments).toEqual([{ emailId: 'h1', attachmentId: '2', filename: 'a.pdf', sizeBytes: 9 }]);
     expect(buildPrefill(withFiles, 'reply', '').forwardAttachments).toBeUndefined();
     expect(buildPrefill(INBOUND, 'forward', '').forwardAttachments).toBeUndefined();
     // Mail flagged as spam: the server won't forward its files, so they aren't offered.
-    expect(
-      buildPrefill({ ...withFiles, quarantined: true }, 'forward', '').forwardAttachments,
-    ).toBeUndefined();
+    expect(buildPrefill({ ...withFiles, quarantined: true }, 'forward', '').forwardAttachments).toBeUndefined();
   });
 
   it('forwards with no recipients and a forwarded-message header', () => {
@@ -68,17 +60,11 @@ describe('buildPrefill', () => {
 
   it('quotes the body as escaped text, never as markup', () => {
     const p = buildPrefill(INBOUND, 'reply', '');
-    expect(p.html).toContain(
-      '<blockquote><p>line one<br>line two</p><p>&lt;b&gt;not markup&lt;/b&gt;</p></blockquote>',
-    );
+    expect(p.html).toContain('<blockquote><p>line one<br>line two</p><p>&lt;b&gt;not markup&lt;/b&gt;</p></blockquote>');
   });
 
   it('escapes the sender display name, which is untrusted inbound data', () => {
-    const p = buildPrefill(
-      { ...INBOUND, fromName: '<a href="https://evil.example">Al</a>' },
-      'reply',
-      '',
-    );
+    const p = buildPrefill({ ...INBOUND, fromName: '<a href="https://evil.example">Al</a>' }, 'reply', '');
     expect(p.html).not.toContain('<a href');
     expect(p.html).toContain('&lt;a href=&quot;https://evil.example&quot;&gt;Al&lt;/a&gt;');
   });
@@ -116,9 +102,7 @@ describe('quotedText', () => {
 
 describe('replySender', () => {
   it('falls back to the last sender, then the first recipient', () => {
-    expect(replySender({ ...INBOUND, to: ['x@other.com'], cc: [] }, 'me@mine.dev')).toBe(
-      'me@mine.dev',
-    );
+    expect(replySender({ ...INBOUND, to: ['x@other.com'], cc: [] }, 'me@mine.dev')).toBe('me@mine.dev');
     expect(replySender({ ...INBOUND, to: ['x@other.com'], cc: [] }, '')).toBe('x@other.com');
   });
 });
@@ -131,17 +115,13 @@ describe('replyToElsewhere', () => {
   it("does not flag a Reply-To on the sender's own domain, or none", () => {
     expect(replyToElsewhere({ ...INBOUND, replyTo: ['desk@X.com'] })).toBe(false);
     expect(replyToElsewhere({ ...INBOUND, replyTo: ['desk@help.x.com'] })).toBe(false);
-    expect(replyToElsewhere({ ...INBOUND, from: 'a@mail.x.com', replyTo: ['desk@x.com'] })).toBe(
-      false,
-    );
+    expect(replyToElsewhere({ ...INBOUND, from: 'a@mail.x.com', replyTo: ['desk@x.com'] })).toBe(false);
     // A look-alike suffix is not a subdomain.
     expect(replyToElsewhere({ ...INBOUND, replyTo: ['desk@evilx.com'] })).toBe(true);
     expect(replyToElsewhere(INBOUND)).toBe(false);
   });
 
   it('never flags our own sent mail', () => {
-    expect(replyToElsewhere({ ...INBOUND, direction: 'sent', replyTo: ['a@other.test'] })).toBe(
-      false,
-    );
+    expect(replyToElsewhere({ ...INBOUND, direction: 'sent', replyTo: ['a@other.test'] })).toBe(false);
   });
 });

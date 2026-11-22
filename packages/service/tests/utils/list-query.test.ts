@@ -38,9 +38,7 @@ describe('parseListEmailsQuery', () => {
   });
 
   it('clamps a limit above the max to the max', () => {
-    expect(parseListEmailsQuery({ limit: MAX_EMAIL_PAGE_SIZE + 500 }).limit).toBe(
-      MAX_EMAIL_PAGE_SIZE,
-    );
+    expect(parseListEmailsQuery({ limit: MAX_EMAIL_PAGE_SIZE + 500 }).limit).toBe(MAX_EMAIL_PAGE_SIZE);
     expect(parseListEmailsQuery({ limit: '9999' }).limit).toBe(MAX_EMAIL_PAGE_SIZE);
   });
 
@@ -83,26 +81,12 @@ describe('parseListEmailsQuery — search filters', () => {
     });
   });
 
-  it.each([
-    'yesterday',
-    '2026-10-01T09:30',
-    '2026-13-01',
-    '10/01/2026',
-    '2026-10-01 09:00Z',
-    '2026-02-30',
-    '2026-04-31',
-    '2026-02-29',
-    '9999-12-31T23:00-05:00',
-  ])('rejects before=%s', (raw) => {
+  it.each(['yesterday', '2026-10-01T09:30', '2026-13-01', '10/01/2026', '2026-10-01 09:00Z', '2026-02-30', '2026-04-31', '2026-02-29', '9999-12-31T23:00-05:00'])('rejects before=%s', (raw) => {
     expect(() => parseListEmailsQuery({ before: raw })).toThrow(EmailError);
   });
 
   it('rejects an empty range', () => {
-    expect(() => parseListEmailsQuery({ after: '2026-10-02', before: '2026-10-01' })).toThrow(
-      /earlier than/,
-    );
-    expect(() => parseListEmailsQuery({ after: '2026-10-01', before: '2026-10-01' })).toThrow(
-      /earlier than/,
-    );
+    expect(() => parseListEmailsQuery({ after: '2026-10-02', before: '2026-10-01' })).toThrow(/earlier than/);
+    expect(() => parseListEmailsQuery({ after: '2026-10-01', before: '2026-10-01' })).toThrow(/earlier than/);
   });
 });

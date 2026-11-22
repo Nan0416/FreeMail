@@ -12,13 +12,7 @@
  * The row has no TTL — it's one tiny permanent row, and staleness is handled in the
  * policy (an elapsed window resets the count), so the version never regresses.
  */
-import {
-  DynamoDBDocumentClient,
-  DeleteCommand,
-  GetCommand,
-  PutCommand,
-  UpdateCommand,
-} from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { INITIAL_LOCKOUT_STATE, registerFailure } from '../utils/lockout.js';
 import type { LockoutState } from '../utils/lockout.js';
 import { optimisticUpdate, type VersionedValue } from './optimistic.js';
@@ -74,17 +68,13 @@ export class DdbAuthDao implements AuthDao {
   }
 
   async getPasswordHash(_input: GetPasswordHashInput): Promise<GetPasswordHashOutput | null> {
-    const result = await this.doc.send(
-      new GetCommand({ TableName: this.tableName, Key: AuthEntity.password() }),
-    );
+    const result = await this.doc.send(new GetCommand({ TableName: this.tableName, Key: AuthEntity.password() }));
     const hash = result.Item?.hash;
     return typeof hash === 'string' ? { hash } : null;
   }
 
   async getSigningKey(_input: GetSigningKeyInput): Promise<GetSigningKeyOutput | null> {
-    const result = await this.doc.send(
-      new GetCommand({ TableName: this.tableName, Key: AuthEntity.signingKey() }),
-    );
+    const result = await this.doc.send(new GetCommand({ TableName: this.tableName, Key: AuthEntity.signingKey() }));
     const key = result.Item?.key;
     return typeof key === 'string' ? { key } : null;
   }
@@ -117,9 +107,7 @@ export class DdbAuthDao implements AuthDao {
     return (await this.readLockout()).value;
   }
 
-  async registerFailedAttempt(
-    input: RegisterFailedAttemptInput,
-  ): Promise<RegisterFailedAttemptOutput> {
+  async registerFailedAttempt(input: RegisterFailedAttemptInput): Promise<RegisterFailedAttemptOutput> {
     return optimisticUpdate<LockoutState>(
       () => this.readLockout(),
       (current) => registerFailure(current ?? INITIAL_LOCKOUT_STATE, input.nowSeconds),
@@ -137,8 +125,7 @@ export class DdbAuthDao implements AuthDao {
       new UpdateCommand({
         TableName: this.tableName,
         Key: AuthEntity.lockout(),
-        UpdateExpression:
-          'SET failedCount = :zero, windowStartedAt = :zero ADD #v :one REMOVE lockedUntil',
+        UpdateExpression: 'SET failedCount = :zero, windowStartedAt = :zero ADD #v :one REMOVE lockedUntil',
         ExpressionAttributeNames: { '#v': 'version' },
         ExpressionAttributeValues: { ':zero': 0, ':one': 1 },
       }),
@@ -147,9 +134,7 @@ export class DdbAuthDao implements AuthDao {
   }
 
   private async readLockout(): Promise<VersionedValue<LockoutState>> {
-    const result = await this.doc.send(
-      new GetCommand({ TableName: this.tableName, Key: AuthEntity.lockout() }),
-    );
+    const result = await this.doc.send(new GetCommand({ TableName: this.tableName, Key: AuthEntity.lockout() }));
     const item = result.Item;
     if (!item || typeof item.failedCount !== 'number') {
       return { value: null, version: 0 };
@@ -164,10 +149,7 @@ export class DdbAuthDao implements AuthDao {
     };
   }
 
-  private async writeLockoutIfVersion(
-    next: LockoutState,
-    expectedVersion: number,
-  ): Promise<boolean> {
+  private async writeLockoutIfVersion(next: LockoutState, expectedVersion: number): Promise<boolean> {
     // Guard split by what we read. A read of an absent row (version 0 — only the
     // first-ever write, since the reset advances rather than deletes) may only
     // *create* it. A read of an existing row must match that exact version and does

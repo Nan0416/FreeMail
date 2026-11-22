@@ -14,13 +14,7 @@ import type { EmailSummary } from '../data/emails-dao.js';
 
 /** True when any text filter is set — the list must then scan rather than read one page. */
 export function hasTextFilters(filters: EmailListFilters | undefined): boolean {
-  return (
-    filters !== undefined &&
-    (filters.query !== undefined ||
-      filters.from !== undefined ||
-      filters.to !== undefined ||
-      filters.subject !== undefined)
-  );
+  return filters !== undefined && (filters.query !== undefined || filters.from !== undefined || filters.to !== undefined || filters.subject !== undefined);
 }
 
 /** Does `row` satisfy every text filter? Each is a case-insensitive substring match. */
@@ -28,12 +22,7 @@ export function matchesListFilters(row: EmailSummary, filters: EmailListFilters)
   const sender = [row.from, row.direction === 'inbound' ? row.fromName : undefined];
   const recipients = [...row.to, ...row.cc];
   const snippet = row.direction === 'inbound' ? row.snippet : undefined;
-  return (
-    contains([row.subject], filters.subject) &&
-    contains(sender, filters.from) &&
-    contains(recipients, filters.to) &&
-    contains([...sender, ...recipients, row.subject, snippet], filters.query)
-  );
+  return contains([row.subject], filters.subject) && contains(sender, filters.from) && contains(recipients, filters.to) && contains([...sender, ...recipients, row.subject, snippet], filters.query);
 }
 
 /** The inclusive sort-key bounds for a date range: `after` (inclusive) and `before` (exclusive). */

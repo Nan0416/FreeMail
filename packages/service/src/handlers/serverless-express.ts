@@ -9,23 +9,12 @@
  * truth, which is what both esbuild and Vite's interop produce.
  */
 import serverlessExpressDefault from '@codegenie/serverless-express';
-import type {
-  APIGatewayProxyEventV2,
-  APIGatewayProxyStructuredResultV2,
-  Context,
-} from 'aws-lambda';
+import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
 import type { Express } from 'express';
 
-export type ApiGatewayHandler = (
-  event: APIGatewayProxyEventV2,
-  context: Context,
-  callback: () => void,
-) => Promise<APIGatewayProxyStructuredResultV2>;
+export type ApiGatewayHandler = (event: APIGatewayProxyEventV2, context: Context, callback: () => void) => Promise<APIGatewayProxyStructuredResultV2>;
 
-type ServerlessExpressFactory = (options: {
-  readonly app: Express;
-  readonly logSettings?: { readonly level: string };
-}) => ApiGatewayHandler;
+type ServerlessExpressFactory = (options: { readonly app: Express; readonly logSettings?: { readonly level: string } }) => ApiGatewayHandler;
 
 const configure = serverlessExpressDefault as unknown as ServerlessExpressFactory;
 

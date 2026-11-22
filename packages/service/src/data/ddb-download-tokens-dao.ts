@@ -12,13 +12,7 @@
  * cap (the last claim to reach the cap wins; the next fails the condition), and a
  * failed condition writes nothing (an unknown token never creates a phantom row).
  */
-import {
-  DynamoDBDocumentClient,
-  GetCommand,
-  PutCommand,
-  UpdateCommand,
-  type UpdateCommandOutput,
-} from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand, type UpdateCommandOutput } from '@aws-sdk/lib-dynamodb';
 import type {
   ClaimDownloadTokenInput,
   ClaimDownloadTokenOutput,
@@ -58,9 +52,7 @@ export class DdbDownloadTokensDao implements DownloadTokensDao {
           downloadCount: input.downloadCount,
           ...(input.maxDownloads !== undefined ? { maxDownloads: input.maxDownloads } : {}),
           ...(input.sender !== undefined ? { sender: input.sender } : {}),
-          ...(input.ownDomainRecipients !== undefined && input.ownDomainRecipients.length > 0
-            ? { ownDomainRecipients: input.ownDomainRecipients }
-            : {}),
+          ...(input.ownDomainRecipients !== undefined && input.ownDomainRecipients.length > 0 ? { ownDomainRecipients: input.ownDomainRecipients } : {}),
         },
         // `#tk` because we also reference the key attribute; guards against clobbering a
         // collision (the secret token can't collide in practice, but fail safe anyway).
@@ -71,9 +63,7 @@ export class DdbDownloadTokensDao implements DownloadTokensDao {
     return {};
   }
 
-  async claimDownloadToken(
-    input: ClaimDownloadTokenInput,
-  ): Promise<ClaimDownloadTokenOutput | null> {
+  async claimDownloadToken(input: ClaimDownloadTokenInput): Promise<ClaimDownloadTokenOutput | null> {
     try {
       const out = (await this.doc.send(
         new UpdateCommand({
@@ -84,9 +74,7 @@ export class DdbDownloadTokensDao implements DownloadTokensDao {
           // and sorts chronologically. A missing item fails `attribute_exists(#tk)` (so no
           // phantom row is created); `if_not_exists` guards a (never-expected) missing counter.
           UpdateExpression: 'SET downloadCount = if_not_exists(downloadCount, :zero) + :one',
-          ConditionExpression:
-            'attribute_exists(#tk) AND revoked = :false AND expiresAt > :now AND ' +
-            '(attribute_not_exists(maxDownloads) OR downloadCount < maxDownloads)',
+          ConditionExpression: 'attribute_exists(#tk) AND revoked = :false AND expiresAt > :now AND ' + '(attribute_not_exists(maxDownloads) OR downloadCount < maxDownloads)',
           ExpressionAttributeNames: { '#tk': 'token' },
           ExpressionAttributeValues: {
             ':zero': 0,
@@ -151,9 +139,7 @@ function toRecord(item: Record<string, unknown> | undefined): ClaimDownloadToken
     downloadCount: item.downloadCount,
     ...(typeof item.maxDownloads === 'number' ? { maxDownloads: item.maxDownloads } : {}),
     ...(typeof item.sender === 'string' ? { sender: item.sender } : {}),
-    ...(isStringArray(item.ownDomainRecipients)
-      ? { ownDomainRecipients: item.ownDomainRecipients }
-      : {}),
+    ...(isStringArray(item.ownDomainRecipients) ? { ownDomainRecipients: item.ownDomainRecipients } : {}),
   };
 }
 

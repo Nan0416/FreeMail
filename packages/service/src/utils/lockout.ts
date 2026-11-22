@@ -43,9 +43,7 @@ export function registerFailure(state: LockoutState, nowSeconds: number): Lockou
   const windowExpired = nowSeconds - state.windowStartedAt >= FAILURE_WINDOW_SECONDS;
   const inFreshWindow = state.failedCount === 0 || windowExpired;
 
-  const next: LockoutState = inFreshWindow
-    ? { failedCount: 1, windowStartedAt: nowSeconds }
-    : { failedCount: state.failedCount + 1, windowStartedAt: state.windowStartedAt };
+  const next: LockoutState = inFreshWindow ? { failedCount: 1, windowStartedAt: nowSeconds } : { failedCount: state.failedCount + 1, windowStartedAt: state.windowStartedAt };
 
   if (next.failedCount >= MAX_FAILED_ATTEMPTS) {
     return { ...next, lockedUntil: nowSeconds + LOCKOUT_SECONDS };

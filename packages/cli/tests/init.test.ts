@@ -45,12 +45,10 @@ describe('buildConfig', () => {
       confirmInboundMx: true,
     });
     // Enabled but not confirmed → inbound stays off (and un-acknowledged).
-    expect(buildConfig(answers({ inboundEnabled: true, inboundConfirmed: false })).inbound).toEqual(
-      {
-        enabled: false,
-        confirmInboundMx: false,
-      },
-    );
+    expect(buildConfig(answers({ inboundEnabled: true, inboundConfirmed: false })).inbound).toEqual({
+      enabled: false,
+      confirmInboundMx: false,
+    });
   });
 
   it('carries optional domains and the imported zone id', () => {
@@ -113,10 +111,7 @@ describe('runInit', () => {
     expect(code).toBe(0);
     // Fixed location, no --out override: anywhere else and `cdk deploy` would not find it.
     // The repo root, not the working directory, so running it from packages/infra works too.
-    expect(io.write).toHaveBeenCalledWith(
-      configPath(),
-      expect.objectContaining({ region: 'us-east-1' }),
-    );
+    expect(io.write).toHaveBeenCalledWith(configPath(), expect.objectContaining({ region: 'us-east-1' }));
     expect(io.log).toHaveBeenCalledWith(expect.stringContaining('Next steps'));
   });
 

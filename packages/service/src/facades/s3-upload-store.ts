@@ -9,13 +9,7 @@
  * declared filename + content type as signed query parameters (S3 stores them as object
  * metadata), so neither can be altered by whoever holds the URL.
  */
-import {
-  CopyObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
+import { CopyObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 /** What a client declared when it created the upload, stored as object metadata. */
@@ -35,11 +29,7 @@ export interface UploadedObject {
 
 export interface UploadStore {
   /** A presigned PUT for exactly `declaration.sizeBytes` bytes at `key`. */
-  presignPut(
-    key: string,
-    declaration: UploadDeclaration,
-    expiresInSeconds: number,
-  ): Promise<string>;
+  presignPut(key: string, declaration: UploadDeclaration, expiresInSeconds: number): Promise<string>;
   /** What was uploaded at `key`, or null when nothing was (never uploaded, or expired). */
   head(key: string): Promise<UploadedObject | null>;
   /**
@@ -73,11 +63,7 @@ export class S3UploadStore implements UploadStore {
     this.client = client;
   }
 
-  presignPut(
-    key: string,
-    declaration: UploadDeclaration,
-    expiresInSeconds: number,
-  ): Promise<string> {
+  presignPut(key: string, declaration: UploadDeclaration, expiresInSeconds: number): Promise<string> {
     return getSignedUrl(
       this.presignClient,
       new PutObjectCommand({

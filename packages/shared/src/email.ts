@@ -227,8 +227,7 @@ export interface DeliveryEvent {
  * affirmative-clean value; everything else (missing/injected/unknown header, or an
  * explicit fail) is fail-closed. Present on inbound rows only.
  */
-export type InboundVerdict =
-  'PASS' | 'FAIL' | 'GRAY' | 'PROCESSING_FAILED' | 'CONFLICTING' | 'ABSENT' | 'UNKNOWN';
+export type InboundVerdict = 'PASS' | 'FAIL' | 'GRAY' | 'PROCESSING_FAILED' | 'CONFLICTING' | 'ABSENT' | 'UNKNOWN';
 
 /** Outcome of parsing a received message's raw MIME. Present on inbound rows only. */
 export type InboundParseStatus = 'ok' | 'oversize' | 'limit_exceeded' | 'parse_failed';

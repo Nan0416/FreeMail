@@ -10,13 +10,7 @@ import type {
   QueryEmailsByDirectionOutput,
   UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
-import type {
-  ClaimDownloadTokenOutput,
-  CreateDownloadTokenOutput,
-  DownloadTokensDao,
-  GetDownloadTokenInput,
-  GetDownloadTokenOutput,
-} from '../../src/data/download-tokens-dao.js';
+import type { ClaimDownloadTokenOutput, CreateDownloadTokenOutput, DownloadTokensDao, GetDownloadTokenInput, GetDownloadTokenOutput } from '../../src/data/download-tokens-dao.js';
 import type { InboundObjectStore, ObjectHead } from '../../src/facades/s3-inbound-object-store.js';
 import type { MailBodyContent, MailBodyStore } from '../../src/facades/s3-mail-body-store.js';
 import type { QuarantineStore } from '../../src/facades/s3-quarantine-store.js';
@@ -155,16 +149,7 @@ const CLEAN_TEXT = [
 ].join('\r\n');
 
 function cleanWithBody(body: string): string {
-  return [
-    'X-SES-Spam-Verdict: PASS',
-    'X-SES-Virus-Verdict: PASS',
-    'From: a@x.com',
-    'Subject: Body',
-    'Content-Type: text/plain; charset=utf-8',
-    '',
-    body,
-    '',
-  ].join('\r\n');
+  return ['X-SES-Spam-Verdict: PASS', 'X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Subject: Body', 'Content-Type: text/plain; charset=utf-8', '', body, ''].join('\r\n');
 }
 
 function withAttachment(virus: string): string {
@@ -187,23 +172,9 @@ function withAttachment(virus: string): string {
 }
 
 function manyAttachments(n: number): string {
-  const parts = [
-    'X-SES-Spam-Verdict: PASS',
-    'X-SES-Virus-Verdict: PASS',
-    'From: a@x.com',
-    'Subject: many',
-    'Content-Type: multipart/mixed; boundary="B"',
-    '',
-  ];
+  const parts = ['X-SES-Spam-Verdict: PASS', 'X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Subject: many', 'Content-Type: multipart/mixed; boundary="B"', ''];
   for (let i = 0; i < n; i++) {
-    parts.push(
-      '--B',
-      'Content-Type: application/octet-stream',
-      `Content-Disposition: attachment; filename="f${i}.bin"`,
-      '',
-      'data',
-      '',
-    );
+    parts.push('--B', 'Content-Type: application/octet-stream', `Content-Disposition: attachment; filename="f${i}.bin"`, '', 'data', '');
   }
   parts.push('--B--', '');
   return parts.join('\r\n');
@@ -214,12 +185,7 @@ describe('InboundProcessor', () => {
     const store = new FakeStore();
     const repo = new FakeDao();
     seed(store, 'MSG1', CLEAN_TEXT);
-    const result = await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
       rawKey: 'inbound/MSG1',
     });
 
@@ -273,9 +239,7 @@ describe('InboundProcessor', () => {
 
     expect(events).toEqual(['body:bodies/inbound/LARGE.json', 'row']);
     expect(repo.inbound[0]!.body).toEqual({ kind: 's3', s3Key: 'bodies/inbound/LARGE.json' });
-    expect(bodies.puts.get('bodies/inbound/LARGE.json')!.text!.length).toBeGreaterThan(
-      MAX_INLINE_BODY_BYTES,
-    );
+    expect(bodies.puts.get('bodies/inbound/LARGE.json')!.text!.length).toBeGreaterThan(MAX_INLINE_BODY_BYTES);
   });
 
   it('quarantines a failed message BEFORE its row, then lets the SES raw copy expire', async () => {
@@ -297,9 +261,7 @@ describe('InboundProcessor', () => {
     });
 
     expect(events).toEqual(['quarantine', 'row', 'tag']);
-    expect(quarantine.copies).toEqual([
-      { sourceKey: 'inbound/VIRUS', destKey: 'inbound/VIRUS.eml' },
-    ]);
+    expect(quarantine.copies).toEqual([{ sourceKey: 'inbound/VIRUS', destKey: 'inbound/VIRUS.eml' }]);
   });
 
   it('a failed quarantine copy writes no row and no tag — the event retries with raw intact', async () => {
@@ -326,17 +288,10 @@ describe('InboundProcessor', () => {
     const quarantine = new FakeQuarantine();
     seed(store, 'VIRUS3', withAttachment('FAIL'));
 
-    const result = await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      quarantine,
-    ).processInboundEmail({ rawKey: 'inbound/VIRUS3' });
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), quarantine).processInboundEmail({ rawKey: 'inbound/VIRUS3' });
 
     expect(result.outcome).toBe('duplicate');
-    expect(quarantine.copies).toEqual([
-      { sourceKey: 'inbound/VIRUS3', destKey: 'inbound/VIRUS3.eml' },
-    ]);
+    expect(quarantine.copies).toEqual([{ sourceKey: 'inbound/VIRUS3', destKey: 'inbound/VIRUS3.eml' }]);
     expect(store.taggedKeys).toEqual(['inbound/VIRUS3']);
   });
 
@@ -367,12 +322,7 @@ describe('InboundProcessor', () => {
     store.onTag = (key) => events.push(`tag:${key}`);
     seed(store, 'TAGGED', CLEAN_TEXT);
 
-    await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({
+    await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
       rawKey: 'inbound/TAGGED',
     });
 
@@ -399,12 +349,7 @@ describe('InboundProcessor', () => {
       ].join('\r\n'),
     );
 
-    await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({
+    await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
       rawKey: 'inbound/PDFONLY',
     });
 
@@ -416,12 +361,7 @@ describe('InboundProcessor', () => {
     const store = new FakeStore();
     const repo = new FakeDao();
     seed(store, 'MSG2', withAttachment('PASS'));
-    const result = await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
       rawKey: 'inbound/MSG2',
     });
 
@@ -441,12 +381,7 @@ describe('InboundProcessor', () => {
     const store = new FakeStore();
     const repo = new FakeDao();
     seed(store, 'MSG3', withAttachment('FAIL'));
-    const result = await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
       rawKey: 'inbound/MSG3',
     });
 
@@ -472,12 +407,7 @@ describe('InboundProcessor', () => {
     store.heads.set('inbound/BIG', { sizeBytes: 41 * 1024 * 1024, lastModified: RECEIVED });
     store.objects.set('inbound/BIG', `${CLEAN_TEXT}${'x'.repeat(1000)}`);
 
-    const result = await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      quarantine,
-    ).processInboundEmail({ rawKey: 'inbound/BIG' });
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), quarantine).processInboundEmail({ rawKey: 'inbound/BIG' });
 
     expect(result.outcome).toBe('quarantined');
     expect(store.getCalls).toBe(0); // never downloaded
@@ -503,12 +433,7 @@ describe('InboundProcessor', () => {
     // No blank line inside the bytes read: the header block runs past them.
     store.objects.set('inbound/HUGEHDR', `X-Long: ${'y'.repeat(MAX_HEADER_BLOCK_BYTES)}\r\n\r\n`);
 
-    await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({
+    await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
       rawKey: 'inbound/HUGEHDR',
     });
 
@@ -523,12 +448,7 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     // One more attachment than the default cap → limit_exceeded after the cap is filled.
     seed(store, 'MANY', manyAttachments(MAX_ATTACHMENTS + 1));
-    const result = await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
       rawKey: 'inbound/MANY',
     });
 
@@ -549,12 +469,7 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     repo.existingIds.add('MSG1');
     seed(store, 'MSG1', CLEAN_TEXT);
-    const result = await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
       rawKey: 'inbound/MSG1',
     });
     expect(result).toEqual({ outcome: 'duplicate', messageId: 'MSG1' });
@@ -565,12 +480,7 @@ describe('InboundProcessor', () => {
   it('malformed event key: skipped, never touches S3 or DDB', async () => {
     const store = new FakeStore();
     const repo = new FakeDao();
-    const result = await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
       rawKey: 'inbound/a/b/traversal',
     });
     expect(result.outcome).toBe('skipped');
@@ -581,12 +491,7 @@ describe('InboundProcessor', () => {
   it('missing object: skipped (HEAD returns null)', async () => {
     const store = new FakeStore();
     const repo = new FakeDao();
-    const result = await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({
+    const result = await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
       rawKey: 'inbound/GONE',
     });
     expect(result.outcome).toBe('skipped');
@@ -600,12 +505,7 @@ describe('InboundProcessor', () => {
     const repo = new FakeDao();
     seed(store, 'MSG2', withAttachment('PASS'));
     await expect(
-      new InboundProcessor(
-        store,
-        repo,
-        new FakeBodyStore(),
-        new FakeQuarantine(),
-      ).processInboundEmail({
+      new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({
         rawKey: 'inbound/MSG2',
       }),
     ).rejects.toThrow('s3 put failed');
@@ -684,13 +584,7 @@ describe('InboundProcessor — your own download links become attachments', () =
     const store = new FakeStore();
     const repo = new FakeDao();
     seed(store, 'OWN', raw);
-    await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-      new OwnLinkAttachments(tokens, BASE),
-    ).processInboundEmail({ rawKey: 'inbound/OWN' });
+    await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine(), new OwnLinkAttachments(tokens, BASE)).processInboundEmail({ rawKey: 'inbound/OWN' });
     return repo.inbound[0]!;
   }
 
@@ -721,23 +615,14 @@ describe('InboundProcessor — your own download links become attachments', () =
       ].join('\r\n'),
       new FakeTokens(stored()),
     );
-    expect(row.attachments.map((a) => [a.id, a.s3Key])).toEqual([
-      ['link-0', 'attachments/sent/e1/1'],
-    ]);
+    expect(row.attachments.map((a) => [a.id, a.s3Key])).toEqual([['link-0', 'attachments/sent/e1/1']]);
     expect(row.attachmentCount).toBe(1);
     expect(row.hasAttachments).toBe(true);
   });
 
   it('never looks links up when the From is not DMARC-authenticated (it could be spoofed)', async () => {
     const tokens = new FakeTokens(stored());
-    const row = await ingest(
-      ownSend(
-        'PASS',
-        'PASS',
-        'Authentication-Results: amazonses.com; dmarc=fail header.from=example.com;',
-      ),
-      tokens,
-    );
+    const row = await ingest(ownSend('PASS', 'PASS', 'Authentication-Results: amazonses.com; dmarc=fail header.from=example.com;'), tokens);
     expect(tokens.lookups).toEqual([]);
     expect(row.attachments.map((a) => a.id)).toEqual(['0']);
   });
@@ -782,12 +667,7 @@ describe('InboundProcessor — threading headers', () => {
       ].join('\r\n'),
     );
 
-    await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({ rawKey: 'inbound/THREAD1' });
+    await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({ rawKey: 'inbound/THREAD1' });
 
     expect(repo.inbound[0]).toMatchObject({
       messageIdHeader: '<reply@x.com>',
@@ -801,12 +681,7 @@ describe('InboundProcessor — threading headers', () => {
     const repo = new FakeDao();
     seed(store, 'PLAIN', CLEAN_TEXT);
 
-    await new InboundProcessor(
-      store,
-      repo,
-      new FakeBodyStore(),
-      new FakeQuarantine(),
-    ).processInboundEmail({ rawKey: 'inbound/PLAIN' });
+    await new InboundProcessor(store, repo, new FakeBodyStore(), new FakeQuarantine()).processInboundEmail({ rawKey: 'inbound/PLAIN' });
 
     const row = repo.inbound[0]!;
     expect(row.messageIdHeader).toBeUndefined();

@@ -42,9 +42,7 @@ export function isJsonContentType(header: string | undefined): boolean {
  * case-insensitive and API Gateway lowercases them, but scan defensively rather than
  * assume — a missed header here would reject a legitimate request.
  */
-export function readContentType(
-  headers: Record<string, string | undefined> | undefined,
-): string | undefined {
+export function readContentType(headers: Record<string, string | undefined> | undefined): string | undefined {
   if (!headers) {
     return undefined;
   }
@@ -57,8 +55,6 @@ export function readContentType(
 }
 
 /** True when the request carries a `Content-Type` of `application/json`. */
-export function hasJsonContentType(
-  headers: Record<string, string | undefined> | undefined,
-): boolean {
+export function hasJsonContentType(headers: Record<string, string | undefined> | undefined): boolean {
   return isJsonContentType(readContentType(headers));
 }

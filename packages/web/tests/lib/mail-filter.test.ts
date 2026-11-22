@@ -17,11 +17,7 @@ function item(id: string, over: Partial<EmailListItem> = {}): EmailListItem {
   };
 }
 
-const EMAILS = [
-  item('a', { fromName: 'Alice Smith', subject: 'Quarterly report', hasAttachments: true }),
-  item('b', { snippet: 'lunch on friday?' }),
-  item('c', { quarantined: true }),
-];
+const EMAILS = [item('a', { fromName: 'Alice Smith', subject: 'Quarterly report', hasAttachments: true }), item('b', { snippet: 'lunch on friday?' }), item('c', { quarantined: true })];
 
 const ids = (list: readonly EmailListItem[]) => list.map((e) => e.id);
 
@@ -42,11 +38,7 @@ describe('applyListView', () => {
   });
 
   it('reverses for oldest-first without mutating the input', () => {
-    expect(ids(applyListView(EMAILS, { ...DEFAULT_VIEW, sort: 'oldest' }))).toEqual([
-      'c',
-      'b',
-      'a',
-    ]);
+    expect(ids(applyListView(EMAILS, { ...DEFAULT_VIEW, sort: 'oldest' }))).toEqual(['c', 'b', 'a']);
     expect(ids(EMAILS)).toEqual(['a', 'b', 'c']);
   });
 });

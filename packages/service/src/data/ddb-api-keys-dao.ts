@@ -7,24 +7,8 @@
  * can never clobber an existing key. List is a paginated scan — a single-tenant
  * deployment holds only a handful of keys, so there is no GSI to maintain.
  */
-import {
-  DynamoDBDocumentClient,
-  DeleteCommand,
-  GetCommand,
-  PutCommand,
-  ScanCommand,
-} from '@aws-sdk/lib-dynamodb';
-import type {
-  ApiKeysDao,
-  CreateApiKeyInput,
-  CreateApiKeyOutput,
-  DeleteApiKeyInput,
-  DeleteApiKeyOutput,
-  GetApiKeyInput,
-  GetApiKeyOutput,
-  ListApiKeysInput,
-  ListApiKeysOutput,
-} from './api-keys-dao.js';
+import { DynamoDBDocumentClient, DeleteCommand, GetCommand, PutCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import type { ApiKeysDao, CreateApiKeyInput, CreateApiKeyOutput, DeleteApiKeyInput, DeleteApiKeyOutput, GetApiKeyInput, GetApiKeyOutput, ListApiKeysInput, ListApiKeysOutput } from './api-keys-dao.js';
 import { ApiKeyEntity, isConditionalCheckFailed } from './entities.js';
 
 export class DdbApiKeysDao implements ApiKeysDao {
@@ -61,9 +45,7 @@ export class DdbApiKeysDao implements ApiKeysDao {
   }
 
   async getApiKey(input: GetApiKeyInput): Promise<GetApiKeyOutput | null> {
-    const result = await this.doc.send(
-      new GetCommand({ TableName: this.tableName, Key: ApiKeyEntity.key(input.keyId) }),
-    );
+    const result = await this.doc.send(new GetCommand({ TableName: this.tableName, Key: ApiKeyEntity.key(input.keyId) }));
     return toRecord(result.Item);
   }
 
@@ -71,9 +53,7 @@ export class DdbApiKeysDao implements ApiKeysDao {
     const records: GetApiKeyOutput[] = [];
     let lastKey: Record<string, unknown> | undefined;
     do {
-      const result = await this.doc.send(
-        new ScanCommand({ TableName: this.tableName, ExclusiveStartKey: lastKey }),
-      );
+      const result = await this.doc.send(new ScanCommand({ TableName: this.tableName, ExclusiveStartKey: lastKey }));
       for (const item of result.Items ?? []) {
         const record = toRecord(item);
         if (record) {
@@ -86,20 +66,13 @@ export class DdbApiKeysDao implements ApiKeysDao {
   }
 
   async deleteApiKey(input: DeleteApiKeyInput): Promise<DeleteApiKeyOutput> {
-    await this.doc.send(
-      new DeleteCommand({ TableName: this.tableName, Key: ApiKeyEntity.key(input.keyId) }),
-    );
+    await this.doc.send(new DeleteCommand({ TableName: this.tableName, Key: ApiKeyEntity.key(input.keyId) }));
     return {};
   }
 }
 
 function toRecord(item: Record<string, unknown> | undefined): GetApiKeyOutput | null {
-  if (
-    !item ||
-    typeof item.keyId !== 'string' ||
-    typeof item.secretHash !== 'string' ||
-    typeof item.createdAt !== 'number'
-  ) {
+  if (!item || typeof item.keyId !== 'string' || typeof item.secretHash !== 'string' || typeof item.createdAt !== 'number') {
     return null;
   }
   return {

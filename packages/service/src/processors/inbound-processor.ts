@@ -25,12 +25,7 @@
  * at the sent copy (see {@link OwnLinkAttachments}).
  */
 import { Readable } from 'node:stream';
-import type {
-  EmailsDao,
-  CreateInboundEmailInput,
-  InboundAttachmentDescriptor,
-  InboundVerdict,
-} from '../data/emails-dao.js';
+import type { EmailsDao, CreateInboundEmailInput, InboundAttachmentDescriptor, InboundVerdict } from '../data/emails-dao.js';
 import type { InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import type { MailBodyStore } from '../facades/s3-mail-body-store.js';
 import type { OwnLinkAttachments } from './own-link-attachments.js';
@@ -39,12 +34,7 @@ import { validateInboundEventKey } from '../utils/event-key.js';
 import { rootHeaderBlock } from '../utils/inbound-headers.js';
 import { MAX_HEADER_BLOCK_BYTES, MAX_RAW_MESSAGE_BYTES } from '../utils/inbound-limits.js';
 import { parseInbound, type AttachmentSink, type ParsedInbound } from '../utils/inbound-parse.js';
-import {
-  sanitizeContentType,
-  sanitizeFilename,
-  snippetFromHtml,
-  snippetFromText,
-} from '../utils/sanitize.js';
+import { sanitizeContentType, sanitizeFilename, snippetFromHtml, snippetFromText } from '../utils/sanitize.js';
 import { decideExposure, type Exposure } from '../utils/verdicts.js';
 import { bodyKey, estimateRowBytes, storeEmailBody } from '../services/email-body-storage.js';
 
@@ -97,9 +87,7 @@ export class InboundProcessor {
   ) {}
 
   /** Process the object identified by a raw (still-encoded) S3 event key. */
-  async processInboundEmail(
-    request: ProcessInboundEmailRequest,
-  ): Promise<ProcessInboundEmailResponse> {
+  async processInboundEmail(request: ProcessInboundEmailRequest): Promise<ProcessInboundEmailResponse> {
     const key = validateInboundEventKey(request.rawKey);
     if (!key.ok) {
       // No validated stable id → cannot write a keyed row. Log-and-succeed (no retry).
@@ -159,10 +147,7 @@ export class InboundProcessor {
    * deterministic keys BEFORE the row, so a redelivery only overwrites them; SES's raw copy is
    * tagged for expiry only after the row is committed.
    */
-  private async finish(
-    base: RecordBase,
-    parsed: ParsedInbound,
-  ): Promise<ProcessInboundEmailResponse> {
+  private async finish(base: RecordBase, parsed: ParsedInbound): Promise<ProcessInboundEmailResponse> {
     const exposure = decideExposure(parsed.verdicts, parsed.parseStatus);
     const linked = await this.linkedAttachments(base, parsed, exposure);
     const record = this.record(base, parsed, exposure, linked);
@@ -213,10 +198,7 @@ export class InboundProcessor {
         attachments: [],
       };
     }
-    const parsed = await parseInbound(
-      Readable.from([Buffer.concat([block, Buffer.from('\r\n\r\n')])]),
-      NO_ATTACHMENTS,
-    );
+    const parsed = await parseInbound(Readable.from([Buffer.concat([block, Buffer.from('\r\n\r\n')])]), NO_ATTACHMENTS);
     // Only the header metadata is meaningful — nothing past the headers was read.
     return { ...parsed, exposed: false, attachmentCount: 0, attachments: [] };
   }
@@ -225,11 +207,7 @@ export class InboundProcessor {
    * Files this message links from this deployment's own sends, as attachments — only for mail
    * that is readable and not flagged as spam: anything else keeps its links as plain links.
    */
-  private async linkedAttachments(
-    base: RecordBase,
-    parsed: ParsedInbound,
-    exposure: Exposure,
-  ): Promise<InboundAttachmentDescriptor[]> {
+  private async linkedAttachments(base: RecordBase, parsed: ParsedInbound, exposure: Exposure): Promise<InboundAttachmentDescriptor[]> {
     if (this.ownLinks === undefined || !exposure.exposeContent || exposure.quarantined) {
       return [];
     }
@@ -243,10 +221,7 @@ export class InboundProcessor {
   }
 
   /** Conditional-put the row (the commit marker) and map the outcome. */
-  private async commit(
-    record: CreateInboundEmailInput,
-    messageId: string,
-  ): Promise<ProcessInboundEmailResponse> {
+  private async commit(record: CreateInboundEmailInput, messageId: string): Promise<ProcessInboundEmailResponse> {
     const result = await this.emails.createInboundEmail(record);
     if (!result.created) {
       return { outcome: 'duplicate', messageId };
@@ -264,12 +239,7 @@ export class InboundProcessor {
     );
   }
 
-  private record(
-    base: RecordBase,
-    parsed: ParsedInbound,
-    exposure: Exposure,
-    linked: readonly InboundAttachmentDescriptor[],
-  ): CreateInboundEmailInput {
+  private record(base: RecordBase, parsed: ParsedInbound, exposure: Exposure, linked: readonly InboundAttachmentDescriptor[]): CreateInboundEmailInput {
     const snippet = exposure.exposeContent ? this.snippet(parsed) : undefined;
     return {
       id: base.messageId,

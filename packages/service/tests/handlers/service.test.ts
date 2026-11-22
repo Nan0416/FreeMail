@@ -10,11 +10,7 @@ import { FreeMailService } from '../../src/handlers/service.js';
 import { toApiGatewayHandler } from '../../src/handlers/serverless-express.js';
 
 /** An Endpoints that mounts one route, so the app can be exercised without any AWS wiring. */
-function endpointsFor(
-  method: 'get' | 'post',
-  path: string,
-  handler: Parameters<Router['get']>[1],
-): Endpoints {
+function endpointsFor(method: 'get' | 'post', path: string, handler: Parameters<Router['get']>[1]): Endpoints {
   const router = Router();
   router[method](path, handler);
   return { bind: (app: Express) => app.use(router) };
@@ -42,12 +38,7 @@ const LAMBDA_CONTEXT = { callbackWaitsForEmptyEventLoop: false } as unknown as C
  * Drive the app in-process through the same API Gateway adapter the Lambda uses — no socket,
  * so nothing here depends on the machine's networking.
  */
-async function call(
-  app: Express,
-  method: 'GET' | 'POST',
-  path: string,
-  options: { readonly contentType?: string; readonly body?: string } = {},
-): Promise<CallResponse> {
+async function call(app: Express, method: 'GET' | 'POST', path: string, options: { readonly contentType?: string; readonly body?: string } = {}): Promise<CallResponse> {
   const event = {
     version: '2.0',
     routeKey: `${method} ${path}`,
@@ -90,9 +81,7 @@ describe('FreeMailService app assembly', () => {
   });
 
   it('parses a JSON body', async () => {
-    const app = buildApp([
-      endpointsFor('post', '/echo', (req, res) => void res.status(200).json(req.body)),
-    ]);
+    const app = buildApp([endpointsFor('post', '/echo', (req, res) => void res.status(200).json(req.body))]);
     const res = await call(app, 'POST', '/echo', {
       contentType: 'application/json',
       body: JSON.stringify({ hello: 'world' }),
@@ -103,9 +92,7 @@ describe('FreeMailService app assembly', () => {
   it('does NOT parse a form-encoded body — that is the shape #47 Layer 3 exists to refuse', async () => {
     // Registering `express.urlencoded()` would make the exact content type a cross-site
     // <form> POST can send without a preflight into a first-class input format.
-    const app = buildApp([
-      endpointsFor('post', '/echo', (req, res) => void res.status(200).json(req.body ?? null)),
-    ]);
+    const app = buildApp([endpointsFor('post', '/echo', (req, res) => void res.status(200).json(req.body ?? null))]);
     const res = await call(app, 'POST', '/echo', {
       contentType: 'application/x-www-form-urlencoded',
       body: 'hello=world',
@@ -116,36 +103,28 @@ describe('FreeMailService app assembly', () => {
 
 describe('errorHandler', () => {
   it('renders an AuthError with its status and wire code', async () => {
-    const app = buildApp([
-      endpointsFor('get', '/boom', (_req, _res, next) => next(authErrors.forbidden('nope'))),
-    ]);
+    const app = buildApp([endpointsFor('get', '/boom', (_req, _res, next) => next(authErrors.forbidden('nope')))]);
     const res = await call(app, 'GET', '/boom');
     expect(res.status).toBe(403);
     expect(res.body).toEqual({ error: 'forbidden', message: 'nope' });
   });
 
   it('renders an EmailError the same way', async () => {
-    const app = buildApp([
-      endpointsFor('get', '/boom', (_req, _res, next) => next(emailErrors.notFound('gone'))),
-    ]);
+    const app = buildApp([endpointsFor('get', '/boom', (_req, _res, next) => next(emailErrors.notFound('gone')))]);
     const res = await call(app, 'GET', '/boom');
     expect(res.status).toBe(404);
     expect(res.body).toEqual({ error: 'not_found', message: 'gone' });
   });
 
   it('attaches Retry-After when a lockout supplies one', async () => {
-    const app = buildApp([
-      endpointsFor('get', '/boom', (_req, _res, next) => next(authErrors.accountLocked(90))),
-    ]);
+    const app = buildApp([endpointsFor('get', '/boom', (_req, _res, next) => next(authErrors.accountLocked(90)))]);
     const res = await call(app, 'GET', '/boom');
     expect(res.status).toBe(429);
     expect(res.headers['retry-after']).toBe('90');
   });
 
   it('translates a malformed JSON body into a 400, not a 500', async () => {
-    const app = buildApp([
-      endpointsFor('post', '/echo', (_req, res) => void res.status(200).end()),
-    ]);
+    const app = buildApp([endpointsFor('post', '/echo', (_req, res) => void res.status(200).end())]);
     const res = await call(app, 'POST', '/echo', {
       contentType: 'application/json',
       body: '{not json',

@@ -37,9 +37,7 @@ export class FreeMailStack extends Stack {
       region: props.config.region,
       emailsTable: data.emailsTable,
       sesIdentityMode: props.config.sesIdentity.mode,
-      ...(props.config.sesIdentity.extraTxtValues
-        ? { extraTxtValues: props.config.sesIdentity.extraTxtValues }
-        : {}),
+      ...(props.config.sesIdentity.extraTxtValues ? { extraTxtValues: props.config.sesIdentity.extraTxtValues } : {}),
       // SES owns inbound too: pass the mail stores only when inbound is enabled, and
       // the construct instantiates the receipt pipeline as a child. The confirmInboundMx
       // acknowledgement gate (assertInboundAcknowledged, above) still fires first.
@@ -89,9 +87,7 @@ export class FreeMailStack extends Stack {
     new CfnOutput(this, 'HostedZoneId', { value: dns.hostedZone.hostedZoneId });
     if (props.config.hostedZone.mode === 'create' && dns.nameServers) {
       new CfnOutput(this, 'HostedZoneNameServers', {
-        description:
-          'Delegate the created zone to these name servers: at your domain registrar for a whole ' +
-          'domain, or as NS records in the parent domain DNS for a subdomain zone.',
+        description: 'Delegate the created zone to these name servers: at your domain registrar for a whole ' + 'domain, or as NS records in the parent domain DNS for a subdomain zone.',
         value: Fn.join(', ', dns.nameServers),
       });
     }
@@ -100,9 +96,7 @@ export class FreeMailStack extends Stack {
     new CfnOutput(this, 'WebBucketName', { value: web.webBucket.bucketName });
 
     new CfnOutput(this, 'ApiCustomDomainUrl', {
-      description:
-        'The API domain. Used by BOTH the web app (cross-origin, credentialed CORS) and ' +
-        'agents/MCP (x-api-key).',
+      description: 'The API domain. Used by BOTH the web app (cross-origin, credentialed CORS) and ' + 'agents/MCP (x-api-key).',
       value: `https://${api.customDomainName}`,
     });
 
@@ -126,10 +120,7 @@ export class FreeMailStack extends Stack {
     // The identity name IS the domain in both modes, so this reads from config rather
     // than the construct — in import mode there is no construct to read from.
     new CfnOutput(this, 'SesIdentityName', {
-      description:
-        props.config.sesIdentity.mode === 'import'
-          ? 'SES domain identity (IMPORTED — FreeMail did not create it or its auth records).'
-          : 'SES domain identity created by FreeMail.',
+      description: props.config.sesIdentity.mode === 'import' ? 'SES domain identity (IMPORTED — FreeMail did not create it or its auth records).' : 'SES domain identity created by FreeMail.',
       value: props.config.emailDomain,
     });
     if (ses.mailFromDomain) {
@@ -179,8 +170,7 @@ export class FreeMailStack extends Stack {
     }
     if (!config.inbound.confirmInboundMx) {
       throw new Error(
-        'Inbound email is enabled but the MX override has not been acknowledged. ' +
-          'Set inbound.confirmInboundMx to true (re-run `freemail init` and confirm) before deploying inbound.',
+        'Inbound email is enabled but the MX override has not been acknowledged. ' + 'Set inbound.confirmInboundMx to true (re-run `freemail init` and confirm) before deploying inbound.',
       );
     }
   }

@@ -36,10 +36,7 @@ function serialize(name: string, value: string, maxAgeSeconds: number): string {
 
 /** The `Set-Cookie` values for a freshly issued/rotated session (login + refresh). */
 export function sessionCookies(accessToken: string, refreshToken: string): string[] {
-  return [
-    serialize(ACCESS_COOKIE, accessToken, ACCESS_TOKEN_TTL_SECONDS),
-    serialize(REFRESH_COOKIE, refreshToken, REFRESH_TOKEN_TTL_SECONDS),
-  ];
+  return [serialize(ACCESS_COOKIE, accessToken, ACCESS_TOKEN_TTL_SECONDS), serialize(REFRESH_COOKIE, refreshToken, REFRESH_TOKEN_TTL_SECONDS)];
 }
 
 /**
@@ -62,10 +59,7 @@ export const DUPLICATE_COOKIE = Symbol('duplicate-cookie');
  * last, so an attacker cannot smuggle a second same-name cookie past the authorizer.
  * Absent → `null`; exactly one → its value.
  */
-export function readCookie(
-  cookies: readonly string[] | undefined,
-  name: string,
-): string | null | typeof DUPLICATE_COOKIE {
+export function readCookie(cookies: readonly string[] | undefined, name: string): string | null | typeof DUPLICATE_COOKIE {
   if (!cookies) {
     return null;
   }

@@ -1,9 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  headerValues,
-  parseHeaderLines,
-  rootHeaderBlock,
-} from '../../src/utils/inbound-headers.js';
+import { headerValues, parseHeaderLines, rootHeaderBlock } from '../../src/utils/inbound-headers.js';
 
 describe('parseHeaderLines', () => {
   it('parses ordered lowercased keys + trimmed values', () => {
@@ -16,9 +12,7 @@ describe('parseHeaderLines', () => {
   });
 
   it('preserves duplicate headers in source order', () => {
-    const lines = parseHeaderLines(
-      'X-SES-Spam-Verdict: FAIL\r\nReceived: x\r\nX-SES-Spam-Verdict: PASS',
-    );
+    const lines = parseHeaderLines('X-SES-Spam-Verdict: FAIL\r\nReceived: x\r\nX-SES-Spam-Verdict: PASS');
     expect(headerValues(lines, 'x-ses-spam-verdict')).toEqual(['FAIL', 'PASS']);
   });
 
@@ -29,9 +23,7 @@ describe('parseHeaderLines', () => {
   });
 
   it('skips lines without a colon', () => {
-    expect(parseHeaderLines('garbage-no-colon\r\nFrom: a@b.com')).toEqual([
-      { key: 'from', value: 'a@b.com' },
-    ]);
+    expect(parseHeaderLines('garbage-no-colon\r\nFrom: a@b.com')).toEqual([{ key: 'from', value: 'a@b.com' }]);
   });
 
   it('tolerates a trailing header/body separator line', () => {
@@ -45,9 +37,7 @@ describe('parseHeaderLines', () => {
 
 describe('rootHeaderBlock', () => {
   it('cuts at the first blank line, CRLF or bare LF', () => {
-    expect(rootHeaderBlock(Buffer.from('A: 1\r\nB: 2\r\n\r\nbody'))?.toString()).toBe(
-      'A: 1\r\nB: 2',
-    );
+    expect(rootHeaderBlock(Buffer.from('A: 1\r\nB: 2\r\n\r\nbody'))?.toString()).toBe('A: 1\r\nB: 2');
     expect(rootHeaderBlock(Buffer.from('A: 1\nB: 2\n\nbody'))?.toString()).toBe('A: 1\nB: 2');
   });
 
@@ -56,11 +46,7 @@ describe('rootHeaderBlock', () => {
   });
 
   it('keeps 8-bit header bytes untouched for the parser to decode', () => {
-    const raw = Buffer.concat([
-      Buffer.from('Subject: caf'),
-      Buffer.from([0xe9]),
-      Buffer.from('\r\n\r\n'),
-    ]);
+    const raw = Buffer.concat([Buffer.from('Subject: caf'), Buffer.from([0xe9]), Buffer.from('\r\n\r\n')]);
     expect(rootHeaderBlock(raw)?.includes(Buffer.from([0xe9]))).toBe(true);
   });
 });

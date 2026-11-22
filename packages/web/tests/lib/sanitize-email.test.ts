@@ -30,30 +30,13 @@ describe('sanitizeEmailHtml — hostile input', () => {
         '<tr><td align="center" valign="top"><img src="https://x.test/a.png" width="32" height="32"></td></tr></table>',
       { allowImages: true },
     );
-    for (const attr of [
-      'width="100%"',
-      'cellpadding="0"',
-      'cellspacing="0"',
-      'border="0"',
-      'bgcolor="#fff"',
-      'align="center"',
-      'valign="top"',
-      'width="32"',
-      'height="32"',
-    ]) {
+    for (const attr of ['width="100%"', 'cellpadding="0"', 'cellspacing="0"', 'border="0"', 'bgcolor="#fff"', 'align="center"', 'valign="top"', 'width="32"', 'height="32"']) {
       expect(out).toContain(attr);
     }
   });
 
   it('still drops dangerous schemes in any attribute and case', () => {
-    for (const value of [
-      'javascript:alert(1)',
-      'JaVaScRiPt:alert(1)',
-      'vbscript:x',
-      'data:text/html,x',
-      'cid:part1',
-      'file:///etc/passwd',
-    ]) {
+    for (const value of ['javascript:alert(1)', 'JaVaScRiPt:alert(1)', 'vbscript:x', 'data:text/html,x', 'cid:part1', 'file:///etc/passwd']) {
       const out = sanitizeEmailHtml(`<a href="${value}">x</a>`, { allowImages: true });
       expect(out).not.toContain('href=');
     }
@@ -137,9 +120,7 @@ describe('sanitizeEmailHtml — links', () => {
       '&#47;account/settings',
       '&#1;#frag',
     ]) {
-      const link = onlyLink(
-        sanitizeEmailHtml(`<a href="${href}" target="_top">x</a>`, { allowImages: true }),
-      );
+      const link = onlyLink(sanitizeEmailHtml(`<a href="${href}" target="_top">x</a>`, { allowImages: true }));
       expect(link.hasAttribute('href'), href).toBe(false);
       expect(link.hasAttribute('target'), href).toBe(false);
       expect(link.textContent).toBe('x');
@@ -183,9 +164,7 @@ describe('sanitizeEmailHtml — links', () => {
 
   it('drops a link the URL parser would turn into markup', () => {
     // DOMPurify checks the raw value, where a tab hides `</style`; the URL parser strips it.
-    const link = onlyLink(
-      sanitizeEmailHtml('<a href="mailto:x&lt;&#9;/style&gt;y">x</a>', { allowImages: true }),
-    );
+    const link = onlyLink(sanitizeEmailHtml('<a href="mailto:x&lt;&#9;/style&gt;y">x</a>', { allowImages: true }));
     expect(link.hasAttribute('href')).toBe(false);
   });
 
@@ -206,9 +185,7 @@ describe('sanitizeEmailHtml — links', () => {
     expect(absolute.getAttribute('target')).toBe('_blank');
     expect(absolute.getAttribute('rel')).toBe('noopener noreferrer');
 
-    const fragment = onlyLink(
-      sanitizeEmailHtml('<map name="m"><area href="#x" alt="a"></map>', { allowImages: true }),
-    );
+    const fragment = onlyLink(sanitizeEmailHtml('<map name="m"><area href="#x" alt="a"></map>', { allowImages: true }));
     expect(fragment.getAttribute('href')).toBe('about:srcdoc#x');
     expect(fragment.getAttribute('target')).toBe('_self');
   });
@@ -221,8 +198,7 @@ describe('sanitizeEmailHtml — links', () => {
 });
 
 describe('sanitizeEmailHtml — image blocking (layer 1: stripped src)', () => {
-  const TRACKER =
-    '<img src="https://tracker.example/pixel.png?uid=1" srcset="https://tracker.example/2x.png 2x">';
+  const TRACKER = '<img src="https://tracker.example/pixel.png?uid=1" srcset="https://tracker.example/2x.png 2x">';
 
   it('strips remote image loaders by default', () => {
     const out = sanitizeEmailHtml(TRACKER, { allowImages: false });
@@ -246,20 +222,14 @@ describe('sanitizeEmailHtml — image blocking (layer 1: stripped src)', () => {
 
   it('never resolves an image src or background against the app page', () => {
     for (const src of ['/logo.png', 'logo.png', 'https:logo.png', '?x=1']) {
-      const out = sanitizeEmailHtml(
-        `<img src="${src}"><table><tr><td background="${src}">x</td></tr></table>`,
-        { allowImages: true },
-      );
+      const out = sanitizeEmailHtml(`<img src="${src}"><table><tr><td background="${src}">x</td></tr></table>`, { allowImages: true });
       expect(out, src).not.toContain('src=');
       expect(out, src).not.toContain('background=');
     }
   });
 
   it('writes an allowed image source back fully resolved', () => {
-    const out = sanitizeEmailHtml(
-      '<img src="//cdn.example/a b.png"><table><tr><td background="//cdn.example/bg.png">x</td></tr></table>',
-      { allowImages: true },
-    );
+    const out = sanitizeEmailHtml('<img src="//cdn.example/a b.png"><table><tr><td background="//cdn.example/bg.png">x</td></tr></table>', { allowImages: true });
     expect(out).toContain('src="https://cdn.example/a%20b.png"');
     expect(out).toContain('background="https://cdn.example/bg.png"');
   });

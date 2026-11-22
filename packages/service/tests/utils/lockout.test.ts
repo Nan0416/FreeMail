@@ -1,14 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  FAILURE_WINDOW_SECONDS,
-  INITIAL_LOCKOUT_STATE,
-  LOCKOUT_SECONDS,
-  MAX_FAILED_ATTEMPTS,
-  clearFailures,
-  isLockedOut,
-  registerFailure,
-  retryAfterSeconds,
-} from '../../src/utils/lockout.js';
+import { FAILURE_WINDOW_SECONDS, INITIAL_LOCKOUT_STATE, LOCKOUT_SECONDS, MAX_FAILED_ATTEMPTS, clearFailures, isLockedOut, registerFailure, retryAfterSeconds } from '../../src/utils/lockout.js';
 
 describe('lockout policy', () => {
   it('counts the first failure and does not lock', () => {

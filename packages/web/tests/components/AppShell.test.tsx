@@ -73,9 +73,7 @@ describe('AppShell — folders', () => {
     expect(screen.queryByRole('button', { name: 'Errors' })).not.toBeInTheDocument();
     expect(await screen.findByRole('heading', { name: 'Sent' })).toBeInTheDocument();
     await waitFor(() => expect(callsTo(fetchMock, '/emails')).toHaveLength(1));
-    expect(new URL(String(callsTo(fetchMock, '/emails')[0][0])).searchParams.get('direction')).toBe(
-      'sent',
-    );
+    expect(new URL(String(callsTo(fetchMock, '/emails')[0][0])).searchParams.get('direction')).toBe('sent');
   });
 
   it('lists the merged timeline in All mail (no direction filter)', async () => {
@@ -83,13 +81,7 @@ describe('AppShell — folders', () => {
     renderWithApp(<AppShell inboundEnabled />, fetchMock);
     fireEvent.click(screen.getByRole('button', { name: 'All mail' }));
     expect(await screen.findByRole('heading', { name: 'All mail' })).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        callsTo(fetchMock, '/emails').some(
-          ([url]) => !new URL(String(url)).searchParams.has('direction'),
-        ),
-      ).toBe(true),
-    );
+    await waitFor(() => expect(callsTo(fetchMock, '/emails').some(([url]) => !new URL(String(url)).searchParams.has('direction'))).toBe(true));
   });
 });
 
@@ -110,13 +102,7 @@ describe('AppShell — Errors folder', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Errors' }));
 
     expect(await screen.findByRole('heading', { name: 'Errors' })).toBeInTheDocument();
-    await waitFor(() =>
-      expect(
-        callsTo(fetchMock, '/emails').some(
-          ([url]) => new URL(String(url)).searchParams.get('direction') === 'failed',
-        ),
-      ).toBe(true),
-    );
+    await waitFor(() => expect(callsTo(fetchMock, '/emails').some(([url]) => new URL(String(url)).searchParams.get('direction') === 'failed')).toBe(true));
     const list = within(await screen.findByRole('list', { name: 'Errors' }));
     expect(await list.findByText('Virus')).toBeInTheDocument();
     expect(list.getByText('Too large')).toBeInTheDocument();
@@ -127,15 +113,7 @@ describe('AppShell — Errors folder', () => {
 
 describe('AppShell — message list', () => {
   it('renders rows with sender, subject, attachment and spam markers', async () => {
-    renderWithApp(
-      <AppShell inboundEnabled />,
-      mockApi([
-        [
-          item('a', { fromName: 'Alice', hasAttachments: true, attachmentCount: 1 }),
-          item('b', { quarantined: true }),
-        ],
-      ]),
-    );
+    renderWithApp(<AppShell inboundEnabled />, mockApi([[item('a', { fromName: 'Alice', hasAttachments: true, attachmentCount: 1 }), item('b', { quarantined: true })]]));
     expect(await screen.findByText('Alice')).toBeInTheDocument();
     expect(screen.getByText('Subject a')).toBeInTheDocument();
     expect(screen.getByLabelText('Has attachments')).toBeInTheDocument();
@@ -160,10 +138,7 @@ describe('AppShell — message list', () => {
   });
 
   it('searches the loaded messages', async () => {
-    renderWithApp(
-      <AppShell inboundEnabled />,
-      mockApi([[item('a', { subject: 'Quarterly report' }), item('b', { subject: 'Lunch' })]]),
-    );
+    renderWithApp(<AppShell inboundEnabled />, mockApi([[item('a', { subject: 'Quarterly report' }), item('b', { subject: 'Lunch' })]]));
     await screen.findByText('Quarterly report');
     fireEvent.change(screen.getByLabelText('Search messages'), { target: { value: 'quarter' } });
     expect(rows()).toHaveLength(1);
@@ -245,10 +220,7 @@ describe('AppShell — refresh', () => {
 
 describe('AppShell — compose', () => {
   it('opens a compose window with c and prefills reply from the open message', async () => {
-    renderWithApp(
-      <AppShell inboundEnabled />,
-      mockApi([[item('a', { from: 'alice@x.com', subject: 'Plans' })]]),
-    );
+    renderWithApp(<AppShell inboundEnabled />, mockApi([[item('a', { from: 'alice@x.com', subject: 'Plans' })]]));
     await screen.findByText('Plans');
     fireEvent.click(screen.getByText('Plans'));
     await screen.findByRole('heading', { name: 'Plans', level: 2 });
@@ -310,9 +282,7 @@ describe('AppShell — drafts', () => {
   }
 
   function storedSubjects(): string[] {
-    return JSON.parse(window.localStorage.getItem('freemail.drafts.v1') ?? '[]').map(
-      (draft: { subject: string }) => draft.subject,
-    );
+    return JSON.parse(window.localStorage.getItem('freemail.drafts.v1') ?? '[]').map((draft: { subject: string }) => draft.subject);
   }
 
   async function openDraft(subject: string): Promise<HTMLElement> {
@@ -343,9 +313,7 @@ describe('AppShell — drafts', () => {
     // Undo brings back the window's latest edit, not the older copy the list showed.
     fireEvent.click(await screen.findByRole('button', { name: 'Undo' }));
     expect(storedSubjects()).toEqual(['Plans v2']);
-    expect(
-      within(screen.getByRole('list', { name: 'Drafts' })).getByText('Plans v2'),
-    ).toBeInTheDocument();
+    expect(within(screen.getByRole('list', { name: 'Drafts' })).getByText('Plans v2')).toBeInTheDocument();
   });
 
   it('discards a new message that auto-saved into Drafts while still open', async () => {

@@ -1,15 +1,6 @@
 import type { AddressObject } from 'mailparser';
 import { describe, expect, it } from 'vitest';
-import {
-  normalizeAddressList,
-  normalizeFrom,
-  sanitizeContentType,
-  sanitizeFilename,
-  sanitizeSubject,
-  sanitizeText,
-  snippetFromHtml,
-  snippetFromText,
-} from '../../src/utils/sanitize.js';
+import { normalizeAddressList, normalizeFrom, sanitizeContentType, sanitizeFilename, sanitizeSubject, sanitizeText, snippetFromHtml, snippetFromText } from '../../src/utils/sanitize.js';
 
 describe('sanitizeText', () => {
   it('strips control chars + CRLF and collapses whitespace', () => {
@@ -76,9 +67,7 @@ describe('normalizeAddressList', () => {
   });
 
   it('caps the number of retained addresses (recipient-stuffing guard)', () => {
-    const many = addr(
-      Array.from({ length: 500 }, (_, i) => ({ address: `u${i}@x.com`, name: '' })),
-    );
+    const many = addr(Array.from({ length: 500 }, (_, i) => ({ address: `u${i}@x.com`, name: '' })));
     expect(normalizeAddressList(many).length).toBeLessThanOrEqual(50);
   });
 

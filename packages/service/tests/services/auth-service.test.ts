@@ -18,11 +18,7 @@ import type {
 } from '../../src/data/auth-dao.js';
 import { AuthError } from '../../src/utils/errors.js';
 import { verifyAccessToken } from '../../src/utils/jwt.js';
-import {
-  INITIAL_LOCKOUT_STATE,
-  MAX_FAILED_ATTEMPTS,
-  registerFailure,
-} from '../../src/utils/lockout.js';
+import { INITIAL_LOCKOUT_STATE, MAX_FAILED_ATTEMPTS, registerFailure } from '../../src/utils/lockout.js';
 import type { LockoutState } from '../../src/utils/lockout.js';
 import { AuthService, OWNER_SUBJECT } from '../../src/services/auth-service.js';
 import { StaticSigningKeyProvider } from '../../src/facades/signing-key-provider.js';
@@ -119,10 +115,7 @@ describe('AuthService.login — trust-on-first-use enrollment', () => {
   it('enrolls exactly once — a later different password is rejected, not re-enrolled', async () => {
     await service.login({ password: PASSWORD });
     const enrolled = repo.passwordHash;
-    await expectAuthError(
-      service.login({ password: 'a-different-password' }),
-      'invalid_credentials',
-    );
+    await expectAuthError(service.login({ password: 'a-different-password' }), 'invalid_credentials');
     expect(repo.passwordHash).toBe(enrolled);
   });
 
@@ -180,10 +173,7 @@ describe('AuthService.login', () => {
     for (let i = 0; i < MAX_FAILED_ATTEMPTS - 1; i += 1) {
       await expectAuthError(service.login({ password: 'wrong-password' }), 'invalid_credentials');
     }
-    const locked = await expectAuthError(
-      service.login({ password: 'wrong-password' }),
-      'account_locked',
-    );
+    const locked = await expectAuthError(service.login({ password: 'wrong-password' }), 'account_locked');
     expect(locked.retryAfterSeconds).toBeGreaterThan(0);
 
     // Even the correct password is refused while locked.

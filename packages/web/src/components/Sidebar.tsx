@@ -1,24 +1,7 @@
-import {
-  FileText,
-  Inbox,
-  Layers,
-  LogOut,
-  Mail,
-  PenSquare,
-  Plug,
-  Send,
-  ShieldAlert,
-} from 'lucide-react';
+import { FileText, Inbox, Layers, LogOut, Mail, PenSquare, Plug, Send, ShieldAlert } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Kbd } from './Kbd.js';
 import { cn } from '@/lib/utils';
 
@@ -49,9 +32,7 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
     { id: 'drafts', label: 'Drafts', icon: FileText },
     ...(props.inboundEnabled ? [{ id: 'all' as const, label: 'All mail', icon: Layers }] : []),
     // Received mail whose content couldn't be extracted (failed scan or parse).
-    ...(props.inboundEnabled
-      ? [{ id: 'errors' as const, label: 'Errors', icon: ShieldAlert }]
-      : []),
+    ...(props.inboundEnabled ? [{ id: 'errors' as const, label: 'Errors', icon: ShieldAlert }] : []),
   ];
 
   return (
@@ -74,24 +55,12 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
       <nav aria-label="Folders" className="flex-1 overflow-y-auto px-2">
         <ul className="space-y-px">
           {mail.map((item) => (
-            <NavRow
-              key={item.id}
-              item={item}
-              active={props.folder === item.id}
-              count={item.id === 'drafts' ? props.draftCount : undefined}
-              onSelect={props.onSelectFolder}
-            />
+            <NavRow key={item.id} item={item} active={props.folder === item.id} count={item.id === 'drafts' ? props.draftCount : undefined} onSelect={props.onSelectFolder} />
           ))}
         </ul>
-        <p className="mt-5 mb-1 px-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-          Developers
-        </p>
+        <p className="mt-5 mb-1 px-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Developers</p>
         <ul>
-          <NavRow
-            item={{ id: 'mcp', label: 'MCP server', icon: Plug }}
-            active={props.folder === 'mcp'}
-            onSelect={props.onSelectFolder}
-          />
+          <NavRow item={{ id: 'mcp', label: 'MCP server', icon: Plug }} active={props.folder === 'mcp'} onSelect={props.onSelectFolder} />
         </ul>
       </nav>
 
@@ -102,21 +71,15 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
               type="button"
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
             >
-              <span className="grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-xs font-medium">
-                {(props.subject ?? '?').slice(0, 1).toUpperCase()}
-              </span>
+              <span className="grid size-7 shrink-0 place-items-center rounded-full bg-secondary text-xs font-medium">{(props.subject ?? '?').slice(0, 1).toUpperCase()}</span>
               <span className="min-w-0 flex-1">
-                <span className="block truncate text-[13px] font-medium">
-                  {props.subject ?? 'Account'}
-                </span>
+                <span className="block truncate text-[13px] font-medium">{props.subject ?? 'Account'}</span>
                 <span className="block text-xs text-muted-foreground">Signed in</span>
               </span>
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent side="top" align="start" className="w-56">
-            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">
-              Signed in as {props.subject}
-            </DropdownMenuLabel>
+            <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Signed in as {props.subject}</DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => props.onSelectFolder('mcp')}>
               <Plug />
@@ -133,12 +96,7 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
   );
 }
 
-function NavRow(props: {
-  item: NavItem;
-  active: boolean;
-  count?: number;
-  onSelect: (folder: FolderId) => void;
-}): React.JSX.Element {
+function NavRow(props: { item: NavItem; active: boolean; count?: number; onSelect: (folder: FolderId) => void }): React.JSX.Element {
   return (
     <li>
       <button
@@ -147,21 +105,12 @@ function NavRow(props: {
         onClick={() => props.onSelect(props.item.id)}
         className={cn(
           'flex h-8 w-full items-center gap-2.5 rounded-md px-2 text-[13px] transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
-          props.active
-            ? 'bg-selected font-medium text-selected-foreground'
-            : 'text-foreground/80 hover:bg-accent hover:text-foreground',
+          props.active ? 'bg-selected font-medium text-selected-foreground' : 'text-foreground/80 hover:bg-accent hover:text-foreground',
         )}
       >
-        <props.item.icon
-          className={cn(
-            'size-4',
-            props.active ? 'text-selected-foreground' : 'text-muted-foreground',
-          )}
-        />
+        <props.item.icon className={cn('size-4', props.active ? 'text-selected-foreground' : 'text-muted-foreground')} />
         <span className="flex-1 text-left">{props.item.label}</span>
-        {props.count !== undefined && props.count > 0 && (
-          <span className="text-xs text-muted-foreground tabular-nums">{props.count}</span>
-        )}
+        {props.count !== undefined && props.count > 0 && <span className="text-xs text-muted-foreground tabular-nums">{props.count}</span>}
       </button>
     </li>
   );

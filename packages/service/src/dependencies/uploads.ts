@@ -23,10 +23,7 @@ export interface EmbedLimits {
  * The deploy-configured embed limits with the defaults applied — resolved in one place, so the
  * numbers `EmailService` enforces and the numbers the MCP descriptions state cannot differ.
  */
-export function embedLimits(config: {
-  readonly embedMaxBytes: number | undefined;
-  readonly embedTotalBytes: number | undefined;
-}): EmbedLimits {
+export function embedLimits(config: { readonly embedMaxBytes: number | undefined; readonly embedTotalBytes: number | undefined }): EmbedLimits {
   return {
     embedMaxBytes: config.embedMaxBytes ?? DEFAULT_EMBED_ATTACHMENT_BYTES,
     embedTotalBytes: config.embedTotalBytes ?? DEFAULT_EMBED_TOTAL_BYTES,

@@ -5,8 +5,7 @@
 export function initials(name: string | undefined, address: string): string {
   const source = name?.trim() || address.split('@')[0] || '?';
   const words = source.split(/[\s._-]+/).filter((w) => w.length > 0);
-  const letters =
-    words.length >= 2 ? `${words[0][0]}${words[1][0]}` : (words[0] ?? '?').slice(0, 1);
+  const letters = words.length >= 2 ? `${words[0][0]}${words[1][0]}` : (words[0] ?? '?').slice(0, 1);
   return letters.toUpperCase();
 }
 

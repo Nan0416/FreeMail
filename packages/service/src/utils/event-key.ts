@@ -17,9 +17,7 @@ export const INBOUND_PREFIX = 'inbound/';
 /** SES message ids are conservative ASCII; anything outside this is rejected. */
 const MESSAGE_ID_RE = /^[A-Za-z0-9._-]+$/;
 
-export type EventKeyResult =
-  | { readonly ok: true; readonly messageId: string; readonly rawS3Key: string }
-  | { readonly ok: false; readonly reason: string };
+export type EventKeyResult = { readonly ok: true; readonly messageId: string; readonly rawS3Key: string } | { readonly ok: false; readonly reason: string };
 
 /**
  * Decode an S3 event key exactly once (form-encoding: `+` → space, then

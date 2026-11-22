@@ -1,29 +1,9 @@
 import { useEffect, useState } from 'react';
 import type { EmailAttachmentInfo, EmailDetail } from '@freemail/shared';
-import {
-  ArrowLeft,
-  Copy,
-  Download,
-  FileDown,
-  Forward,
-  ImageOff,
-  Image as ImageIcon,
-  MoreHorizontal,
-  Paperclip,
-  Reply,
-  ReplyAll,
-  SendHorizontal,
-  ShieldAlert,
-} from 'lucide-react';
+import { ArrowLeft, Copy, Download, FileDown, Forward, ImageOff, Image as ImageIcon, MoreHorizontal, Paperclip, Reply, ReplyAll, SendHorizontal, ShieldAlert } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ApiError } from '../api/client.js';
@@ -36,10 +16,7 @@ import { cn } from '@/lib/utils';
 import { EmailBodyFrame } from './EmailBodyFrame.js';
 import { Kbd } from './Kbd.js';
 
-type State =
-  | { readonly status: 'loading' }
-  | { readonly status: 'error'; readonly message: string }
-  | { readonly status: 'ready'; readonly email: EmailDetail };
+type State = { readonly status: 'loading' } | { readonly status: 'error'; readonly message: string } | { readonly status: 'ready'; readonly email: EmailDetail };
 
 export interface EmailReaderProps {
   /** Opaque message handle from the list. */
@@ -103,9 +80,7 @@ export function EmailReader(props: EmailReaderProps): React.JSX.Element {
       const response = await auth.client.getRawUrl(props.id);
       triggerDownload(response.url);
     } catch (err) {
-      toast.error(
-        err instanceof ApiError ? err.message : 'Could not download the original message.',
-      );
+      toast.error(err instanceof ApiError ? err.message : 'Could not download the original message.');
     }
   }
 
@@ -114,37 +89,16 @@ export function EmailReader(props: EmailReaderProps): React.JSX.Element {
   return (
     <article aria-label="Message" className="flex h-full min-w-0 flex-col bg-background">
       <header className="flex h-12 shrink-0 items-center gap-1 border-b px-3">
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className="md:hidden"
-          aria-label="Back to list"
-          onClick={props.onBack}
-        >
+        <Button variant="ghost" size="icon-sm" className="md:hidden" aria-label="Back to list" onClick={props.onBack}>
           <ArrowLeft />
         </Button>
-        <ToolbarButton
-          label="Reply"
-          shortcut="R"
-          disabled={!email}
-          onClick={() => email && props.onReply?.(email, 'reply')}
-        >
+        <ToolbarButton label="Reply" shortcut="R" disabled={!email} onClick={() => email && props.onReply?.(email, 'reply')}>
           <Reply />
         </ToolbarButton>
-        <ToolbarButton
-          label="Reply all"
-          shortcut="A"
-          disabled={!email}
-          onClick={() => email && props.onReply?.(email, 'replyAll')}
-        >
+        <ToolbarButton label="Reply all" shortcut="A" disabled={!email} onClick={() => email && props.onReply?.(email, 'replyAll')}>
           <ReplyAll />
         </ToolbarButton>
-        <ToolbarButton
-          label="Forward"
-          shortcut="F"
-          disabled={!email}
-          onClick={() => email && props.onReply?.(email, 'forward')}
-        >
+        <ToolbarButton label="Forward" shortcut="F" disabled={!email} onClick={() => email && props.onReply?.(email, 'forward')}>
           <Forward />
         </ToolbarButton>
         <div className="ml-auto">
@@ -174,9 +128,7 @@ export function EmailReader(props: EmailReaderProps): React.JSX.Element {
               {email?.rawAvailable && (
                 <DropdownMenuItem onSelect={() => void downloadOriginal()}>
                   <FileDown />
-                  {email.rawSuspicious
-                    ? 'Download original anyway (.eml)'
-                    : 'Download original (.eml)'}
+                  {email.rawSuspicious ? 'Download original anyway (.eml)' : 'Download original (.eml)'}
                 </DropdownMenuItem>
               )}
               {email && email.attachments.length > 0 && (
@@ -227,23 +179,11 @@ async function copy(value: string, message: string): Promise<void> {
   }
 }
 
-function ToolbarButton(props: {
-  label: string;
-  shortcut: string;
-  disabled: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}): React.JSX.Element {
+function ToolbarButton(props: { label: string; shortcut: string; disabled: boolean; onClick: () => void; children: React.ReactNode }): React.JSX.Element {
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={props.label}
-          disabled={props.disabled}
-          onClick={props.onClick}
-        >
+        <Button variant="ghost" size="icon-sm" aria-label={props.label} disabled={props.disabled} onClick={props.onClick}>
           {props.children}
         </Button>
       </TooltipTrigger>
@@ -274,34 +214,20 @@ function ReaderContent(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="mx-auto w-full max-w-3xl shrink-0 px-5 md:px-8 pt-6 pb-4">
-        <h2 className="text-xl leading-snug font-semibold tracking-tight text-balance">
-          {props.email.subject || '(no subject)'}
-        </h2>
+        <h2 className="text-xl leading-snug font-semibold tracking-tight text-balance">{props.email.subject || '(no subject)'}</h2>
 
         <div className="mt-5 flex items-start gap-3">
-          <span
-            aria-hidden
-            className={cn(
-              'grid size-9 shrink-0 place-items-center rounded-full text-[13px] font-medium',
-              avatarTint(props.email.from),
-            )}
-          >
+          <span aria-hidden className={cn('grid size-9 shrink-0 place-items-center rounded-full text-[13px] font-medium', avatarTint(props.email.from))}>
             {initials(props.email.fromName, props.email.from)}
           </span>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-baseline gap-x-2">
               <span className="font-semibold">{props.email.fromName || props.email.from}</span>
-              {props.email.fromName && (
-                <span className="truncate text-[13px] text-muted-foreground">
-                  &lt;{props.email.from}&gt;
-                </span>
-              )}
+              {props.email.fromName && <span className="truncate text-[13px] text-muted-foreground">&lt;{props.email.from}&gt;</span>}
             </div>
             <dl className="mt-0.5 grid grid-cols-[auto_1fr] gap-x-1.5 text-[13px] text-muted-foreground">
               <dt>To</dt>
-              <dd className="min-w-0 truncate">
-                {props.email.to.length ? props.email.to.join(', ') : '—'}
-              </dd>
+              <dd className="min-w-0 truncate">{props.email.to.length ? props.email.to.join(', ') : '—'}</dd>
               {props.email.cc.length > 0 && (
                 <>
                   <dt>Cc</dt>
@@ -317,27 +243,15 @@ function ReaderContent(props: {
               {props.email.replyTo && props.email.replyTo.length > 0 && (
                 <>
                   <dt>Reply-To</dt>
-                  <dd
-                    className={cn(
-                      'min-w-0',
-                      replyToElsewhere(props.email) ? 'break-words' : 'truncate',
-                    )}
-                  >
+                  <dd className={cn('min-w-0', replyToElsewhere(props.email) ? 'break-words' : 'truncate')}>
                     {props.email.replyTo.join(', ')}
-                    {replyToElsewhere(props.email) && (
-                      <span className="ml-1.5 font-medium text-warning">
-                        (not the sender&rsquo;s domain — replies go here)
-                      </span>
-                    )}
+                    {replyToElsewhere(props.email) && <span className="ml-1.5 font-medium text-warning">(not the sender&rsquo;s domain — replies go here)</span>}
                   </dd>
                 </>
               )}
             </dl>
           </div>
-          <time
-            dateTime={props.email.date}
-            className="shrink-0 pt-0.5 text-xs text-muted-foreground tabular-nums"
-          >
+          <time dateTime={props.email.date} className="shrink-0 pt-0.5 text-xs text-muted-foreground tabular-nums">
             {formatLongDate(props.email.date)}
           </time>
         </div>
@@ -354,12 +268,8 @@ function ReaderContent(props: {
                 >
                   <Paperclip className="size-4 shrink-0 text-muted-foreground" />
                   <span className="min-w-0">
-                    <span className="block truncate text-[13px] font-medium">
-                      {attachment.filename}
-                    </span>
-                    <span className="block text-xs text-muted-foreground">
-                      {formatBytes(attachment.sizeBytes)}
-                    </span>
+                    <span className="block truncate text-[13px] font-medium">{attachment.filename}</span>
+                    <span className="block text-xs text-muted-foreground">{formatBytes(attachment.sizeBytes)}</span>
                   </span>
                   <Download className="ml-1 size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
                 </button>
@@ -369,10 +279,7 @@ function ReaderContent(props: {
         )}
 
         {notice && (
-          <div
-            role="alert"
-            className="mt-5 flex items-start gap-3 rounded-md border border-warning/25 bg-warning-surface px-3 py-2.5 text-[13px]"
-          >
+          <div role="alert" className="mt-5 flex items-start gap-3 rounded-md border border-warning/25 bg-warning-surface px-3 py-2.5 text-[13px]">
             <ShieldAlert className="mt-px size-4 shrink-0 text-warning" />
             <p className="flex-1">{notice.message}</p>
             {notice.canReveal && !props.revealed && (
@@ -381,11 +288,7 @@ function ReaderContent(props: {
               </Button>
             )}
             {notice.offerDownload && (
-              <Button
-                variant={notice.suspicious ? 'destructive' : 'outline'}
-                size="xs"
-                onClick={props.onDownloadOriginal}
-              >
+              <Button variant={notice.suspicious ? 'destructive' : 'outline'} size="xs" onClick={props.onDownloadOriginal}>
                 <FileDown />
                 {notice.suspicious ? 'Download anyway' : 'Download original'}
               </Button>
@@ -394,10 +297,7 @@ function ReaderContent(props: {
         )}
 
         {statusNotice && (
-          <div
-            role="status"
-            className="mt-5 flex items-start gap-3 rounded-md border border-warning/25 bg-warning-surface px-3 py-2.5 text-[13px]"
-          >
+          <div role="status" className="mt-5 flex items-start gap-3 rounded-md border border-warning/25 bg-warning-surface px-3 py-2.5 text-[13px]">
             <SendHorizontal className="mt-px size-4 shrink-0 text-warning" />
             <p className="flex-1">{statusNotice}</p>
           </div>
@@ -407,11 +307,7 @@ function ReaderContent(props: {
           <div className="mt-5 flex items-center gap-2 text-xs text-muted-foreground">
             <ImageOff className="size-3.5" />
             Remote images are blocked.
-            <button
-              type="button"
-              onClick={props.onShowImages}
-              className="font-medium text-primary hover:underline focus-visible:underline focus-visible:outline-none"
-            >
+            <button type="button" onClick={props.onShowImages} className="font-medium text-primary hover:underline focus-visible:underline focus-visible:outline-none">
               Show images
             </button>
           </div>
@@ -420,24 +316,10 @@ function ReaderContent(props: {
 
       {showBody && (
         <>
-          {kind === 'html' && props.email.html !== undefined && (
-            <EmailBodyFrame html={props.email.html} allowImages={allowImages} />
-          )}
-          {kind === 'text' && (
-            <pre className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-10 font-sans text-sm leading-relaxed whitespace-pre-wrap">
-              {props.email.text}
-            </pre>
-          )}
-          {kind === 'none' && (
-            <p className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-10 text-[13px] text-muted-foreground">
-              This message has no readable body.
-            </p>
-          )}
-          {props.email.bodyTruncated && (
-            <p className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-6 text-xs text-muted-foreground">
-              This message was truncated for display.
-            </p>
-          )}
+          {kind === 'html' && props.email.html !== undefined && <EmailBodyFrame html={props.email.html} allowImages={allowImages} />}
+          {kind === 'text' && <pre className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-10 font-sans text-sm leading-relaxed whitespace-pre-wrap">{props.email.text}</pre>}
+          {kind === 'none' && <p className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-10 text-[13px] text-muted-foreground">This message has no readable body.</p>}
+          {props.email.bodyTruncated && <p className="mx-auto w-full max-w-3xl px-5 md:px-8 pb-6 text-xs text-muted-foreground">This message was truncated for display.</p>}
         </>
       )}
     </div>
@@ -461,11 +343,7 @@ function triggerDownload(url: string): void {
 
 function ReaderSkeleton(): React.JSX.Element {
   return (
-    <div
-      aria-busy="true"
-      aria-label="Loading message"
-      className="mx-auto w-full max-w-3xl px-5 md:px-8 pt-6"
-    >
+    <div aria-busy="true" aria-label="Loading message" className="mx-auto w-full max-w-3xl px-5 md:px-8 pt-6">
       <Skeleton className="h-6 w-2/3" />
       <div className="mt-6 flex gap-3">
         <Skeleton className="size-9 rounded-full" />

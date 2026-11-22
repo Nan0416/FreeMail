@@ -40,14 +40,7 @@ import { authErrors } from '../utils/errors.js';
 import { isJsonContentType } from '../utils/content-type.js';
 
 /** The routes that must carry `Content-Type: application/json`, as API Gateway route keys. */
-export const JSON_REQUIRED_ROUTES: ReadonlySet<string> = new Set([
-  'POST /auth/login',
-  'POST /auth/refresh',
-  'POST /auth/logout',
-  'POST /keys',
-  'POST /emails',
-  'POST /attachments/uploads',
-]);
+export const JSON_REQUIRED_ROUTES: ReadonlySet<string> = new Set(['POST /auth/login', 'POST /auth/refresh', 'POST /auth/logout', 'POST /keys', 'POST /emails', 'POST /attachments/uploads']);
 
 export function requireJsonContentType(req: Request, _res: Response, next: NextFunction): void {
   if (!isJsonContentType(req.headers['content-type'])) {

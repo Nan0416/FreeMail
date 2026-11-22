@@ -16,9 +16,7 @@ const config: FreeMailConfig = {
 };
 
 function synth(overrides: Partial<FreeMailConfig> = {}): Template {
-  return Template.fromStack(
-    new FreeMailStack(new App(), 'TestStack', { config: { ...config, ...overrides } }),
-  );
+  return Template.fromStack(new FreeMailStack(new App(), 'TestStack', { config: { ...config, ...overrides } }));
 }
 
 /**
@@ -28,10 +26,7 @@ function synth(overrides: Partial<FreeMailConfig> = {}): Template {
 function deployedCsp(template: Template): string {
   const policies = Object.values(template.findResources('AWS::CloudFront::ResponseHeadersPolicy'));
   expect(policies).toHaveLength(1);
-  return renderCfn(
-    policies[0].Properties.ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy
-      .ContentSecurityPolicy,
-  );
+  return renderCfn(policies[0].Properties.ResponseHeadersPolicyConfig.SecurityHeadersConfig.ContentSecurityPolicy.ContentSecurityPolicy);
 }
 
 function renderCfn(value: unknown): string {
@@ -84,9 +79,7 @@ describe('WebConstruct', () => {
     template.resourceCountIs('AWS::CloudFront::OriginAccessControl', 1);
     template.hasResourceProperties('AWS::S3::BucketPolicy', {
       PolicyDocument: {
-        Statement: Match.arrayWith([
-          Match.objectLike({ Principal: { Service: 'cloudfront.amazonaws.com' } }),
-        ]),
+        Statement: Match.arrayWith([Match.objectLike({ Principal: { Service: 'cloudfront.amazonaws.com' } })]),
       },
     });
   });
@@ -94,9 +87,7 @@ describe('WebConstruct', () => {
   it('owns a private, disposable SPA bucket (block-all, DESTROY + auto-emptied)', () => {
     const template = synth();
     // The web bucket is the disposable one — the mail bucket is RETAIN.
-    const webBuckets = Object.values(template.findResources('AWS::S3::Bucket')).filter(
-      (b) => b.DeletionPolicy === 'Delete',
-    );
+    const webBuckets = Object.values(template.findResources('AWS::S3::Bucket')).filter((b) => b.DeletionPolicy === 'Delete');
     expect(webBuckets).toHaveLength(1);
     expect(webBuckets[0].Properties?.PublicAccessBlockConfiguration).toMatchObject({
       BlockPublicAcls: true,
@@ -117,10 +108,7 @@ describe('WebConstruct', () => {
     });
     // Exactly one origin, and it is S3 (OAC) — no custom HTTP origin remains.
     const distribution = Object.values(template.findResources('AWS::CloudFront::Distribution'))[0];
-    const origins = distribution?.Properties?.DistributionConfig?.Origins as Record<
-      string,
-      unknown
-    >[];
+    const origins = distribution?.Properties?.DistributionConfig?.Origins as Record<string, unknown>[];
     expect(origins).toHaveLength(1);
     expect(origins[0]?.CustomOriginConfig).toBeUndefined();
   });
@@ -138,13 +126,9 @@ describe('WebConstruct', () => {
 
   it('invalidates index.html + config.json on deploy so a stale endpoint cannot pin', () => {
     const template = synth();
-    const invalidating = Object.values(
-      template.findResources('Custom::CDKBucketDeployment'),
-    ).filter((resource) => resource.Properties.DistributionId !== undefined);
+    const invalidating = Object.values(template.findResources('Custom::CDKBucketDeployment')).filter((resource) => resource.Properties.DistributionId !== undefined);
     expect(invalidating).toHaveLength(1);
-    expect(invalidating[0].Properties.DistributionPaths).toEqual(
-      expect.arrayContaining(['/index.html', '/config.json']),
-    );
+    expect(invalidating[0].Properties.DistributionPaths).toEqual(expect.arrayContaining(['/index.html', '/config.json']));
   });
 
   it('applies a strict app CSP + security headers via a ResponseHeadersPolicy on the SPA behavior', () => {
@@ -196,9 +180,7 @@ describe('WebConstruct custom domain (appDomain)', () => {
     });
     // Both an A (IPv4) and AAAA (IPv6) alias record point at the distribution.
     const aliasRecords = Object.values(template.findResources('AWS::Route53::RecordSet')).filter(
-      (r) =>
-        r.Properties?.Name === 'mail.example.com.' &&
-        (r.Properties?.Type === 'A' || r.Properties?.Type === 'AAAA'),
+      (r) => r.Properties?.Name === 'mail.example.com.' && (r.Properties?.Type === 'A' || r.Properties?.Type === 'AAAA'),
     );
     expect(aliasRecords).toHaveLength(2);
     expect(aliasRecords.every((r) => r.Properties?.AliasTarget !== undefined)).toBe(true);
@@ -211,9 +193,7 @@ describe('WebConstruct custom domain (appDomain)', () => {
     // `webRuntimeConfigJson` below — the repo's deployed-===-tested pattern.)
     // The mail bucket's own virtual-hosted S3 host (where the presigned PUTs go) — that
     // bucket only, never a wildcard over S3.
-    expect(deployedCsp(synth())).toMatch(
-      /connect-src 'self' https:\/\/api\.example\.com https:\/\/\{DataMailBucket[0-9A-F]+\}\.s3\.us-east-1\.amazonaws\.com;/,
-    );
+    expect(deployedCsp(synth())).toMatch(/connect-src 'self' https:\/\/api\.example\.com https:\/\/\{DataMailBucket[0-9A-F]+\}\.s3\.us-east-1\.amazonaws\.com;/);
   });
 });
 
@@ -267,9 +247,7 @@ describe('appContentSecurityPolicy', () => {
 
   it('adds exactly two extra origins (api + upload host), and only to connect-src', () => {
     const api = 'https://api.example.com';
-    const widened = policy
-      .split('; ')
-      .filter((directive) => directive.includes(api) || directive.includes(upload));
+    const widened = policy.split('; ').filter((directive) => directive.includes(api) || directive.includes(upload));
     expect(widened).toEqual([`connect-src 'self' ${api} ${upload}`]);
     // script-src is never widened — neither origin may become a script source.
     expect(policy).toContain("script-src 'self'");

@@ -24,11 +24,7 @@ export interface ComposePrefill {
 }
 
 function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 /**
@@ -107,24 +103,15 @@ export function replySender(email: EmailDetail, lastSender: string): string {
  * conversation; a forward starts a new one. A received message's `Reply-To`, when it has one,
  * is where the sender asked replies to go, so it replaces `From` as the primary recipient.
  */
-export function buildPrefill(
-  email: EmailDetail,
-  mode: ReplyMode,
-  lastSender: string,
-): ComposePrefill {
+export function buildPrefill(email: EmailDetail, mode: ReplyMode, lastSender: string): ComposePrefill {
   const from = replySender(email, lastSender);
-  const sender = email.fromName
-    ? `${escapeHtml(email.fromName)} &lt;${escapeHtml(email.from)}&gt;`
-    : escapeHtml(email.from);
+  const sender = email.fromName ? `${escapeHtml(email.fromName)} &lt;${escapeHtml(email.from)}&gt;` : escapeHtml(email.from);
   const when = escapeHtml(formatLongDate(email.headerDate ?? email.date));
   const quoted = quoteBlock(quotedText(email));
 
   if (mode === 'forward') {
     const header =
-      `<p>---------- Forwarded message ----------<br>` +
-      `From: ${sender}<br>Date: ${when}<br>` +
-      `Subject: ${escapeHtml(email.subject)}<br>` +
-      `To: ${escapeHtml(email.to.join(', '))}</p>`;
+      `<p>---------- Forwarded message ----------<br>` + `From: ${sender}<br>Date: ${when}<br>` + `Subject: ${escapeHtml(email.subject)}<br>` + `To: ${escapeHtml(email.to.join(', '))}</p>`;
     return {
       from,
       to: '',
@@ -146,18 +133,8 @@ export function buildPrefill(
   }
 
   // Replying to our own sent message continues to its recipients rather than ourselves.
-  const primary =
-    email.direction === 'sent'
-      ? [...email.to]
-      : email.replyTo && email.replyTo.length > 0
-        ? [...email.replyTo]
-        : [email.from];
-  const others =
-    mode === 'replyAll'
-      ? [...(email.direction === 'sent' ? [] : email.to), ...email.cc].filter(
-          (a) => !sameAddress(a, from) && !primary.some((p) => sameAddress(p, a)),
-        )
-      : [];
+  const primary = email.direction === 'sent' ? [...email.to] : email.replyTo && email.replyTo.length > 0 ? [...email.replyTo] : [email.from];
+  const others = mode === 'replyAll' ? [...(email.direction === 'sent' ? [] : email.to), ...email.cc].filter((a) => !sameAddress(a, from) && !primary.some((p) => sameAddress(p, a))) : [];
   return {
     from,
     to: primary.join(', '),

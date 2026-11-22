@@ -34,13 +34,7 @@ describe('freemail-config.template.json', () => {
   it('is a valid config — the committed starting point must actually parse', () => {
     // People copy this file and edit it. If the template itself were invalid, the very
     // first `cdk deploy` would fail on a file we shipped.
-    const template = join(
-      dirname(fileURLToPath(import.meta.url)),
-      '..',
-      '..',
-      '..',
-      'freemail-config.template.json',
-    );
+    const template = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'freemail-config.template.json');
     const config = loadConfig(template);
     expect(config.region).toBe('us-east-1');
     expect(config.appDomain).not.toBe(config.apiDomain);
