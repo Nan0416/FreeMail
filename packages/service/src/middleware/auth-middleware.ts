@@ -42,6 +42,11 @@ function attachAuthContext(req: Request, context: AuthContext): void {
   (req as { authContext?: AuthContext }).authContext = context;
 }
 
+/** The single writer of `iamCaller`, `readonly` on `Request` for the same reason. */
+function attachIamCaller(req: Request, caller: IamCaller): void {
+  (req as { iamCaller?: IamCaller }).iamCaller = caller;
+}
+
 export const authMiddleware: RequestHandler = (req, _res, next) => {
   const event = getCurrentInvoke().event as APIGatewayProxyEventV2 | undefined;
   const subject = event ? optionalSubjectFromContext(event) : undefined;
@@ -50,7 +55,7 @@ export const authMiddleware: RequestHandler = (req, _res, next) => {
   }
   const iamCaller = event ? iamCallerFromContext(event) : undefined;
   if (iamCaller) {
-    (req as { iamCaller?: IamCaller }).iamCaller = iamCaller;
+    attachIamCaller(req, iamCaller);
   }
   next();
 };

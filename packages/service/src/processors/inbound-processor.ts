@@ -37,7 +37,8 @@ import { parseInbound, type AttachmentSink, type ParsedInbound } from '../utils/
 import { sanitizeContentType, sanitizeFilename, snippetFromHtml, snippetFromText } from '../utils/sanitize.js';
 import { decideExposure, type Exposure } from '../utils/verdicts.js';
 import { bodyKey, estimateRowBytes, storeEmailBody } from '../services/email-body-storage.js';
-import { buildEmailReceivedNotification, type EmailReceivedNotifier } from './email-received-notification.js';
+import type { EmailReceivedNotifier } from '../facades/sns-email-received-notifier.js';
+import { buildEmailReceivedNotification } from './email-received-notification.js';
 
 /** Extracted attachments live OUTSIDE the `inbound/` trigger prefix so writes never re-invoke the parser. */
 export const ATTACHMENTS_PREFIX = 'attachments/inbound/';

@@ -29,7 +29,10 @@ export interface EmailReceivedNotification {
   /** Header recipients, at most {@link NOTIFICATION_MAX_RECIPIENTS} each. BCC'd recipients aren't listed. */
   readonly to: readonly string[];
   readonly cc: readonly string[];
-  /** Present when `to` or `cc` was cut to the cap; `GET /api/emails/{id}` has the full lists. */
+  /**
+   * Present when `to` or `cc` was cut to the cap. The stored message keeps at most 50 addresses
+   * per header as well, so today this never appears; it guards a future higher storage cap.
+   */
   readonly recipientsTruncated?: true;
   /** At most {@link NOTIFICATION_MAX_SUBJECT_CHARS} characters. */
   readonly subject: string;

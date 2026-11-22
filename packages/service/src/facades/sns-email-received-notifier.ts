@@ -1,6 +1,10 @@
 import { PublishCommand, type SNSClient } from '@aws-sdk/client-sns';
 import type { EmailReceivedNotification } from '@freemail/shared';
-import type { EmailReceivedNotifier } from '../processors/email-received-notification.js';
+
+/** Publishes {@link EmailReceivedNotification}s (SNS in production). */
+export interface EmailReceivedNotifier {
+  emailReceived(notification: EmailReceivedNotification): Promise<void>;
+}
 
 /**
  * Publishes to the email-received topic. `type` and `spam` are also message attributes, so a
