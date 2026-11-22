@@ -31,6 +31,9 @@ import {
   MAX_EMAIL_RESPONSE_BYTES,
   MAX_READ_BODY_BYTES,
   type RawEmailDownloadResponse,
+  SERVICE_ATTACHMENT_URL_TTL_SECONDS,
+  type ServiceEmailAttachment,
+  type ServiceEmailDetail,
 } from '@freemail/shared';
 import { type EmailsDao, FAILED_PARTITION, type EmailSummary, type GetEmailOutput, type InboundAttachmentDescriptor } from '../data/emails-dao.js';
 import { INBOUND_RAW_RETENTION_DAYS } from '@freemail/shared/storage';
@@ -57,6 +60,7 @@ import { listEmailsPage, pageQuery, type MergeQuery, type MergeQueryResult } fro
 import { hasTextFilters, matchesListFilters, sortKeyBounds } from '../utils/list-filter.js';
 import { getLogger } from '../utils/logger.js';
 import { loadEmailBody } from './email-body-storage.js';
+import { mapWithConcurrency } from '../utils/concurrency.js';
 
 /** The raw-MIME source legacy rows re-parse their bodies from — satisfied by the inbound S3 store. */
 export interface RawMimeSource {
@@ -113,6 +117,9 @@ const logger = getLogger('EmailReadService');
 /** S3's error name for a missing object — an expired raw message on the legacy path. */
 const NO_SUCH_KEY = 'NoSuchKey';
 
+/** At most this many attachments are presigned at once. */
+const PRESIGN_CONCURRENCY = 5;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Rows per list-index read while scanning for filter matches. */
@@ -143,6 +150,9 @@ export interface GetEmailServiceRequest {
 }
 
 export type GetEmailServiceResponse = EmailDetail;
+
+/** The same handle as {@link GetEmailServiceRequest}. */
+export type GetEmailWithDownloadUrlsServiceRequest = GetEmailServiceRequest;
 
 export interface GetAttachmentUrlServiceRequest {
   readonly handle: string;
@@ -236,12 +246,15 @@ export class EmailReadService {
 
   /** Read one message. Received + exposable → body materialized; otherwise envelope-only. */
   async getEmail(request: GetEmailServiceRequest): Promise<GetEmailServiceResponse> {
-    const row = await this.loadRow(request.handle);
+    return this.detailFor(await this.loadRow(request.handle), request.handle);
+  }
+
+  private async detailFor(row: GetEmailOutput, handle: string): Promise<EmailDetail> {
     // Size the envelope first so the body budget accounts for the WHOLE response, not just
     // the body — the combined serialized bytes must stay under the Lambda response limit.
-    const envelopeBytes = Buffer.byteLength(JSON.stringify(this.toDetail(row, request.handle, {})), 'utf8');
+    const envelopeBytes = Buffer.byteLength(JSON.stringify(this.toDetail(row, handle, {})), 'utf8');
     const body = await this.materializeBody(row, envelopeBytes);
-    return this.toDetail(row, request.handle, body);
+    return this.toDetail(row, handle, body);
   }
 
   /**
@@ -256,14 +269,44 @@ export class EmailReadService {
     if (!descriptor) {
       throw emailErrors.notFound('No such attachment.');
     }
+    return this.presignAttachment(descriptor, ATTACHMENT_URL_TTL_SECONDS);
+  }
+
+  /**
+   * The detail for a backend service (`GET /api/emails/{id}`): `getEmail` without the `.eml`
+   * fields, with a presigned download URL on every attachment. The URLs last
+   * SERVICE_ATTACHMENT_URL_TTL_SECONDS, long enough to fetch several large files in turn.
+   */
+  async getEmailWithDownloadUrls(request: GetEmailWithDownloadUrlsServiceRequest): Promise<ServiceEmailDetail> {
+    const row = await this.loadRow(request.handle);
+    const detail = await this.detailFor(row, request.handle);
+    const descriptors = rowAttachments(row);
+    const attachments = await mapWithConcurrency(detail.attachments, PRESIGN_CONCURRENCY, async (info): Promise<ServiceEmailAttachment> => {
+      const descriptor = descriptors.find((a) => a.id === info.id);
+      if (!descriptor) {
+        throw new Error(`Attachment ${info.id} is listed but has no stored descriptor.`);
+      }
+      const link = await this.presignAttachment(descriptor, SERVICE_ATTACHMENT_URL_TTL_SECONDS);
+      return { ...info, downloadUrl: link.url, downloadUrlExpiresAt: link.expiresAt };
+    });
+    const typed: ServiceEmailDetail = { ...detail, attachments };
+    // No `.eml` route under /api, so its fields don't belong in the response. A test pins the
+    // exact keys, so a field added to the web detail can't leak into this contract unnoticed.
+    const result: Record<string, unknown> = { ...typed };
+    delete result.rawAvailable;
+    delete result.rawSuspicious;
+    return result as unknown as ServiceEmailDetail;
+  }
+
+  /** A presigned GET that always downloads (never renders inline), whatever the object's metadata. */
+  private async presignAttachment(descriptor: { readonly s3Key: string; readonly filename: string }, ttlSeconds: number): Promise<AttachmentDownloadResponse> {
     const url = await this.presigner.presign({
       key: descriptor.s3Key,
-      // Force a non-inline download regardless of the object's stored metadata.
       contentType: 'application/octet-stream',
       contentDisposition: contentDispositionForDownload(descriptor.filename),
-      expiresInSeconds: ATTACHMENT_URL_TTL_SECONDS,
+      expiresInSeconds: ttlSeconds,
     });
-    const expiresAt = new Date(this.now().getTime() + ATTACHMENT_URL_TTL_SECONDS * 1000).toISOString();
+    const expiresAt = new Date(this.now().getTime() + ttlSeconds * 1000).toISOString();
     return { url, expiresAt };
   }
 

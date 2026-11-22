@@ -268,6 +268,16 @@ describe('FreeMailStack', () => {
     template.hasOutput('SesProductionAccessNote', {});
   });
 
+  it('adds the email-received topic and its output only when inbound is enabled', () => {
+    const on = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
+    // The bounce/complaint topic, plus the inbound email-received topic.
+    on.resourceCountIs('AWS::SNS::Topic', 2);
+    on.hasResourceProperties('AWS::SNS::Topic', { TopicName: 'TestStack-email-received' });
+    on.hasOutput('EmailReceivedTopicArn', {});
+    const off = synth(makeConfig());
+    expect(() => off.hasOutput('EmailReceivedTopicArn', {})).toThrow();
+  });
+
   it('grants SES send on BOTH the identity and the configuration set', () => {
     // Regression: the sender always passes ConfigurationSetName, and SES authorizes such
     // a send against the config-set resource as well as the identity. Granting only the

@@ -47,7 +47,12 @@ export interface ResolveLinkedAttachmentsResponse {
   readonly attachments: readonly InboundAttachmentDescriptor[];
 }
 
-export class OwnLinkAttachments {
+/** Resolves a message's own download links to attachments (OwnLinkAttachments in production). */
+export interface LinkedAttachmentResolver {
+  resolveLinkedAttachments(request: ResolveLinkedAttachmentsRequest): Promise<ResolveLinkedAttachmentsResponse>;
+}
+
+export class OwnLinkAttachments implements LinkedAttachmentResolver {
   private readonly linkPattern: RegExp;
 
   /** `downloadBaseUrl` is the API's public base, exactly as the send path builds links. */

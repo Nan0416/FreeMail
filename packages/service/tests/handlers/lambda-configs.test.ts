@@ -19,7 +19,7 @@ describe('per-Lambda configs are narrow', () => {
     expect(() => getMcpConfig(MCP_ENV)).not.toThrow();
   });
 
-  it('the inbound handler needs only the emails + tokens tables, the buckets, and the link base', () => {
+  it('the inbound handler needs only the emails + tokens tables, the buckets, the link base, and the topic', () => {
     expect(
       getInboundConfig({
         EMAILS_TABLE: 'emails',
@@ -27,6 +27,7 @@ describe('per-Lambda configs are narrow', () => {
         QUARANTINE_BUCKET: 'q',
         DOWNLOAD_TOKENS_TABLE: 'tokens',
         DOWNLOAD_BASE_URL: 'https://api.example.com',
+        EMAIL_RECEIVED_TOPIC_ARN: 'arn:aws:sns:us-east-1:111111111111:received',
       }),
     ).toEqual({
       emailsTable: 'emails',
@@ -34,6 +35,7 @@ describe('per-Lambda configs are narrow', () => {
       quarantineBucket: 'q',
       downloadTokensTable: 'tokens',
       downloadBaseUrl: 'https://api.example.com',
+      emailReceivedTopicArn: 'arn:aws:sns:us-east-1:111111111111:received',
     });
   });
 
