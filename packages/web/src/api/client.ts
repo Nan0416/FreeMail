@@ -5,7 +5,10 @@ import type {
   CreateAttachmentUploadResponse,
   EmailDetail,
   EmailListFilter,
+  ForwardingRule,
+  ForwardingRuleFields,
   ListApiKeysResponse,
+  ListForwardingRulesResponse,
   ListEmailsResponse,
   RawEmailDownloadResponse,
   SendEmailRequest,
@@ -35,7 +38,7 @@ export class ApiError extends Error {
   }
 }
 
-type Method = 'GET' | 'POST' | 'DELETE';
+type Method = 'GET' | 'POST' | 'PUT' | 'DELETE';
 
 /**
  * PUT a file to a presigned URL, calling `onProgress` with the bytes sent so far. Resolves
@@ -184,6 +187,30 @@ export class FreeMailClient {
 
   async revokeKey(id: string): Promise<void> {
     await this.request('DELETE', `/keys/${encodeURIComponent(id)}`, { auth: true });
+  }
+
+  // --- forwarding rules ---
+
+  /** Every rule, oldest first. */
+  async listForwardingRules(): Promise<ListForwardingRulesResponse> {
+    return this.request<ListForwardingRulesResponse>('GET', '/forwarding-rules', { auth: true });
+  }
+
+  /** Create a rule; the server normalizes the fields and answers with the stored rule. */
+  async createForwardingRule(fields: ForwardingRuleFields): Promise<ForwardingRule> {
+    return this.request<ForwardingRule>('POST', '/forwarding-rules', { body: fields, auth: true });
+  }
+
+  /** Replace a rule's fields. */
+  async updateForwardingRule(id: string, fields: ForwardingRuleFields): Promise<ForwardingRule> {
+    return this.request<ForwardingRule>('PUT', `/forwarding-rules/${encodeURIComponent(id)}`, {
+      body: fields,
+      auth: true,
+    });
+  }
+
+  async deleteForwardingRule(id: string): Promise<void> {
+    await this.request('DELETE', `/forwarding-rules/${encodeURIComponent(id)}`, { auth: true });
   }
 
   // --- read (inbound + sent) ---

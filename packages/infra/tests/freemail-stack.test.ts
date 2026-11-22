@@ -61,9 +61,10 @@ describe('FreeMailStack', () => {
     expect(stack.region).toBe('us-east-1');
   });
 
-  it('creates the data layer: 4 tables + 3 buckets — data retained, web disposable', () => {
+  it('creates the data layer: 5 tables + 3 buckets — data retained, web disposable', () => {
     const template = synth(makeConfig());
-    template.resourceCountIs('AWS::DynamoDB::Table', 4);
+    // auth, API keys, emails, download tokens, forwarding rules (created even with inbound off).
+    template.resourceCountIs('AWS::DynamoDB::Table', 5);
     template.resourceCountIs('AWS::S3::Bucket', 3);
     template.allResourcesProperties('AWS::DynamoDB::Table', { BillingMode: 'PAY_PER_REQUEST' });
     // Tables + the mail bucket hold the deployer's real data → RETAIN (a cdk destroy
@@ -266,6 +267,18 @@ describe('FreeMailStack', () => {
     template.resourceCountIs('AWS::SES::ConfigurationSet', 1);
     template.resourceCountIs('AWS::SNS::Topic', 1);
     template.hasOutput('SesProductionAccessNote', {});
+  });
+
+  it('builds the forwarder (queue, DLQ, Lambda) only when inbound is enabled', () => {
+    const forwarders = (template: Template): number =>
+      Object.values(template.findResources('AWS::Lambda::Function')).filter((fn) => String(fn.Properties?.Description ?? '').startsWith('FreeMail forwarder')).length;
+    const on = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
+    expect(forwarders(on)).toBe(1);
+    on.hasResourceProperties('AWS::SNS::Subscription', { Protocol: 'sqs', RawMessageDelivery: true });
+    const off = synth(makeConfig());
+    expect(forwarders(off)).toBe(0);
+    expect(Object.keys(off.findResources('AWS::SQS::Queue')).filter((id) => id.includes('Forwarding'))).toEqual([]);
+    expect(Object.keys(on.findResources('AWS::SQS::Queue')).filter((id) => id.includes('Forwarding'))).toHaveLength(2);
   });
 
   it('adds the email-received topic and its output only when inbound is enabled', () => {

@@ -254,6 +254,38 @@ export interface CreateInboundEmailInput {
    * the snippet. Absent on a row written before bodies were stored.
    */
   readonly body?: StoredEmailBody;
+  /**
+   * Set by the forwarder once it has re-sent the message to the addresses its rules named —
+   * never at creation. Its presence is what stops a repeated notification forwarding twice.
+   */
+  readonly forward?: InboundForward;
+}
+
+/** A received message's forward: who it went to, why, and the SES id of the copy. */
+export interface InboundForward {
+  /** The addresses the copy was sent to, lowercased. */
+  readonly to: readonly string[];
+  /** The ids of the rules that matched. */
+  readonly ruleIds: readonly string[];
+  /** The id SES gave the forwarded copy. */
+  readonly sesMessageId: string;
+  /** ISO-8601. */
+  readonly forwardedAt: string;
+}
+
+/**
+ * Record a received message's forward. Keyed by `id` + `receivedAt` (the sort-key basis); only
+ * mail in the main INBOUND partition is ever forwarded, never the Errors folder.
+ */
+export interface UpdateInboundEmailForwardInput {
+  readonly id: string;
+  readonly receivedAt: string;
+  readonly forward: InboundForward;
+}
+
+export interface UpdateInboundEmailForwardOutput {
+  /** False when the row is gone or already records a forward — the conditional write did not run. */
+  readonly recorded: boolean;
 }
 
 export interface CreateInboundEmailOutput {
@@ -392,6 +424,12 @@ export interface EmailsDao {
 
   /** Record a received message, idempotently. */
   createInboundEmail(input: CreateInboundEmailInput): Promise<CreateInboundEmailOutput>;
+
+  /**
+   * Record that a received message was forwarded. Conditional on the row existing and holding
+   * no forward yet, so the first record wins and a repeat reports `recorded: false`.
+   */
+  updateInboundEmailForward(input: UpdateInboundEmailForwardInput): Promise<UpdateInboundEmailForwardOutput>;
 
   /**
    * One partition (`'sent'` → `pk='SENT'`, `'inbound'` → `pk='INBOUND'`), newest-first, at

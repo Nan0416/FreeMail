@@ -15,6 +15,7 @@ import { LambdaSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
 import type { SesIdentityMode } from '@freemail/shared/config';
 import { SELF_CONTAINED_BUNDLING } from './bundling.js';
+import { ForwardingConstruct } from './forwarding.js';
 import { InboundConstruct } from './inbound.js';
 
 const HANDLERS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'service', 'src', 'handlers');
@@ -42,7 +43,8 @@ export interface SesConstructProps {
   /**
    * The mail stores the inbound pipeline needs, present ONLY when inbound email is
    * enabled (the stack passes this iff `config.inbound.enabled`). When present, SES
-   * instantiates the inbound receipt pipeline as a child; absent → SES is send-only.
+   * instantiates the inbound receipt pipeline and the forwarder as children; absent → SES is
+   * send-only.
    */
   readonly inbound?: {
     /** Raw inbound MIME is delivered under `inbound/` of this bucket; parsed attachments under `attachments/`. */
@@ -51,6 +53,8 @@ export interface SesConstructProps {
     readonly emailsTable: Table;
     /** The parser copies a failed message's raw MIME here (the Errors folder). */
     readonly quarantineBucket: Bucket;
+    /** The forwarder reads the rules here (edited through the REST API). */
+    readonly forwardingRulesTable: Table;
   };
 }
 
@@ -115,6 +119,8 @@ export class SesConstruct extends Construct {
   readonly deliveryTracker: NodejsFunction;
   /** The inbound receipt pipeline — present only when inbound email is enabled. */
   readonly inbound?: InboundConstruct;
+  /** The forwarder, subscribed to the inbound pipeline's email-received topic — inbound only. */
+  readonly forwarding?: ForwardingConstruct;
   /**
    * Custom MAIL FROM subdomain (`bounce.<emailDomain>`) — keeps SPF/DMARC aligned with
    * the From domain. Undefined in import mode: whatever MAIL FROM the existing identity
@@ -173,6 +179,14 @@ export class SesConstruct extends Construct {
         mailBucket: props.inbound.mailBucket,
         quarantineBucket: props.inbound.quarantineBucket,
         emailsTable: props.inbound.emailsTable,
+      });
+      this.forwarding = new ForwardingConstruct(this, 'Forwarding', {
+        emailDomain: props.emailDomain,
+        mailBucket: props.inbound.mailBucket,
+        emailsTable: props.inbound.emailsTable,
+        forwardingRulesTable: props.inbound.forwardingRulesTable,
+        emailReceivedTopic: this.inbound.emailReceivedTopic,
+        configurationSetName: this.configurationSet.configurationSetName,
       });
     }
   }

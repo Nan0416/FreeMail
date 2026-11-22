@@ -5,6 +5,14 @@
  */
 export { AuthService, OWNER_SUBJECT, type AuthServiceDeps } from './auth-service.js';
 export { ApiKeyService, type ApiKeyServiceDeps } from './api-key-service.js';
+export {
+  ForwardingRuleService,
+  type CreateForwardingRuleServiceRequest,
+  type DeleteForwardingRuleServiceRequest,
+  type ForwardingRuleServiceDeps,
+  type ListForwardingRulesServiceRequest,
+  type UpdateForwardingRuleServiceRequest,
+} from './forwarding-rule-service.js';
 export { EmailService, type EmailServiceDeps, type SendEmailServiceRequest, sentRawKey } from './email-service.js';
 export {
   EmailReadService,

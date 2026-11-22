@@ -70,13 +70,14 @@ export function getAuthContext(req: Request): AuthContext {
 /**
  * Guard: only a Bearer access token (the human, via the app) may reach this route. An
  * `x-api-key`-authenticated caller is authenticated but must NOT be able to escalate to
- * managing the account's key set or to reading the mailbox over REST — so anything other
- * than the `access` scheme is forbidden. Fails closed on a missing scheme, and on a
- * request with no authorizer context at all.
+ * managing the account's key set, to reading the mailbox over REST, or to editing forwarding
+ * rules (one rule could copy every received message out) — so anything other than the
+ * `access` scheme is forbidden. Fails closed on a missing scheme, and on a request with no
+ * authorizer context at all.
  */
 export function requireAccessScheme(req: Request, _res: Response, next: NextFunction): void {
   if (req.authContext?.scheme !== 'access') {
-    next(authErrors.forbidden('API keys cannot manage API keys.'));
+    next(authErrors.forbidden('This route is for the signed-in app only; API keys cannot use it.'));
     return;
   }
   next();

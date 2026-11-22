@@ -30,6 +30,7 @@ flowchart TB
         DDB["DynamoDB<br/>(auth · api keys · emails · download tokens)"]
         S3mail["S3 · mail bucket<br/>(inbound MIME · attachments)"]
         Parse["Inbound parser Lambda<br/>(optional)"]
+        Fwd["Forwarder Lambda<br/>(forwarding rules)"]
     end
 
     Browser -->|"HTTPS · loads the SPA"| CF
@@ -49,13 +50,15 @@ flowchart TB
     SES -.->|"inbound receipt (optional)"| S3mail
     S3mail -.->|"ObjectCreated"| Parse
     Parse -.-> DDB
+    Parse -.->|"email.received (SNS → SQS)"| Fwd
+    Fwd -.->|"re-send"| SES
 ```
 
 **How it fits together.** The React SPA is served from a private S3 bucket via CloudFront at your `appDomain`; the HTTP API lives at your `apiDomain`. **Both domains are required** — the browser calls the API cross-origin, so there is no working deployment without them.
 
 The session rides in `HttpOnly; Secure; SameSite=Strict` cookies (`__Host-` prefixed, so they are host-locked to the api domain) with **no token in web storage**. Cross-origin access is defended in three coupled layers: `SameSite=Strict` blocks a foreign site outright; the API allows exactly **one** origin — your `appDomain` — with credentials, never a wildcard and never a reflected origin; and every state-changing route requires `Content-Type: application/json`, which forces a browser preflight that the origin allowlist then refuses. That third layer is what stops a _same-site sibling_ (`evil.example.com`), against which `SameSite=Strict` does nothing.
 
-Agents skip the browser entirely and call the HTTP API directly with an `x-api-key` header — they send no `Origin`, so CORS never applies to them. A single Lambda authorizer accepts either credential and remains the only authorization boundary; CORS governs what a browser may _read_, never whether a request is allowed. Sending goes through Amazon SES; metadata and hashed secrets live in DynamoDB; raw inbound mail and attachments live in S3. Inbound is **off by default** — when enabled, SES writes received mail to S3 and a parser Lambda indexes it.
+Agents skip the browser entirely and call the HTTP API directly with an `x-api-key` header — they send no `Origin`, so CORS never applies to them. A single Lambda authorizer accepts either credential and remains the only authorization boundary; CORS governs what a browser may _read_, never whether a request is allowed. Sending goes through Amazon SES; metadata and hashed secrets live in DynamoDB; raw inbound mail and attachments live in S3. Inbound is **off by default** — when enabled, SES writes received mail to S3 and a parser Lambda indexes it; a forwarder Lambda re-sends mail that matches a forwarding rule.
 
 ## Capabilities and limitations
 
@@ -65,6 +68,7 @@ Agents skip the browser entirely and call the HTTP API directly with an `x-api-k
 | **Agent access** | MCP `send_email` + read tools `list_emails` / `get_email` / `get_email_attachment_url` (reads available when inbound is enabled), via `x-api-key`                                                                                                                                                                                                                | —                                                                                     |
 | **Read**         | Web inbox + reader (sandboxed HTML render), attachment download — **when inbound is enabled**                                                                                                                                                                                                                                                                    | —                                                                                     |
 | **Inbound**      | Optional SES receipt → S3 → parse → index                                                                                                                                                                                                                                                                                                                        | —                                                                                     |
+| **Forwarding**   | With inbound: rules edited in the web app (Settings → Forwarding) on the sender and/or To/Cc recipients re-send matching mail from DMARC-authenticated senders to outside addresses, From your domain                                                                                                                                                            | —                                                                                     |
 | **Attachments**  | Uploaded **straight to S3** (presigned PUT), up to **100 MB each**; files over 3 MB (or past 10 MB embedded per message) become **token-download links** (`/d/{token}`, 30-day expiry)                                                                                                                                                                           | Download-token revoke endpoint — [#35](https://github.com/Nan0416/FreeMail/issues/35) |
 | **Auth**         | Single password (web) via httpOnly cookies; API keys (agents) authorize **MCP send + read** (reads when inbound is enabled). Other AWS services call `/api/*` with IAM (SigV4): they subscribe to new-mail notifications (SNS, with inbound) and fetch messages with `GET /api/emails/{id}`. REST mailbox reads and key management still need the cookie session | —                                                                                     |
 | **Region**       | `us-east-1` only (inbound SES + CloudFront ACM both require it)                                                                                                                                                                                                                                                                                                  | Other regions are unsupported                                                         |

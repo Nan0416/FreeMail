@@ -6,7 +6,7 @@
  * rather than on DynamoDB and its whole flow is unit-testable against an in-memory fake.
  */
 export { createDocumentClient } from './document-client.js';
-export { ApiKeyEntity, AuthEntity, CONDITIONAL_CHECK_FAILED, DownloadTokenEntity, EmailEntity, isConditionalCheckFailed, type TableKey } from './entities.js';
+export { ApiKeyEntity, AuthEntity, CONDITIONAL_CHECK_FAILED, DownloadTokenEntity, EmailEntity, ForwardingRuleEntity, isConditionalCheckFailed, type TableKey } from './entities.js';
 export { optimisticUpdate, type VersionedValue } from './optimistic.js';
 
 export type {
@@ -43,13 +43,29 @@ export type {
   EmailsDao,
   GetEmailInput,
   GetEmailOutput,
+  InboundForward,
   QueryEmailsByDirectionInput,
   QueryEmailsByDirectionOutput,
+  UpdateInboundEmailForwardInput,
+  UpdateInboundEmailForwardOutput,
   UpdateSentEmailStatusInput,
   UpdateSentEmailStatusOutput,
 } from './emails-dao.js';
 export { INBOUND_PARTITION, SENT_PARTITION } from './emails-dao.js';
 export { DdbEmailsDao } from './ddb-emails-dao.js';
+
+export type {
+  CreateForwardingRuleInput,
+  CreateForwardingRuleOutput,
+  DeleteForwardingRuleInput,
+  DeleteForwardingRuleOutput,
+  ForwardingRulesDao,
+  ListForwardingRulesInput,
+  ListForwardingRulesOutput,
+  UpdateForwardingRuleInput,
+  UpdateForwardingRuleOutput,
+} from './forwarding-rules-dao.js';
+export { DdbForwardingRulesDao } from './ddb-forwarding-rules-dao.js';
 
 export type { ClaimDownloadTokenInput, ClaimDownloadTokenOutput, CreateDownloadTokenInput, CreateDownloadTokenOutput, DownloadTokensDao } from './download-tokens-dao.js';
 export { DdbDownloadTokensDao } from './ddb-download-tokens-dao.js';
