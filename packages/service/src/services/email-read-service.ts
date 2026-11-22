@@ -30,7 +30,7 @@ import {
   type ServiceEmailAttachment,
   type ServiceEmailDetail,
 } from '@freemail/shared';
-import { type EmailsDao, FAILED_PARTITION, type EmailSummary, type GetEmailOutput, type InboundAttachmentDescriptor } from '../data/emails-dao.js';
+import { type EmailsDao, FAILED_PARTITION, type EmailSummary, type GetEmailOutput } from '../data/emails-dao.js';
 import { INBOUND_RAW_RETENTION_DAYS } from '@freemail/shared/storage';
 import type { AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import type { MailBodyContent, MailBodyStore } from '../facades/s3-mail-body-store.js';
@@ -199,7 +199,7 @@ export class EmailReadService {
    */
   async getAttachmentUrl(request: GetAttachmentUrlServiceRequest): Promise<AttachmentDownloadResponse> {
     const row = await this.loadRow(request.handle);
-    const descriptor = rowAttachments(row).find((a) => a.id === request.attachmentId);
+    const descriptor = row.attachments.find((a) => a.id === request.attachmentId);
     if (!descriptor) {
       throw emailErrors.notFound('No such attachment.');
     }
@@ -214,7 +214,7 @@ export class EmailReadService {
   async getEmailWithDownloadUrls(request: GetEmailWithDownloadUrlsServiceRequest): Promise<ServiceEmailDetail> {
     const row = await this.loadRow(request.handle);
     const detail = await this.detailFor(row, request.handle);
-    const descriptors = rowAttachments(row);
+    const descriptors = row.attachments;
     const attachments = await mapWithConcurrency(detail.attachments, PRESIGN_CONCURRENCY, async (info): Promise<ServiceEmailAttachment> => {
       const descriptor = descriptors.find((a) => a.id === info.id);
       if (!descriptor) {
@@ -247,7 +247,7 @@ export class EmailReadService {
   /**
    * Mint a presigned URL that downloads a message's original raw MIME as `<subject>.eml`. Only
    * a message whose detail reports `rawAvailable` resolves; anything else is a 404 (a received
-   * message that didn't pass the virus scan or has aged out, a sent row without an archive).
+   * message that didn't pass the virus scan or has aged out).
    * An Errors-folder original comes from the quarantine bucket, flagged `rawSuspicious` on the
    * detail when it lacks a virus `PASS`. The S3 key is used server-side only.
    */
@@ -353,7 +353,7 @@ export class EmailReadService {
         ...(row.deliveryEvents !== undefined && row.deliveryEvents.length > 0 ? { deliveryEvents: distinctEvents(row.deliveryEvents) } : {}),
         ...body,
         rawAvailable: this.rawDownload(row) !== undefined,
-        attachments: rowAttachments(row).map(publicDescriptor),
+        attachments: row.attachments.map(publicDescriptor),
         hasAttachments: row.attachmentCount > 0,
         attachmentCount: row.attachmentCount,
         sizeBytes: row.sizeBytes,
@@ -427,11 +427,6 @@ function distinctEvents(events: readonly DeliveryEvent[]): DeliveryEvent[] {
     seen.add(key);
     return true;
   });
-}
-
-/** A row's stored attachment descriptors. */
-function rowAttachments(row: GetEmailOutput): readonly InboundAttachmentDescriptor[] {
-  return row.attachments;
 }
 
 /**

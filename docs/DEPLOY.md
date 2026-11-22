@@ -146,13 +146,15 @@ The Lambda handlers are bundled from source at synth (esbuild), so no separate h
 2. **Request SES production access** ([§4](#4-ses-production-access-sandbox-exit)) before sending to arbitrary recipients.
 3. If FreeMail created your zone, **delegate its name servers** ([§5](#5-dns-and-email-authentication)) so email auth and (if enabled) inbound actually work.
 
-### Upgrading a deployment from before October 2026
+### Upgrading a deployment last updated before 2026-10-10
 
-FreeMail no longer carries the fallbacks for data written before mail bodies were stored (PRs #65–#69). A deployment last updated before then must not jump straight to the current version:
+FreeMail assumes data written by PR #76 (2026-10-10) or later: every message has a stored body, and every sent message has its `status`, `attachments`, archived original and (once SES accepted it) recorded Message-ID. A deployment last updated before then needs its data brought up to date before it upgrades:
 
-1. Deploy the version just before PR #89 (it still has the fallbacks) and wait a few minutes, so the mailbox list index finishes building.
-2. From PR #89's first commit (`85ce4ca`), build and run `backfill-bodies`, then `backfill-sent-attachments` — dry run first, then `--apply` (each file's header has the command).
-3. Deploy the current version.
+1. Deploy the version just before PR #89 (the merge of PR #88). It still reads old rows. Wait a few minutes for the mailbox list index to finish building.
+2. Fetch PR #89's commits (`git fetch origin pull/89/head`), check out its first commit `85ce4ca`, build, and run `backfill-bodies` and then `backfill-sent-attachments` against the stack: a dry run first, then `--apply` (each file's header has the command).
+3. On sent rows still missing them, with conditional updates: set `attachments` to an empty list (a row with no attachments), and `messageIdHeader` to `<sesMessageId@email.amazonses.com>` (`<sesMessageId@<region>.amazonses.com>` outside us-east-1) where the row has a `sesMessageId`.
+4. Not carried forward, so fix or delete these rows by hand: a sent row from before its original was archived (no `rawS3Key`, before #29), and any row with an attachment under `attachments/outbound/` (large attachments sent before #69; `backfill-bodies` lists them).
+5. Deploy the current version.
 
 ## 4. SES production access (sandbox exit)
 

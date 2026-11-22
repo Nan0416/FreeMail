@@ -63,7 +63,7 @@ export const INBOUND_RAW_RETENTION_DAYS = 14;
  * row — by then its body and attachments are stored, or (content it couldn't extract) its raw
  * MIME is copied into the quarantine bucket. The lifecycle rule expires only tagged objects, so
  * raw MIME that is still the only copy of something — a message that never got a row (its
- * ingest dead-lettered), anything stored before tagging existed — is kept.
+ * ingest dead-lettered) — is kept.
  */
 export const INBOUND_INGESTED_TAG = { key: 'freemail-ingested', value: 'true' } as const;
 

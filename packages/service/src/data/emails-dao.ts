@@ -87,7 +87,7 @@ export interface CreateSentEmailInput {
   readonly references?: readonly string[];
   /**
    * The `Message-ID` SES gave the message (it replaces the composer's), set with the `sent`
-   * transition. Absent before SES accepts it, and on rows from before it was recorded.
+   * transition. Absent before SES accepts it, so on a failed send.
    */
   readonly messageIdHeader?: string;
   /**

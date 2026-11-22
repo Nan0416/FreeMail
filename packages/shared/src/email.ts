@@ -312,10 +312,10 @@ export interface EmailDetail {
   /** True when a body part hit the read-size cap and was truncated. */
   readonly bodyTruncated?: boolean;
   /**
-   * True when the original message (`.eml`) can be downloaded via `GET /emails/{id}/raw`:
-   * sent mail with an archive, received mail that passed the virus scan — for fully processed
-   * mail, only while it is younger than the raw-MIME retention window (14 days) — and every
-   * message in the Errors folder (kept in quarantine).
+   * True when the original message (`.eml`) can be downloaded via `GET /emails/{id}/raw`: sent
+   * mail (archived permanently), received mail that passed the virus scan while it is younger
+   * than the raw-MIME retention window (14 days), and every message in the Errors folder (kept
+   * in quarantine).
    */
   readonly rawAvailable?: boolean;
   /**
