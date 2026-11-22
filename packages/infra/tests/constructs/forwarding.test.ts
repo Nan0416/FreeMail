@@ -122,10 +122,11 @@ describe('ForwardingConstruct', () => {
     const get = emails.find((statement) => statement.Action === 'dynamodb:GetItem');
     const update = emails.find((statement) => statement.Action === 'dynamodb:UpdateItem');
     expect(emails).toHaveLength(2);
-    expect(get?.Condition).toEqual({ 'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': ['INBOUND'] } });
+    expect(get?.Condition).toEqual({ 'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': ['INBOUND'] }, Null: { 'dynamodb:LeadingKeys': 'false' } });
     expect(update?.Condition).toEqual({
       'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': ['INBOUND'], 'dynamodb:Attributes': ['pk', 'sk', 'forward'] },
       StringEqualsIfExists: { 'dynamodb:ReturnValues': ['NONE'] },
+      Null: { 'dynamodb:LeadingKeys': 'false' },
     });
     expect(onTable('ForwardingRulesTable').map((statement) => statement.Action)).toEqual(['dynamodb:Scan']);
   });
