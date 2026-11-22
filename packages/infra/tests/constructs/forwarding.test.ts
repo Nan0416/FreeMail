@@ -111,15 +111,23 @@ describe('ForwardingConstruct', () => {
     expect(dlq.Properties.MessageRetentionPeriod).toBe(14 * 24 * 3600);
   });
 
-  it('may read and update the emails table, and only list the rules — never edit either', () => {
+  it('may get and update only received rows, update only `forward`, and only list the rules', () => {
     const template = synth();
     const statements = forwarderPolicyStatements(template);
     const dynamo = statements.filter((statement) => JSON.stringify(statement.Action).includes('dynamodb:'));
-    expect(dynamo).toHaveLength(2);
+    expect(dynamo).toHaveLength(3);
     const tableIds = Object.keys(template.findResources('AWS::DynamoDB::Table'));
-    const onTable = (prefix: string) => dynamo.find((statement) => JSON.stringify(statement.Resource).includes(tableIds.find((id) => id.startsWith(prefix))!));
-    expect(onTable('EmailsTable')?.Action).toEqual(['dynamodb:GetItem', 'dynamodb:UpdateItem']);
-    expect(onTable('ForwardingRulesTable')?.Action).toBe('dynamodb:Scan');
+    const onTable = (prefix: string) => dynamo.filter((statement) => JSON.stringify(statement.Resource).includes(tableIds.find((id) => id.startsWith(prefix))!));
+    const emails = onTable('EmailsTable');
+    const get = emails.find((statement) => statement.Action === 'dynamodb:GetItem');
+    const update = emails.find((statement) => statement.Action === 'dynamodb:UpdateItem');
+    expect(emails).toHaveLength(2);
+    expect(get?.Condition).toEqual({ 'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': ['INBOUND'] } });
+    expect(update?.Condition).toEqual({
+      'ForAllValues:StringEquals': { 'dynamodb:LeadingKeys': ['INBOUND'], 'dynamodb:Attributes': ['pk', 'sk', 'forward'] },
+      StringEqualsIfExists: { 'dynamodb:ReturnValues': ['NONE'] },
+    });
+    expect(onTable('ForwardingRulesTable').map((statement) => statement.Action)).toEqual(['dynamodb:Scan']);
   });
 
   it('may read only raw inbound MIME from the mail bucket, and write nothing there', () => {
@@ -131,10 +139,11 @@ describe('ForwardingConstruct', () => {
     expect(JSON.stringify(s3[0]!.Resource)).toContain('/inbound/*');
   });
 
-  it('may send through SES on both the identity and the configuration set', () => {
+  it('may send through SES on both the identity and the configuration set, only From the forwarding address', () => {
     const statements = forwarderPolicyStatements(synth());
     const ses = statements.find((statement) => JSON.stringify(statement.Action).includes('ses:SendRawEmail'));
     expect(ses?.Action).toEqual(['ses:SendEmail', 'ses:SendRawEmail']);
+    expect(ses?.Condition).toEqual({ StringEquals: { 'ses:FromAddress': 'forwarding@mail.example.com' } });
     const resources = JSON.stringify(ses?.Resource);
     expect(resources).toContain(':identity/mail.example.com');
     expect(resources).toContain(':configuration-set/cfg-test');

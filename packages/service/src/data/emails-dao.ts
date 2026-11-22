@@ -10,20 +10,13 @@
  */
 import type { DeliveryEvent, EmailListFilter, SendEmailResponse, SentStatus } from '@freemail/shared';
 import type { EmailListIndexAttribute } from '@freemail/shared/storage';
+import { FAILED_PARTITION, INBOUND_PARTITION, SENT_PARTITION } from '@freemail/shared/storage';
 
 /** Most delivery reports kept on one sent row; later ones still move its status. */
 export const MAX_DELIVERY_EVENTS = 30;
 
-/** Partition holding sent messages. */
-export const SENT_PARTITION = 'SENT';
-/** Partition holding received messages. */
-export const INBOUND_PARTITION = 'INBOUND';
-/**
- * Partition holding received messages whose content could not be extracted — a virus verdict
- * other than `PASS`, or a parse failure / limit breach. Their raw MIME is kept in the
- * quarantine bucket. Listed as the Errors folder, never in the main timeline.
- */
-export const FAILED_PARTITION = 'FAILED';
+/** The emails table's partitions (shared with the infra, whose IAM conditions name them). */
+export { FAILED_PARTITION, INBOUND_PARTITION, SENT_PARTITION };
 
 /**
  * Partition holding send idempotency records (`sk` = the caller's key). Never listed, and not

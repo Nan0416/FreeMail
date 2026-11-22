@@ -21,7 +21,7 @@
  * between the two can forward a message twice, which is better than never forwarding it. Only an
  * infra failure (DynamoDB, S3, SES) throws, so the queue redelivers and eventually dead-letters.
  */
-import { EMAIL_RECEIVED_TYPE, type ForwardingRule } from '@freemail/shared';
+import { EMAIL_RECEIVED_TYPE, FORWARDER_LOCAL_PART, type ForwardingRule } from '@freemail/shared';
 import { INBOUND_PARTITION, type EmailsDao } from '../data/emails-dao.js';
 import type { ForwardingRulesDao } from '../data/forwarding-rules-dao.js';
 import type { RawMessageReader } from '../facades/s3-raw-message-reader.js';
@@ -33,8 +33,6 @@ import { headerValues, parseHeaderLines, rootHeaderBlock } from '../utils/inboun
 import { getLogger } from '../utils/logger.js';
 import { dmarcPassDomain } from '../utils/sender-auth.js';
 
-/** The forwarding address's local part, on the deployment's email domain. */
-export const FORWARDER_LOCAL_PART = 'forwarding';
 /** SES's cap on one message's recipients. */
 export const MAX_FORWARD_RECIPIENTS = 50;
 
