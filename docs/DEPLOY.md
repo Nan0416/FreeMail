@@ -146,6 +146,14 @@ The Lambda handlers are bundled from source at synth (esbuild), so no separate h
 2. **Request SES production access** ([§4](#4-ses-production-access-sandbox-exit)) before sending to arbitrary recipients.
 3. If FreeMail created your zone, **delegate its name servers** ([§5](#5-dns-and-email-authentication)) so email auth and (if enabled) inbound actually work.
 
+### Upgrading a deployment from before October 2026
+
+FreeMail no longer carries the fallbacks for data written before mail bodies were stored (PRs #65–#69). A deployment last updated before then must not jump straight to the current version:
+
+1. Deploy the version just before PR #89 (it still has the fallbacks) and wait a few minutes, so the mailbox list index finishes building.
+2. From PR #89's first commit (`85ce4ca`), build and run `backfill-bodies`, then `backfill-sent-attachments` — dry run first, then `--apply` (each file's header has the command).
+3. Deploy the current version.
+
 ## 4. SES production access (sandbox exit)
 
 **This step is required, manual, and per-AWS-account. It cannot be automated, and it is not global — it applies to the specific account (and region) you deployed into.**
@@ -279,7 +287,7 @@ SES receipt rule → writes raw MIME to the mail S3 bucket → a parser Lambda e
 
 **Failed mail goes to the Errors folder.** A message whose content can't be extracted — SES's virus scan did not return `PASS`, or the message is malformed, over the processing limits (more than 25 attachments, an attachment over 15 MB or 30 MB of attachments in total, or a 10 MB body), or larger than 40 MB — is listed in the web app's **Errors** folder with the reason, not in the Inbox. Nothing from it is rendered, but its original is copied to a separate **quarantine bucket** (no expiry) and stays downloadable as `.eml`; when SES did not confirm it virus-free, the download is marked suspicious and needs an explicit **Download anyway**.
 
-**Raw messages are kept for 14 days once processed.** After the parser has stored what a message needs (its body and attachments, or its quarantined copy), SES's raw copy under `inbound/` is only needed for **Download original (.eml)**: the parser tags it, and a lifecycle rule deletes tagged copies after 14 days. For fully processed mail the `.eml` download is offered only while it is younger than that, and a body part over 1 MB keeps only its truncated stored copy afterwards. A raw copy that is still the only copy of a message is never tagged and never expires: a message whose processing dead-lettered (redrive it from the parser DLQ, which keeps events for 14 days), and anything received before tagging existed. Sent mail's original is kept permanently.
+**Raw messages are kept for 14 days once processed.** After the parser has stored what a message needs (its body and attachments, or its quarantined copy), SES's raw copy under `inbound/` is only needed for **Download original (.eml)**: the parser tags it, and a lifecycle rule deletes tagged copies after 14 days. For fully processed mail the `.eml` download is offered only while it is younger than that, and a body part over 1 MB keeps only its truncated stored copy afterwards. A raw copy that is still the only copy of a message is never tagged and never expires: a message whose processing dead-lettered (redrive it from the parser DLQ, which keeps events for 14 days). Sent mail's original is kept permanently.
 
 ### Forwarding
 

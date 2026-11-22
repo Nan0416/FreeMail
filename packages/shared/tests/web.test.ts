@@ -10,11 +10,15 @@ describe('normalizeBaseUrl', () => {
 });
 
 describe('parseWebRuntimeConfig', () => {
-  it('accepts and normalizes a valid config, defaulting inboundEnabled to false', () => {
-    expect(parseWebRuntimeConfig({ apiBaseUrl: 'https://api.example.com/' })).toEqual({
+  it('accepts and normalizes a valid config', () => {
+    expect(parseWebRuntimeConfig({ apiBaseUrl: 'https://api.example.com/', inboundEnabled: false })).toEqual({
       apiBaseUrl: 'https://api.example.com',
       inboundEnabled: false,
     });
+  });
+
+  it('rejects a config without inboundEnabled (every deploy writes it)', () => {
+    expect(() => parseWebRuntimeConfig({ apiBaseUrl: 'https://api.example.com' })).toThrow(/inboundEnabled/);
   });
 
   it('carries inboundEnabled through when present', () => {

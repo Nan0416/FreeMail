@@ -52,7 +52,7 @@ export interface StoreEmailBodyInput {
 /**
  * Cap a body to what the reader can show, then store it inline or in S3, and return the row's
  * pointer. A message with no text or HTML part (attachments only) gets an EMPTY inline body,
- * so it is never mistaken for a legacy row that predates stored bodies. The S3 write happens
+ * so every readable row has one (the reader logs a row without one). The S3 write happens
  * BEFORE the caller writes the row (the row is the commit marker), so a row never points at a
  * missing object.
  */

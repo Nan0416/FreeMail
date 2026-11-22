@@ -224,7 +224,7 @@ export class ApiConstruct extends Construct {
     // Sent raw MIME archive (#29): send_email writes it. Write-only: MCP never reads raw MIME.
     props.mailBucket.grantWrite(this.mcpHandler, 'sent/*');
     // Sent attachments: send_email copies each upload here. Write-only — the embed bytes are
-    // read from uploads/*; reading these back is a read tool, granted below like sent/*.
+    // read from uploads/*; reading these back is a read tool, granted below with inbound.
     props.mailBucket.grantWrite(this.mcpHandler, 'attachments/sent/*');
     // A large sent body: send_email writes it (read granted below, with the read tools).
     props.mailBucket.grantPut(this.mcpHandler, 'bodies/sent/*');

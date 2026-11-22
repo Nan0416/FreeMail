@@ -20,12 +20,9 @@ describe('loadRuntimeConfig', () => {
     expect(init?.cache).toBe('no-store');
   });
 
-  it('defaults inboundEnabled to false when the deployed config omits it', async () => {
+  it('fails loud when the deployed config omits inboundEnabled', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json(200, { apiBaseUrl: 'https://api.example.com' }));
-    await expect(loadRuntimeConfig(fetchMock)).resolves.toEqual({
-      apiBaseUrl: 'https://api.example.com',
-      inboundEnabled: false,
-    });
+    await expect(loadRuntimeConfig(fetchMock)).rejects.toThrow(/inboundEnabled/);
   });
 
   it('fails loud on a malformed deployed config.json', async () => {

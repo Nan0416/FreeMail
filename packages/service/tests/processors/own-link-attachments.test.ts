@@ -118,7 +118,7 @@ describe('OwnLinkAttachments.resolve', () => {
     ['minted before tokens kept their sender', record(0, { sender: undefined })],
     ['pointing at raw inbound mail', record(0, { s3Key: 'inbound/abc' })],
     ['pointing at a received attachment', record(0, { s3Key: 'attachments/inbound/abc/0' })],
-    ['pointing at a legacy linked upload', record(0, { s3Key: 'attachments/outbound/e1/0' })],
+    ['pointing outside attachments/sent/', record(0, { s3Key: 'attachments/outbound/e1/0' })],
   ])('leaves a link as just a link when its token is %s', async (_label, stored) => {
     const links = new OwnLinkAttachments(new FakeTokens().add(stored), BASE);
     expect(await attachedKeys(links, request([link(0)]))).toEqual([]);

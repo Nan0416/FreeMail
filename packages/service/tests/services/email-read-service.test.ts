@@ -9,10 +9,8 @@ import {
   INBOUND_PARTITION,
   SENT_PARTITION,
   type GetEmailOutput,
-  type QueryEmailsByDirectionInput,
   type ListEmailSummariesInput,
   type ListEmailSummariesOutput,
-  type QueryEmailsByDirectionOutput,
   type UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
 import type { AttachmentPresigner, PresignRequest } from '../../src/facades/s3-attachment-presigner.js';
@@ -36,6 +34,9 @@ function sentRow(overrides: Partial<GetEmailOutput & { direction: 'sent' }> = {}
     sentAt: '2026-07-17T09:00:00.000Z',
     attachmentCount: 2,
     sizeBytes: 1234,
+    status: 'sent',
+    rawS3Key: 'sent/s1',
+    attachments: SENT_ATTACHMENTS,
     ...overrides,
   } as GetEmailOutput;
 }
@@ -95,7 +96,7 @@ function inboundRow(overrides: Partial<GetEmailOutput & { direction: 'inbound' }
 
 class FakeDao implements EmailsDao {
   private readonly byKey = new Map<string, GetEmailOutput>();
-  queryImpl: (direction: QueryEmailsByDirectionInput['direction']) => Promise<GetEmailOutput[]> = () => Promise.resolve([]);
+  queryImpl: (direction: ListEmailSummariesInput['direction']) => Promise<GetEmailOutput[]> = () => Promise.resolve([]);
 
   put(pk: string, row: GetEmailOutput): string {
     // A stored row always carries the partition it lives in.
@@ -113,9 +114,6 @@ class FakeDao implements EmailsDao {
   }
   getEmail(key: { pk: string; sk: string }): Promise<GetEmailOutput | null> {
     return Promise.resolve(this.byKey.get(`${key.pk}|${key.sk}`) ?? null);
-  }
-  queryEmailsByDirection(): Promise<QueryEmailsByDirectionOutput> {
-    return Promise.resolve({ emails: [] });
   }
   listEmailSummaries(input: ListEmailSummariesInput): Promise<ListEmailSummariesOutput> {
     return this.queryImpl(input.direction).then((emails) => ({ emails }));
@@ -159,13 +157,13 @@ function service(repo: FakeDao, presigner: FakePresigner, bodies: FakeBodyStore 
 describe('EmailReadService.getEmail', () => {
   it('a row without a stored body → envelope-only (logged), bcc present', async () => {
     const repo = new FakeDao();
-    const handle = repo.put(SENT_PARTITION, sentRow());
+    const handle = repo.put(SENT_PARTITION, sentRow({ attachments: [], attachmentCount: 0 }));
     const detail = await service(repo, new FakePresigner()).getEmail({ handle: handle });
 
     expect(detail.direction).toBe('sent');
     expect(detail.text).toBeUndefined();
     expect(detail.html).toBeUndefined();
-    expect(detail.status).toBeUndefined();
+    expect(detail.status).toBe('sent');
     expect(detail.attachments).toEqual([]);
     expect(detail.bcc).toEqual(['secret@e.com']);
   });
@@ -355,14 +353,6 @@ describe('EmailReadService.getAttachmentUrl', () => {
     expect(presigner.last).toBeUndefined();
   });
 
-  it('sent row written before attachments were recorded → not_found (no descriptors)', async () => {
-    const repo = new FakeDao();
-    const presigner = new FakePresigner();
-    const handle = repo.put(SENT_PARTITION, sentRow());
-    await expect(service(repo, presigner).getAttachmentUrl({ handle, attachmentId: '0' })).rejects.toMatchObject({ code: 'not_found' });
-    expect(presigner.last).toBeUndefined();
-  });
-
   it('sent message → presigns its stored descriptor (embedded copy or linked upload)', async () => {
     const repo = new FakeDao();
     const presigner = new FakePresigner();
@@ -494,27 +484,6 @@ describe('EmailReadService — original (.eml) retention window', () => {
     await expect(read.getRawUrl({ handle })).rejects.toBeInstanceOf(EmailError);
   });
 
-  it('keeps offering an untagged raw copy however old — clean mail that failed to parse', async () => {
-    const repo = new FakeDao();
-    const handle = repo.put(
-      INBOUND_PARTITION,
-      inboundRow({
-        parseStatus: 'limit_exceeded',
-        attachments: [],
-        receivedAt: receivedDaysAgo(30),
-      }),
-    );
-
-    expect((await service(repo, new FakePresigner()).getEmail({ handle })).rawAvailable).toBe(true);
-  });
-
-  it('keeps offering it for a legacy row (no stored body) however old', async () => {
-    const repo = new FakeDao();
-    const handle = repo.put(INBOUND_PARTITION, inboundRow({ receivedAt: receivedDaysAgo(30) }));
-
-    expect((await service(repo, new FakePresigner()).getEmail({ handle })).rawAvailable).toBe(true);
-  });
-
   it('keeps offering the sent archive however old (it never expires)', async () => {
     const repo = new FakeDao();
     const handle = repo.put(
@@ -565,28 +534,14 @@ describe('EmailReadService.getRawUrl', () => {
     expect(presigner.last).toBeUndefined();
   });
 
-  it.each(['FAIL', 'GRAY', 'ABSENT'] as const)('offers a pre-stored-body message with virus verdict %s — its kept raw copy, flagged suspicious', async (virusVerdict) => {
+  it.each(['FAIL', 'GRAY', 'ABSENT'] as const)('never offers a received original whose virus verdict is %s', async (virusVerdict) => {
     const repo = new FakeDao();
     const presigner = new FakePresigner();
     const handle = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict, quarantined: true }));
     const read = service(repo, presigner);
 
-    const detail = await read.getEmail({ handle });
-    expect(detail).toMatchObject({ rawAvailable: true, rawSuspicious: true });
-    await read.getRawUrl({ handle });
-    expect(presigner.last).toMatchObject({
-      key: 'inbound/i1',
-      contentType: 'application/octet-stream',
-    });
-  });
-
-  it('refuses a sent row without an archive → not_found', async () => {
-    const repo = new FakeDao();
-    const presigner = new FakePresigner();
-    const handle = repo.put(SENT_PARTITION, sentRow());
-    await expect(service(repo, presigner).getRawUrl({ handle })).rejects.toMatchObject({
-      code: 'not_found',
-    });
+    expect((await read.getEmail({ handle })).rawAvailable).toBe(false);
+    await expect(read.getRawUrl({ handle })).rejects.toMatchObject({ code: 'not_found' });
     expect(presigner.last).toBeUndefined();
   });
 
@@ -608,16 +563,14 @@ describe('EmailReadService.getRawUrl', () => {
   it('reports rawAvailable on the detail to match what getRawUrl allows', async () => {
     const repo = new FakeDao();
     const read = service(repo, new FakePresigner());
-    const legacySent = repo.put(SENT_PARTITION, sentRow());
+    const sent = repo.put(SENT_PARTITION, sentRow());
     const virusFailed = repo.put(INBOUND_PARTITION, inboundRow({ virusVerdict: 'FAIL', quarantined: true, attachments: [] }));
     const clean = repo.put(INBOUND_PARTITION, { ...inboundRow(), sk: 'other#i2' });
 
-    expect((await read.getEmail({ handle: legacySent })).rawAvailable).toBe(false);
-    // A pre-stored-body virus-failed row: its kept raw copy is offered, flagged suspicious.
-    expect(await read.getEmail({ handle: virusFailed })).toMatchObject({
-      rawAvailable: true,
-      rawSuspicious: true,
-    });
+    expect((await read.getEmail({ handle: sent })).rawAvailable).toBe(true);
+    const failedDetail = await read.getEmail({ handle: virusFailed });
+    expect(failedDetail.rawAvailable).toBe(false);
+    expect(failedDetail.rawSuspicious).toBeUndefined();
     expect((await read.getEmail({ handle: clean })).rawAvailable).toBe(true);
     expect((await read.getEmail({ handle: clean })).rawSuspicious).toBeUndefined();
   });
@@ -737,7 +690,7 @@ describe('EmailReadService.listEmails', () => {
     expect(page.emails[0].virusVerdict).toBe('PASS');
   });
 
-  it('surfaces sent status on the list item; a legacy sent row omits it', async () => {
+  it('surfaces sent status on each list item', async () => {
     const repo = new FakeDao();
     repo.queryImpl = (direction) =>
       Promise.resolve(
@@ -748,6 +701,7 @@ describe('EmailReadService.listEmails', () => {
                 sk: '2026-07-17T08:00:00.000Z#s0',
                 sentAt: '2026-07-17T08:00:00.000Z',
                 id: 's0',
+                status: 'delivered',
               } as Partial<GetEmailOutput>),
             ]
           : [],
@@ -759,8 +713,7 @@ describe('EmailReadService.listEmails', () => {
     });
 
     expect(page.emails[0].status).toBe('send_failed');
-    // Legacy row (no status attribute) omits the field rather than inventing one.
-    expect(page.emails[1].status).toBeUndefined();
+    expect(page.emails[1].status).toBe('delivered');
   });
 });
 

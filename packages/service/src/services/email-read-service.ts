@@ -9,8 +9,8 @@
  * or in S3 for a large one — so opening it is a row read, never a raw-MIME parse. INBOUND mail
  * is still gated on the stored verdicts (fail-closed via `decideExposure`): only an exposable
  * message ever has a stored body, and a quarantined one yields none. HTML is returned RAW as
- * data — the client owns safe rendering (#12). Every row has a stored body: the ones written
- * before bodies were stored were backfilled (`backfill-bodies`, run once per deployment).
+ * data — the client owns safe rendering (#12). Every readable row has a stored body (rows from
+ * before bodies were stored were backfilled once per deployment; see PR #89).
  */
 import {
   ATTACHMENT_URL_TTL_SECONDS,
@@ -194,9 +194,8 @@ export class EmailReadService {
 
   /**
    * Mint a presigned download URL for one attachment. Only descriptors actually on the row
-   * are addressable — a quarantined/virus/parse-failed message has none, and neither does a
-   * sent row written before attachments were recorded — so the id resolves to nothing → 404,
-   * never a guessable key. The raw S3 key is used server-side only.
+   * are addressable — a quarantined/virus/parse-failed message has none — so any other id
+   * resolves to nothing → 404, never a guessable key. The raw S3 key is used server-side only.
    */
   async getAttachmentUrl(request: GetAttachmentUrlServiceRequest): Promise<AttachmentDownloadResponse> {
     const row = await this.loadRow(request.handle);
@@ -313,7 +312,7 @@ export class EmailReadService {
         cc: row.cc,
         subject: row.subject,
         date: row.sentAt,
-        ...(row.status !== undefined ? { status: row.status } : {}),
+        status: row.status,
         hasAttachments: row.attachmentCount > 0,
         attachmentCount: row.attachmentCount,
       };
@@ -350,7 +349,7 @@ export class EmailReadService {
         ...(row.replyTo !== undefined && row.replyTo.length > 0 ? { replyTo: row.replyTo } : {}),
         subject: row.subject,
         date: row.sentAt,
-        ...(row.status !== undefined ? { status: row.status } : {}),
+        status: row.status,
         ...(row.deliveryEvents !== undefined && row.deliveryEvents.length > 0 ? { deliveryEvents: distinctEvents(row.deliveryEvents) } : {}),
         ...body,
         rawAvailable: this.rawDownload(row) !== undefined,
@@ -392,30 +391,20 @@ export class EmailReadService {
   /**
    * Where a message's downloadable original lives, or undefined when it may not be downloaded.
    *
-   * - Sent: our own archive, if the row has one (permanent).
+   * - Sent: our own archive (permanent).
    * - Errors folder: its quarantined copy — offered whatever the verdict (it is the only way to
    *   recover the content), with the detail flagging a non-PASS one as suspicious.
-   * - Received, fully processed (a stored body): only on an affirmative virus `PASS` — spam-
-   *   flagged mail stays downloadable, the original is the point — and only while SES's raw
-   *   copy is retained (the lifecycle rule expires tagged copies).
-   * - Received before stored bodies: its untagged raw copy, kept forever, whatever the verdict —
-   *   flagged suspicious without a virus PASS.
+   * - Received: only on an affirmative virus `PASS` — spam-flagged mail stays downloadable, the
+   *   original is the point — and only while SES's raw copy is retained: ingest tags it once the
+   *   message is stored, and the lifecycle rule expires it after the window.
    */
   private rawDownload(row: GetEmailOutput): { readonly key: string; readonly presigner: AttachmentPresigner } | undefined {
     if (row.direction === 'sent') {
-      return row.rawS3Key ? { key: row.rawS3Key, presigner: this.presigner } : undefined;
+      return { key: row.rawS3Key, presigner: this.presigner };
     }
     if (row.pk === FAILED_PARTITION) {
       return row.quarantineS3Key && this.quarantinePresigner ? { key: row.quarantineS3Key, presigner: this.quarantinePresigner } : undefined;
     }
-    // A row without a stored body predates stored bodies: its raw copy is untagged and kept
-    // forever — the only way to recover the message — so offer it whatever the verdict, like an
-    // Errors-folder original (the detail flags one without a virus PASS as suspicious).
-    if (row.body === undefined) {
-      return { key: row.rawS3Key, presigner: this.presigner };
-    }
-    // A row with a stored body was fully extracted (virus PASS by construction), so ingest tagged
-    // its raw copy and the lifecycle rule expires it after the window: offer it only until then.
     if (row.virusVerdict !== 'PASS') {
       return undefined;
     }
@@ -440,9 +429,9 @@ function distinctEvents(events: readonly DeliveryEvent[]): DeliveryEvent[] {
   });
 }
 
-/** A row's stored attachment descriptors; a sent row from before they were recorded has none. */
+/** A row's stored attachment descriptors. */
 function rowAttachments(row: GetEmailOutput): readonly InboundAttachmentDescriptor[] {
-  return row.direction === 'inbound' ? row.attachments : (row.attachments ?? []);
+  return row.attachments;
 }
 
 /**

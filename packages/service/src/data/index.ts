@@ -44,8 +44,6 @@ export type {
   GetEmailInput,
   GetEmailOutput,
   InboundForward,
-  QueryEmailsByDirectionInput,
-  QueryEmailsByDirectionOutput,
   UpdateInboundEmailForwardInput,
   UpdateInboundEmailForwardOutput,
   UpdateSentEmailStatusInput,

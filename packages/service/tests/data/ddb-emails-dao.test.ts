@@ -365,7 +365,7 @@ describe('DdbEmailsDao — reads', () => {
     };
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    const page = await dao.queryEmailsByDirection({ direction: 'inbound', limit: 10 });
+    const page = await dao.listEmailSummaries({ direction: 'inbound', limit: 10 });
 
     const input = (doc.lastCommand as QueryCommand).input;
     expect(input.KeyConditionExpression).toBe('pk = :pk');
@@ -381,7 +381,7 @@ describe('DdbEmailsDao — reads', () => {
     doc.result = { Items: [] };
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    await dao.queryEmailsByDirection({
+    await dao.listEmailSummaries({
       direction: 'sent',
       limit: 5,
       afterSk: '2026-07-17T00:00:00.000Z#s1',
@@ -393,12 +393,12 @@ describe('DdbEmailsDao — reads', () => {
     expect(input.ExclusiveStartKey).toEqual({ pk: 'SENT', sk: '2026-07-17T00:00:00.000Z#s1' });
   });
 
-  it('maps a returned item to a typed row by its direction attribute', async () => {
+  it('maps a returned item to a typed summary by its direction attribute', async () => {
     const doc = new ReadFakeDoc();
     doc.result = { Items: [{ ...record(), pk: 'SENT', sk: 'sk-9', direction: 'sent' }] };
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    const page = await dao.queryEmailsByDirection({ direction: 'sent', limit: 1 });
+    const page = await dao.listEmailSummaries({ direction: 'sent', limit: 1 });
     expect(page.emails[0].direction).toBe('sent');
     expect(page.emails[0].sk).toBe('sk-9');
   });
@@ -433,15 +433,6 @@ describe('DdbEmailsDao — list index + paging', () => {
     expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'INBOUND' });
     expect(input.ScanIndexForward).toBe(false);
     expect(result.emails[0]).toMatchObject({ direction: 'inbound', sk: 'sk-1' });
-  });
-
-  it('keeps the full-row query on the table, not the index', async () => {
-    const doc = new PagedFakeDoc([{ Items: [] }]);
-    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-    await dao.queryEmailsByDirection({ direction: 'sent', limit: 5 });
-
-    expect(doc.queries[0].input.IndexName).toBeUndefined();
   });
 
   it('follows LastEvaluatedKey after a 1 MB page cut until the page is full', async () => {

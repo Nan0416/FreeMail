@@ -272,7 +272,7 @@ describe('ApiConstruct', () => {
         Variables: Match.objectLike({
           AUTH_TABLE: Match.anyValue(),
           API_KEYS_TABLE: Match.anyValue(),
-          // The read routes need the mail bucket (raw MIME re-parse + attachment presign).
+          // The read routes need the mail bucket (stored bodies, attachment and .eml presigns).
           MAIL_BUCKET: Match.anyValue(),
           // Large-attachment (#14): token store + the public base for /d/{token} links —
           // the API's own domain, never the generated execute-api URL.
@@ -283,7 +283,7 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('grants the REST handler read access to the mail bucket (for body re-parse + presign)', () => {
+  it('grants the REST handler read access to the mail bucket (stored bodies + presigns)', () => {
     const template = synth();
     template.hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
@@ -338,12 +338,25 @@ describe('ApiConstruct', () => {
       Description: MCP_DESCRIPTION,
       Environment: { Variables: Match.objectLike({ INBOUND_ENABLED: 'true' }) },
     });
-    // Read tools now reach the emails table (Query/GetItem) and the mail bucket (GetObject
-    // for body re-parse + attachment presign), while keeping the send-path write grants.
+    // Read tools now reach the emails table (Query/GetItem) and the mail bucket (stored bodies
+    // + attachment presigns), while keeping the send-path write grants.
     const actions = roleActions(template, MCP_DESCRIPTION);
     expect(actions.some((a) => a.startsWith('s3:GetObject'))).toBe(true);
     expect(actions.some((a) => a === 'dynamodb:Query' || a === 'dynamodb:GetItem')).toBe(true);
     expect(actions).toContain('s3:PutObject');
+  });
+
+  it('keeps every read the send and read paths need, per prefix', () => {
+    const template = synthWithInbound();
+    // MCP: get_email's stored bodies; get_email_attachment_url, and send_email forwarding a stored
+    // file (copied, and embedded from attachments/sent/*).
+    for (const prefix of ['bodies/*', 'attachments/inbound/*', 'attachments/sent/*', 'uploads/*']) {
+      expect(roleGrantsOnPrefix(template, MCP_DESCRIPTION, 's3:GetObject', prefix), `MCP ${prefix}`).toBe(true);
+    }
+    // REST: the same, plus the .eml presigns (inbound/*, sent/*).
+    for (const prefix of ['bodies/*', 'attachments/inbound/*', 'attachments/sent/*', 'uploads/*', 'inbound/*', 'sent/*']) {
+      expect(roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', prefix), `REST ${prefix}`).toBe(true);
+    }
   });
 
   it('lets the REST handler write + presign sent-attachment copies (attachments/sent/*)', () => {

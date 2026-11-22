@@ -14,7 +14,6 @@ import type {
   CreateSentEmailOutput,
   GetEmailOutput,
   ListEmailSummariesOutput,
-  QueryEmailsByDirectionOutput,
   UpdateSentEmailStatusInput,
   UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
@@ -75,9 +74,6 @@ class FakeEmails implements EmailsDao {
   }
   createInboundEmail(): Promise<CreateInboundEmailOutput> {
     return Promise.resolve({ created: true });
-  }
-  queryEmailsByDirection(): Promise<QueryEmailsByDirectionOutput> {
-    return Promise.resolve({ emails: [] });
   }
   listEmailSummaries(): Promise<ListEmailSummariesOutput> {
     return Promise.resolve({ emails: [] });
@@ -825,9 +821,12 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
       subject: 'Re: Lunch?',
       sentAt: '2026-07-16T08:00:00.000Z',
       sesMessageId: '0100abc-000000',
+      messageIdHeader: '<0100abc-000000@email.amazonses.com>',
       attachmentCount: 0,
       sizeBytes: 10,
       status: 'sent',
+      rawS3Key: 'sent/sent-0',
+      attachments: [],
       references: ['<root@mail.other.com>', '<parent@mail.other.com>'],
     };
     const setup = withParent(sent, { sesRegion: 'us-east-1' });
@@ -1345,12 +1344,6 @@ describe('EmailService.sendEmail — forwarding: which messages', () => {
       source: 'attachments/sent/old/0',
       dest: 'attachments/sent/id-1/0',
     });
-  });
-
-  it('finds nothing to forward on a sent row from before attachments were recorded', async () => {
-    const setup = withRow(sentRow());
-
-    await expect(setup.service.sendEmail(request({ attachments: [ref('SENT', '0')] }))).rejects.toMatchObject({ message: expect.stringContaining('no such attachment') });
   });
 
   it.each([

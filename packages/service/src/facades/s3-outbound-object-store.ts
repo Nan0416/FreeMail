@@ -7,8 +7,7 @@
  *
  * Objects are written `application/octet-stream` with `Content-Disposition: attachment`
  * (mirroring the inbound store), so even a naked GET serves them as a download, never an
- * inline-renderable type — irrelevant to the archive (only ever re-read server-side), but
- * harmless.
+ * inline-renderable type — the REST raw route presigns it as the sent message's `.eml`.
  */
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 

@@ -7,7 +7,6 @@ import type {
   EmailsDao,
   GetEmailOutput,
   ListEmailSummariesOutput,
-  QueryEmailsByDirectionOutput,
   UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
 import type { ClaimDownloadTokenOutput, CreateDownloadTokenOutput, DownloadTokensDao, GetDownloadTokenInput, GetDownloadTokenOutput } from '../../src/data/download-tokens-dao.js';
@@ -105,9 +104,6 @@ class FakeDao implements EmailsDao {
     }
     this.inbound.push(record);
     return Promise.resolve({ created: true });
-  }
-  queryEmailsByDirection(): Promise<QueryEmailsByDirectionOutput> {
-    return Promise.resolve({ emails: [] });
   }
   listEmailSummaries(): Promise<ListEmailSummariesOutput> {
     return Promise.resolve({ emails: [] });

@@ -16,13 +16,13 @@ describe('S3OutboundObjectStore', () => {
     const store = new S3OutboundObjectStore(fake as unknown as S3Client, 'mail-bucket');
     const body = Buffer.from('the-file-bytes');
 
-    await store.put('attachments/outbound/email-1/0', body);
+    await store.put('sent/email-1', body);
 
     expect(fake.calls).toHaveLength(1);
     expect(fake.calls[0]).toBeInstanceOf(PutObjectCommand);
     expect(fake.calls[0].input).toEqual({
       Bucket: 'mail-bucket',
-      Key: 'attachments/outbound/email-1/0',
+      Key: 'sent/email-1',
       Body: body,
       // Defense in depth: even a naked GET serves it as a download, never inline-rendered.
       ContentType: 'application/octet-stream',

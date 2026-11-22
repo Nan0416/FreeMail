@@ -45,8 +45,6 @@ import type {
   GetEmailOutput,
   ListEmailSummariesInput,
   ListEmailSummariesOutput,
-  QueryEmailsByDirectionInput,
-  QueryEmailsByDirectionOutput,
   UpdateInboundEmailForwardInput,
   UpdateInboundEmailForwardOutput,
   UpdateSentEmailStatusInput,
@@ -314,18 +312,13 @@ export class DdbEmailsDao implements EmailsDao {
     }
   }
 
-  async queryEmailsByDirection(input: QueryEmailsByDirectionInput): Promise<QueryEmailsByDirectionOutput> {
-    return { emails: (await this.queryPartition(input)).map(toRow) };
-  }
-
   async listEmailSummaries(input: ListEmailSummariesInput): Promise<ListEmailSummariesOutput> {
-    const items = await this.queryPartition(input, EMAIL_LIST_INDEX_NAME);
+    const items = await this.queryListIndex(input);
     return { emails: items.map((item) => toSummary(item, input.direction)) };
   }
 
   /**
-   * Up to `limit` items of one partition, newest-first, strictly older than `afterSk` — from
-   * the table, or from an index that shares its keys.
+   * Up to `limit` list-index items of one partition, newest-first, strictly older than `afterSk`.
    *
    * DynamoDB ends a Query page after 1 MB of data read even when fewer than `Limit` items
    * matched, handing back a `LastEvaluatedKey`. So keep reading until the page is full or the
@@ -333,7 +326,7 @@ export class DdbEmailsDao implements EmailsDao {
    * decides a direction is drained on it), and a 1 MB cut would otherwise silently end the
    * timeline early.
    */
-  private async queryPartition(input: QueryEmailsByDirectionInput, indexName?: string): Promise<Record<string, unknown>[]> {
+  private async queryListIndex(input: ListEmailSummariesInput): Promise<Record<string, unknown>[]> {
     const pk = EmailEntity.partitionFor(input.direction);
     const items: Record<string, unknown>[] = [];
     // A cursor at or below the range's floor has nothing older left in range, and an empty
@@ -343,7 +336,7 @@ export class DdbEmailsDao implements EmailsDao {
     }
     // Resume strictly after the last row we emitted for this partition. pk is server-derived
     // (never client-supplied), so a crafted cursor can't retarget it. The index shares the
-    // table's keys, so the same {pk, sk} is a valid start key for either. A cursor above the
+    // table's keys, so {pk, sk} is its start key. A cursor above the
     // range's ceiling (the filters changed between pages) starts from the ceiling instead —
     // DynamoDB rejects a start key outside the key condition.
     const resumeSk = input.afterSk !== undefined && (input.maxSk === undefined || input.afterSk <= input.maxSk) ? input.afterSk : undefined;
@@ -353,7 +346,7 @@ export class DdbEmailsDao implements EmailsDao {
       const out = (await this.doc.send(
         new QueryCommand({
           TableName: this.tableName,
-          ...(indexName ? { IndexName: indexName } : {}),
+          IndexName: EMAIL_LIST_INDEX_NAME,
           KeyConditionExpression: `pk = :pk${range.expression}`,
           ExpressionAttributeValues: { ':pk': pk, ...range.values },
           // Newest-first: sk = '<iso>#<id>' sorts lexicographically by receipt/send time.
@@ -469,7 +462,7 @@ export class DdbEmailsDao implements EmailsDao {
 }
 
 /** The sort-key half of a list query's key condition: a date range, if one was given. */
-function sortKeyCondition(input: QueryEmailsByDirectionInput): {
+function sortKeyCondition(input: ListEmailSummariesInput): {
   readonly expression: string;
   readonly values: Record<string, string>;
 } {
