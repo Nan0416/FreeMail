@@ -14,7 +14,6 @@ import type {
   CreateSentEmailOutput,
   GetEmailOutput,
   ListEmailSummariesOutput,
-  QueryEmailsByDirectionOutput,
   UpdateSentEmailStatusInput,
   UpdateSentEmailStatusOutput,
 } from '../../src/data/emails-dao.js';
@@ -75,9 +74,6 @@ class FakeEmails implements EmailsDao {
   }
   createInboundEmail(): Promise<CreateInboundEmailOutput> {
     return Promise.resolve({ created: true });
-  }
-  queryEmailsByDirection(): Promise<QueryEmailsByDirectionOutput> {
-    return Promise.resolve({ emails: [] });
   }
   listEmailSummaries(): Promise<ListEmailSummariesOutput> {
     return Promise.resolve({ emails: [] });
@@ -825,12 +821,15 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
       subject: 'Re: Lunch?',
       sentAt: '2026-07-16T08:00:00.000Z',
       sesMessageId: '0100abc-000000',
+      messageIdHeader: '<0100abc-000000@email.amazonses.com>',
       attachmentCount: 0,
       sizeBytes: 10,
       status: 'sent',
+      rawS3Key: 'sent/sent-0',
+      attachments: [],
       references: ['<root@mail.other.com>', '<parent@mail.other.com>'],
     };
-    const setup = withParent(sent, { sesRegion: 'us-east-1' });
+    const setup = withParent(sent);
 
     await setup.service.sendEmail(request({ subject: undefined, inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }));
 
@@ -938,7 +937,7 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
     });
   });
 
-  it("prefers a sent message's recorded Message-ID over deriving it", async () => {
+  it('never derives a Message-ID: a sent row without a recorded one starts a new thread', async () => {
     const sent = {
       direction: 'sent',
       pk: 'SENT',
@@ -951,16 +950,19 @@ describe('EmailService.sendEmail — replies (inReplyTo / replyTo)', () => {
       subject: 'Hello',
       sentAt: '2026-07-16T08:00:00.000Z',
       sesMessageId: '0100abc-000000',
-      messageIdHeader: '<0100abc-000000@eu-west-1.amazonses.com>',
       attachmentCount: 0,
       sizeBytes: 10,
       status: 'sent',
+      rawS3Key: 'sent/sent-0',
+      attachments: [],
     } as GetEmailOutput;
-    const setup = withParent(sent, { sesRegion: 'us-east-1' });
+    const setup = withParent(sent);
 
-    await setup.service.sendEmail(request({ inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }));
+    const result = await setup.service.sendEmail(request({ subject: undefined, inReplyTo: encodeEmailRef({ pk: 'SENT', sk: SENT_SK }) }));
 
-    expect(setup.mimeInputs[0].inReplyTo).toBe('<0100abc-000000@eu-west-1.amazonses.com>');
+    expect(result.threaded).toBe(false);
+    expect(setup.mimeInputs[0].inReplyTo).toBeUndefined();
+    expect(setup.mimeInputs[0].subject).toBe('Re: Hello');
   });
 
   it('threads a reply to an Errors-folder message on its recorded Message-ID', async () => {
@@ -1345,12 +1347,6 @@ describe('EmailService.sendEmail — forwarding: which messages', () => {
       source: 'attachments/sent/old/0',
       dest: 'attachments/sent/id-1/0',
     });
-  });
-
-  it('finds nothing to forward on a sent row from before attachments were recorded', async () => {
-    const setup = withRow(sentRow());
-
-    await expect(setup.service.sendEmail(request({ attachments: [ref('SENT', '0')] }))).rejects.toMatchObject({ message: expect.stringContaining('no such attachment') });
   });
 
   it.each([

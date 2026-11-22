@@ -8,7 +8,8 @@ import { parseWebRuntimeConfig, type WebRuntimeConfig } from '@freemail/shared';
  *
  * A present-but-malformed `config.json` fails loud (surfaces as a boot error). A
  * missing/unreachable one only happens in local `vite dev` (no deploy), where we
- * fall back to the `VITE_API_BASE_URL` dev env var if set.
+ * fall back to the `VITE_API_BASE_URL` dev env var if set — with the inbox off, since nothing
+ * says inbound is enabled.
  */
 export async function loadRuntimeConfig(fetchImpl: typeof fetch = (input, init) => fetch(input, init)): Promise<WebRuntimeConfig> {
   let response: Response | null = null;
@@ -26,7 +27,7 @@ export async function loadRuntimeConfig(fetchImpl: typeof fetch = (input, init) 
 
   const devBaseUrl = import.meta.env.VITE_API_BASE_URL;
   if (typeof devBaseUrl === 'string' && devBaseUrl.trim().length > 0) {
-    return parseWebRuntimeConfig({ apiBaseUrl: devBaseUrl });
+    return parseWebRuntimeConfig({ apiBaseUrl: devBaseUrl, inboundEnabled: false });
   }
 
   throw new Error('FreeMail: could not load /config.json and VITE_API_BASE_URL is not set. ' + 'The API endpoint is unknown.');

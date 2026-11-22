@@ -9,7 +9,7 @@
  * ever reach an outgoing header. For a message we sent, SES replaces whatever the composer
  * wrote with `<sesMessageId@email.amazonses.com>` (`<id@<region>.amazonses.com>` outside
  * us-east-1) — what recipients, and their replies' `In-Reply-To`, see. The send records that id
- * when SES accepts the message; for an older row it is derived from the SES message id.
+ * when SES accepts the message.
  */
 
 /** RFC 5322 `atext`, plus `.` (dot-atom). */

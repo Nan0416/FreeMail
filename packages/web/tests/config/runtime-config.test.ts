@@ -20,12 +20,9 @@ describe('loadRuntimeConfig', () => {
     expect(init?.cache).toBe('no-store');
   });
 
-  it('defaults inboundEnabled to false when the deployed config omits it', async () => {
+  it('fails loud when the deployed config omits inboundEnabled', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json(200, { apiBaseUrl: 'https://api.example.com' }));
-    await expect(loadRuntimeConfig(fetchMock)).resolves.toEqual({
-      apiBaseUrl: 'https://api.example.com',
-      inboundEnabled: false,
-    });
+    await expect(loadRuntimeConfig(fetchMock)).rejects.toThrow(/inboundEnabled/);
   });
 
   it('fails loud on a malformed deployed config.json', async () => {
@@ -36,5 +33,15 @@ describe('loadRuntimeConfig', () => {
   it('throws when config.json is unreachable and no dev fallback is set', async () => {
     const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error('offline'));
     await expect(loadRuntimeConfig(fetchMock)).rejects.toThrow(/could not load \/config\.json/);
+  });
+
+  it('falls back to VITE_API_BASE_URL, with the inbox off, when config.json is missing', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.dev.example.com/');
+    try {
+      const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(new Response('not found', { status: 404 }));
+      await expect(loadRuntimeConfig(fetchMock)).resolves.toEqual({ apiBaseUrl: 'https://api.dev.example.com', inboundEnabled: false });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

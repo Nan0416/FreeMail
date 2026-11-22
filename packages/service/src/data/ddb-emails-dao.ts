@@ -9,7 +9,6 @@
  * full items. Every put is conditional (`attribute_not_exists(pk)`) so a re-used id can never
  * clobber an existing row — and for inbound, so an at-least-once S3 redelivery is a no-op.
  */
-import { DescribeTableCommand } from '@aws-sdk/client-dynamodb';
 import {
   DeleteCommand,
   DynamoDBDocumentClient,
@@ -22,7 +21,7 @@ import {
   type UpdateCommandOutput,
 } from '@aws-sdk/lib-dynamodb';
 import type { EmailListFilter } from '@freemail/shared';
-import { EMAIL_LIST_INDEX_ATTRIBUTES, EMAIL_LIST_INDEX_NAME } from '@freemail/shared/storage';
+import { EMAIL_LIST_INDEX_NAME } from '@freemail/shared/storage';
 import { getLogger } from '../utils/logger.js';
 import { CONDITIONAL_CHECK_FAILED, EmailEntity, isConditionalCheckFailed } from './entities.js';
 import { MAX_DELIVERY_EVENTS } from './emails-dao.js';
@@ -46,8 +45,6 @@ import type {
   GetEmailOutput,
   ListEmailSummariesInput,
   ListEmailSummariesOutput,
-  QueryEmailsByDirectionInput,
-  QueryEmailsByDirectionOutput,
   UpdateInboundEmailForwardInput,
   UpdateInboundEmailForwardOutput,
   UpdateSentEmailStatusInput,
@@ -65,9 +62,6 @@ function toRow(item: Record<string, unknown>): GetEmailOutput {
 }
 
 const logger = getLogger('DdbEmailsDao');
-
-/** How long to trust a "list index not readable yet" answer before asking DynamoDB again. */
-const INDEX_RECHECK_MS = 30_000;
 
 type SentSummaryFields = Omit<Extract<EmailSummary, { readonly direction: 'sent' }>, 'direction' | 'pk' | 'sk'>;
 type InboundSummaryFields = Omit<Extract<EmailSummary, { readonly direction: 'inbound' }>, 'direction' | 'pk' | 'sk'>;
@@ -87,18 +81,8 @@ function toSummary(item: Record<string, unknown>, filter: EmailListFilter): Emai
   return { ...(item as unknown as SentSummaryFields), direction: 'sent', pk, sk };
 }
 
-/** DynamoDB's answer to a query on an index the table does not have (removed, or never created). */
-function isIndexNotReadable(err: unknown): boolean {
-  return err instanceof Error && err.name === 'ValidationException' && /does not have the specified index/i.test(err.message);
-}
-
 export class DdbEmailsDao implements EmailsDao {
   private readonly doc: DynamoDBDocumentClient;
-  /** A list index confirmed readable stays trusted until a query reports it missing. */
-  private listIndexReadable = false;
-  private listIndexCheckedAtMs: number | undefined;
-  /** The DescribeTable call in flight, shared so concurrent first calls ask only once. */
-  private listIndexCheck: Promise<boolean> | undefined;
 
   constructor(
     doc: DynamoDBDocumentClient,
@@ -328,77 +312,13 @@ export class DdbEmailsDao implements EmailsDao {
     }
   }
 
-  async queryEmailsByDirection(input: QueryEmailsByDirectionInput): Promise<QueryEmailsByDirectionOutput> {
-    return { emails: (await this.queryPartition(input)).map(toRow) };
-  }
-
   async listEmailSummaries(input: ListEmailSummariesInput): Promise<ListEmailSummariesOutput> {
-    // Until the index is readable, serve the page from the table: same keys, same order, same
-    // paging — just larger reads. So the list is never incomplete while a new index builds.
-    let items: Record<string, unknown>[];
-    if (!(await this.isListIndexReadable())) {
-      items = await this.queryPartition(input, undefined, LIST_FIELDS_PROJECTION);
-    } else {
-      try {
-        items = await this.queryPartition(input, EMAIL_LIST_INDEX_NAME);
-      } catch (err) {
-        if (!isIndexNotReadable(err)) {
-          throw err;
-        }
-        logger.warn(`List index "${EMAIL_LIST_INDEX_NAME}" is missing; listing from the table.`, err);
-        this.listIndexReadable = false;
-        items = await this.queryPartition(input, undefined, LIST_FIELDS_PROJECTION);
-      }
-    }
+    const items = await this.queryListIndex(input);
     return { emails: items.map((item) => toSummary(item, input.direction)) };
   }
 
   /**
-   * True once the list index is fully built (ACTIVE, or UPDATING a setting on a built index)
-   * and not backfilling. A backfilling GSI is NOT rejected by DynamoDB — it answers queries with
-   * whatever it has indexed so far, silently partial — and CloudFormation does not wait for a
-   * newly added GSI to backfill before it updates the Lambdas that read it. So readiness is asked
-   * of DescribeTable (covered by the table's read grant), cached once confirmed, and re-asked at
-   * most every {@link INDEX_RECHECK_MS} until then; concurrent first calls share one request.
-   */
-  private async isListIndexReadable(): Promise<boolean> {
-    if (this.listIndexReadable) {
-      return true;
-    }
-    if (this.listIndexCheck !== undefined) {
-      return this.listIndexCheck;
-    }
-    const nowMs = Date.now();
-    if (this.listIndexCheckedAtMs !== undefined && nowMs - this.listIndexCheckedAtMs < INDEX_RECHECK_MS) {
-      return false;
-    }
-    this.listIndexCheckedAtMs = nowMs;
-    this.listIndexCheck = this.describeListIndex().finally(() => {
-      this.listIndexCheck = undefined;
-    });
-    return this.listIndexCheck;
-  }
-
-  /** Ask DescribeTable about the list index. Logged when not readable, so a lasting fallback shows. */
-  private async describeListIndex(): Promise<boolean> {
-    try {
-      const out = await this.doc.send(new DescribeTableCommand({ TableName: this.tableName }));
-      const index = out.Table?.GlobalSecondaryIndexes?.find((candidate) => candidate.IndexName === EMAIL_LIST_INDEX_NAME);
-      const built = index?.IndexStatus === 'ACTIVE' || index?.IndexStatus === 'UPDATING';
-      this.listIndexReadable = built && index?.Backfilling !== true;
-    } catch (err) {
-      logger.warn('Could not describe the emails table; listing from the table for now.', err);
-      return false;
-    }
-    if (!this.listIndexReadable) {
-      logger.warn(`List index "${EMAIL_LIST_INDEX_NAME}" is not built yet; listing from the table.`);
-    }
-    return this.listIndexReadable;
-  }
-
-  /**
-   * Up to `limit` items of one partition, newest-first, strictly older than `afterSk` — from
-   * the table, or from an index that shares its keys.
+   * Up to `limit` list-index items of one partition, newest-first, strictly older than `afterSk`.
    *
    * DynamoDB ends a Query page after 1 MB of data read even when fewer than `Limit` items
    * matched, handing back a `LastEvaluatedKey`. So keep reading until the page is full or the
@@ -406,7 +326,7 @@ export class DdbEmailsDao implements EmailsDao {
    * decides a direction is drained on it), and a 1 MB cut would otherwise silently end the
    * timeline early.
    */
-  private async queryPartition(input: QueryEmailsByDirectionInput, indexName?: string, projection?: Projection): Promise<Record<string, unknown>[]> {
+  private async queryListIndex(input: ListEmailSummariesInput): Promise<Record<string, unknown>[]> {
     const pk = EmailEntity.partitionFor(input.direction);
     const items: Record<string, unknown>[] = [];
     // A cursor at or below the range's floor has nothing older left in range, and an empty
@@ -416,7 +336,7 @@ export class DdbEmailsDao implements EmailsDao {
     }
     // Resume strictly after the last row we emitted for this partition. pk is server-derived
     // (never client-supplied), so a crafted cursor can't retarget it. The index shares the
-    // table's keys, so the same {pk, sk} is a valid start key for either. A cursor above the
+    // table's keys, so {pk, sk} is its start key. A cursor above the
     // range's ceiling (the filters changed between pages) starts from the ceiling instead —
     // DynamoDB rejects a start key outside the key condition.
     const resumeSk = input.afterSk !== undefined && (input.maxSk === undefined || input.afterSk <= input.maxSk) ? input.afterSk : undefined;
@@ -426,15 +346,9 @@ export class DdbEmailsDao implements EmailsDao {
       const out = (await this.doc.send(
         new QueryCommand({
           TableName: this.tableName,
-          ...(indexName ? { IndexName: indexName } : {}),
+          IndexName: EMAIL_LIST_INDEX_NAME,
           KeyConditionExpression: `pk = :pk${range.expression}`,
           ExpressionAttributeValues: { ':pk': pk, ...range.values },
-          ...(projection
-            ? {
-                ProjectionExpression: projection.expression,
-                ExpressionAttributeNames: projection.names,
-              }
-            : {}),
           // Newest-first: sk = '<iso>#<id>' sorts lexicographically by receipt/send time.
           ScanIndexForward: false,
           Limit: input.limit - items.length,
@@ -548,7 +462,7 @@ export class DdbEmailsDao implements EmailsDao {
 }
 
 /** The sort-key half of a list query's key condition: a date range, if one was given. */
-function sortKeyCondition(input: QueryEmailsByDirectionInput): {
+function sortKeyCondition(input: ListEmailSummariesInput): {
   readonly expression: string;
   readonly values: Record<string, string>;
 } {
@@ -566,26 +480,6 @@ function sortKeyCondition(input: QueryEmailsByDirectionInput): {
   }
   return { expression: '', values: {} };
 }
-
-/** A ProjectionExpression and the attribute-name aliases it uses. */
-interface Projection {
-  readonly expression: string;
-  readonly names: Record<string, string>;
-}
-
-/**
- * The list index's own fields (plus the keys), for a list page read from the table while the
- * index is not readable — so a page, or a filtered scan of many, never pulls full items with
- * their inline bodies. Every name is aliased: several (`from`, `to`, `status`) are reserved.
- */
-const LIST_FIELDS_PROJECTION: Projection = (() => {
-  const attributes = ['pk', 'sk', ...EMAIL_LIST_INDEX_ATTRIBUTES];
-  const names: Record<string, string> = {};
-  attributes.forEach((attribute, index) => {
-    names[`#l${index}`] = attribute;
-  });
-  return { expression: Object.keys(names).join(', '), names };
-})();
 
 /** The aliased attribute names of an idempotency claim (`state`, `ttl` are reserved words). */
 const IDEMPOTENCY_NAMES = {

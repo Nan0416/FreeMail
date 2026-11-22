@@ -1,7 +1,7 @@
 /**
  * The read side of the mailbox: list the merged sent/inbound timeline, read one message,
  * and mint a presigned download URL for one attachment. Injectable (repo + presigner + body
- * store + raw-MIME source + clock + parser) so every branch is testable without AWS, and so
+ * store + clock) so every branch is testable without AWS, and so
  * #13's MCP read tools can reuse this exact service — the REST routes are thin adapters,
  * mirroring how #6's send route and #7's MCP tool share one {@link EmailService}.
  *
@@ -9,14 +9,9 @@
  * or in S3 for a large one — so opening it is a row read, never a raw-MIME parse. INBOUND mail
  * is still gated on the stored verdicts (fail-closed via `decideExposure`): only an exposable
  * message ever has a stored body, and a quarantined one yields none. HTML is returned RAW as
- * data — the client owns safe rendering (#12).
- *
- * Legacy rows (written before bodies were stored) fall back to the old path: re-parse the raw
- * MIME through #10's `parseInbound` (no-op attachment sink, same untrusted-MIME hardening),
- * with `assumeExposed` for our own sent archive. Inbound raw MIME expires after
- * {@link INBOUND_RAW_RETENTION_DAYS} days, after which such a row reads envelope-only.
+ * data — the client owns safe rendering (#12). Every readable row has a stored body (rows from
+ * before bodies were stored were backfilled once per deployment; see PR #89).
  */
-import type { Readable } from 'node:stream';
 import {
   ATTACHMENT_URL_TTL_SECONDS,
   type AttachmentDownloadResponse,
@@ -35,22 +30,10 @@ import {
   type ServiceEmailAttachment,
   type ServiceEmailDetail,
 } from '@freemail/shared';
-import { type EmailsDao, FAILED_PARTITION, type EmailSummary, type GetEmailOutput, type InboundAttachmentDescriptor } from '../data/emails-dao.js';
+import { type EmailsDao, FAILED_PARTITION, type EmailSummary, type GetEmailOutput } from '../data/emails-dao.js';
 import { INBOUND_RAW_RETENTION_DAYS } from '@freemail/shared/storage';
 import type { AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import type { MailBodyContent, MailBodyStore } from '../facades/s3-mail-body-store.js';
-import {
-  MAX_ATTACHMENT_BYTES,
-  MAX_ATTACHMENT_TOTAL_BYTES,
-  MAX_ATTACHMENTS,
-  MAX_HEADER_BLOCK_BYTES,
-  MAX_HTML_BODY_BYTES,
-  MAX_MIME_PARTS,
-  MAX_RAW_MESSAGE_BYTES,
-  MAX_TEXT_BODY_BYTES,
-  MAX_TOTAL_BODY_BYTES,
-} from '../utils/inbound-limits.js';
-import { type AttachmentSink, type ParsedInbound, type ParseLimits, type ParseOptions, parseInbound } from '../utils/inbound-parse.js';
 import { decideExposure } from '../utils/verdicts.js';
 import { fitBodyToBudget } from '../utils/body-budget.js';
 import { contentDispositionForDownload } from '../utils/content-disposition.js';
@@ -62,14 +45,6 @@ import { getLogger } from '../utils/logger.js';
 import { loadEmailBody } from './email-body-storage.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 
-/** The raw-MIME source legacy rows re-parse their bodies from — satisfied by the inbound S3 store. */
-export interface RawMimeSource {
-  getStream(key: string): Promise<Readable>;
-}
-
-/** The parse function — defaulted to #10's `parseInbound`, overridable in tests. */
-export type ParseInbound = (source: Readable, sink: AttachmentSink, limits?: ParseLimits, options?: ParseOptions) => Promise<ParsedInbound>;
-
 export interface EmailReadServiceDeps {
   readonly emailsDao: EmailsDao;
   readonly presigner: AttachmentPresigner;
@@ -80,9 +55,7 @@ export interface EmailReadServiceDeps {
   readonly quarantinePresigner?: AttachmentPresigner;
   /** Reads bodies stored outside the row (`bodies/...`). */
   readonly bodies: MailBodyStore;
-  readonly rawMime: RawMimeSource;
   readonly now?: () => Date;
-  readonly parse?: ParseInbound;
 }
 
 export interface ListEmailsServiceRequest {
@@ -93,29 +66,7 @@ export interface ListEmailsServiceRequest {
   readonly filters?: EmailListFilters;
 }
 
-/**
- * Read limits for on-demand body materialization: identical to #10's parse limits (so the
- * exposure decision can't drift) EXCEPT we retain more of the body — up to the per-part read
- * cap — instead of only a snippet-sized slice. Typed as `ParseLimits`, so if #10 adds a limit
- * field this fails to compile until updated (no silent drift).
- */
-const READ_PARSE_LIMITS: ParseLimits = {
-  maxRawBytes: MAX_RAW_MESSAGE_BYTES,
-  maxChildNodes: MAX_MIME_PARTS,
-  maxHeadSize: MAX_HEADER_BLOCK_BYTES,
-  maxAttachments: MAX_ATTACHMENTS,
-  maxAttachmentBytes: MAX_ATTACHMENT_BYTES,
-  maxAttachmentTotalBytes: MAX_ATTACHMENT_TOTAL_BYTES,
-  maxTextBodyBytes: MAX_TEXT_BODY_BYTES,
-  maxHtmlBodyBytes: MAX_HTML_BODY_BYTES,
-  maxTotalBodyBytes: MAX_TOTAL_BODY_BYTES,
-  maxRetainedBodyChars: MAX_READ_BODY_BYTES,
-};
-
 const logger = getLogger('EmailReadService');
-
-/** S3's error name for a missing object — an expired raw message on the legacy path. */
-const NO_SUCH_KEY = 'NoSuchKey';
 
 /** At most this many attachments are presigned at once. */
 const PRESIGN_CONCURRENCY = 5;
@@ -124,18 +75,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Rows per list-index read while scanning for filter matches. */
 const FILTER_BATCH_ROWS = 200;
-
-/** A no-op attachment sink: the reader re-parses only for the body, never re-storing attachments. */
-const NOOP_SINK: AttachmentSink = {
-  store: (partIndex, filename, contentType, bytes) =>
-    Promise.resolve({
-      id: String(partIndex),
-      filename: filename ?? '',
-      contentType,
-      sizeBytes: bytes.length,
-      s3Key: '',
-    }),
-};
 
 function refForRow(row: Pick<EmailSummary, 'pk' | 'sk'>): { pk: string; sk: string } {
   return {
@@ -169,18 +108,14 @@ export class EmailReadService {
   private readonly presigner: AttachmentPresigner;
   private readonly quarantinePresigner: AttachmentPresigner | undefined;
   private readonly bodies: MailBodyStore;
-  private readonly rawMime: RawMimeSource;
   private readonly now: () => Date;
-  private readonly parse: ParseInbound;
 
   constructor(deps: EmailReadServiceDeps) {
     this.emailsDao = deps.emailsDao;
     this.presigner = deps.presigner;
     this.quarantinePresigner = deps.quarantinePresigner;
     this.bodies = deps.bodies;
-    this.rawMime = deps.rawMime;
     this.now = deps.now ?? (() => new Date());
-    this.parse = deps.parse ?? parseInbound;
   }
 
   /**
@@ -259,13 +194,12 @@ export class EmailReadService {
 
   /**
    * Mint a presigned download URL for one attachment. Only descriptors actually on the row
-   * are addressable — a quarantined/virus/parse-failed message has none, and neither does a
-   * sent row written before attachments were recorded — so the id resolves to nothing → 404,
-   * never a guessable key. The raw S3 key is used server-side only.
+   * are addressable — a quarantined/virus/parse-failed message has none — so any other id
+   * resolves to nothing → 404, never a guessable key. The raw S3 key is used server-side only.
    */
   async getAttachmentUrl(request: GetAttachmentUrlServiceRequest): Promise<AttachmentDownloadResponse> {
     const row = await this.loadRow(request.handle);
-    const descriptor = rowAttachments(row).find((a) => a.id === request.attachmentId);
+    const descriptor = row.attachments.find((a) => a.id === request.attachmentId);
     if (!descriptor) {
       throw emailErrors.notFound('No such attachment.');
     }
@@ -280,7 +214,7 @@ export class EmailReadService {
   async getEmailWithDownloadUrls(request: GetEmailWithDownloadUrlsServiceRequest): Promise<ServiceEmailDetail> {
     const row = await this.loadRow(request.handle);
     const detail = await this.detailFor(row, request.handle);
-    const descriptors = rowAttachments(row);
+    const descriptors = row.attachments;
     const attachments = await mapWithConcurrency(detail.attachments, PRESIGN_CONCURRENCY, async (info): Promise<ServiceEmailAttachment> => {
       const descriptor = descriptors.find((a) => a.id === info.id);
       if (!descriptor) {
@@ -313,7 +247,7 @@ export class EmailReadService {
   /**
    * Mint a presigned URL that downloads a message's original raw MIME as `<subject>.eml`. Only
    * a message whose detail reports `rawAvailable` resolves; anything else is a 404 (a received
-   * message that didn't pass the virus scan or has aged out, a sent row without an archive).
+   * message that didn't pass the virus scan or has aged out).
    * An Errors-folder original comes from the quarantine bucket, flagged `rawSuspicious` on the
    * detail when it lacks a virus `PASS`. The S3 key is used server-side only.
    */
@@ -362,45 +296,9 @@ export class EmailReadService {
       }
       return fitToResponse(content, envelopeBytes);
     }
-    return this.legacyBody(row, envelopeBytes);
-  }
-
-  /**
-   * A row written before bodies were stored: re-parse its raw MIME, as the reader used to.
-   * Our own sent archive is permanent and always exposable (`assumeExposed`); a legacy sent
-   * row without one (pre-#29) stays envelope-only. Inbound raw MIME expires, so once it is
-   * gone the row reads envelope-only too.
-   */
-  private async legacyBody(row: GetEmailOutput, envelopeBytes: number): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
-    if (row.direction === 'sent') {
-      if (!row.rawS3Key) {
-        return {};
-      }
-      return this.parseBody(row.rawS3Key, envelopeBytes, { assumeExposed: true });
-    }
-    return this.parseBody(row.rawS3Key, envelopeBytes, {});
-  }
-
-  /**
-   * Re-parse a raw MIME object into a body fitted to the response budget. `parsed.exposed` is
-   * the defense-in-depth fail-closed — a corrupt/parse-failed archive yields no body rather
-   * than throwing — and an expired (deleted) object yields none either.
-   */
-  private async parseBody(rawS3Key: string, envelopeBytes: number, options: ParseOptions): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
-    let stream: Readable;
-    try {
-      stream = await this.rawMime.getStream(rawS3Key);
-    } catch (err) {
-      if (err instanceof Error && err.name === NO_SUCH_KEY) {
-        return {};
-      }
-      throw err;
-    }
-    const parsed = await this.parse(stream, NOOP_SINK, READ_PARSE_LIMITS, options);
-    if (!parsed.exposed) {
-      return {};
-    }
-    return fitToResponse({ text: parsed.textBody, html: parsed.htmlBody }, envelopeBytes);
+    // Every row this code writes stores a body, and older rows were backfilled.
+    logger.warn(`${row.direction} message ${row.id} has no stored body.`);
+    return {};
   }
 
   private toListItem(row: EmailSummary): EmailListItem {
@@ -414,7 +312,7 @@ export class EmailReadService {
         cc: row.cc,
         subject: row.subject,
         date: row.sentAt,
-        ...(row.status !== undefined ? { status: row.status } : {}),
+        status: row.status,
         hasAttachments: row.attachmentCount > 0,
         attachmentCount: row.attachmentCount,
       };
@@ -451,11 +349,11 @@ export class EmailReadService {
         ...(row.replyTo !== undefined && row.replyTo.length > 0 ? { replyTo: row.replyTo } : {}),
         subject: row.subject,
         date: row.sentAt,
-        ...(row.status !== undefined ? { status: row.status } : {}),
+        status: row.status,
         ...(row.deliveryEvents !== undefined && row.deliveryEvents.length > 0 ? { deliveryEvents: distinctEvents(row.deliveryEvents) } : {}),
         ...body,
         rawAvailable: this.rawDownload(row) !== undefined,
-        attachments: rowAttachments(row).map(publicDescriptor),
+        attachments: row.attachments.map(publicDescriptor),
         hasAttachments: row.attachmentCount > 0,
         attachmentCount: row.attachmentCount,
         sizeBytes: row.sizeBytes,
@@ -493,30 +391,20 @@ export class EmailReadService {
   /**
    * Where a message's downloadable original lives, or undefined when it may not be downloaded.
    *
-   * - Sent: our own archive, if the row has one (permanent).
+   * - Sent: our own archive (permanent).
    * - Errors folder: its quarantined copy — offered whatever the verdict (it is the only way to
    *   recover the content), with the detail flagging a non-PASS one as suspicious.
-   * - Received, fully processed (a stored body): only on an affirmative virus `PASS` — spam-
-   *   flagged mail stays downloadable, the original is the point — and only while SES's raw
-   *   copy is retained (the lifecycle rule expires tagged copies).
-   * - Received before stored bodies: its untagged raw copy, kept forever, whatever the verdict —
-   *   flagged suspicious without a virus PASS.
+   * - Received: only on an affirmative virus `PASS` — spam-flagged mail stays downloadable, the
+   *   original is the point — and only while SES's raw copy is retained: ingest tags it once the
+   *   message is stored, and the lifecycle rule expires it after the window.
    */
   private rawDownload(row: GetEmailOutput): { readonly key: string; readonly presigner: AttachmentPresigner } | undefined {
     if (row.direction === 'sent') {
-      return row.rawS3Key ? { key: row.rawS3Key, presigner: this.presigner } : undefined;
+      return { key: row.rawS3Key, presigner: this.presigner };
     }
     if (row.pk === FAILED_PARTITION) {
       return row.quarantineS3Key && this.quarantinePresigner ? { key: row.quarantineS3Key, presigner: this.quarantinePresigner } : undefined;
     }
-    // A row without a stored body predates stored bodies: its raw copy is untagged and kept
-    // forever — the only way to recover the message — so offer it whatever the verdict, like an
-    // Errors-folder original (the detail flags one without a virus PASS as suspicious).
-    if (row.body === undefined) {
-      return { key: row.rawS3Key, presigner: this.presigner };
-    }
-    // A row with a stored body was fully extracted (virus PASS by construction), so ingest tagged
-    // its raw copy and the lifecycle rule expires it after the window: offer it only until then.
     if (row.virusVerdict !== 'PASS') {
       return undefined;
     }
@@ -539,11 +427,6 @@ function distinctEvents(events: readonly DeliveryEvent[]): DeliveryEvent[] {
     seen.add(key);
     return true;
   });
-}
-
-/** A row's stored attachment descriptors; a sent row from before they were recorded has none. */
-function rowAttachments(row: GetEmailOutput): readonly InboundAttachmentDescriptor[] {
-  return row.direction === 'inbound' ? row.attachments : (row.attachments ?? []);
 }
 
 /**

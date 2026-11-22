@@ -48,12 +48,12 @@ export function parseWebRuntimeConfig(input: unknown): WebRuntimeConfig {
   if (typeof input.apiBaseUrl !== 'string' || input.apiBaseUrl.trim().length === 0) {
     throw new Error('WebRuntimeConfig: "apiBaseUrl" must be a non-empty string.');
   }
-  // Absent → false (a pre-#12 config.json is tolerated); present-but-wrong-type fails loud.
-  if (input.inboundEnabled !== undefined && typeof input.inboundEnabled !== 'boolean') {
+  // Every deploy writes it (CDK, from the deploy config), so an absent one is malformed too.
+  if (typeof input.inboundEnabled !== 'boolean') {
     throw new Error('WebRuntimeConfig: "inboundEnabled" must be a boolean.');
   }
   return {
     apiBaseUrl: normalizeBaseUrl(input.apiBaseUrl),
-    inboundEnabled: input.inboundEnabled === true,
+    inboundEnabled: input.inboundEnabled,
   };
 }

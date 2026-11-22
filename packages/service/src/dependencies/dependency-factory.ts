@@ -31,7 +31,6 @@ import type { ForwardingRulesDao } from '../data/forwarding-rules-dao.js';
 import { createDocumentClient } from '../data/document-client.js';
 import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
 import type { EmailsDao } from '../data/emails-dao.js';
-import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import type { ApiKeysDao } from '../data/api-keys-dao.js';
 import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
@@ -80,7 +79,6 @@ export class DependencyFactory {
 
     const presigner = new S3AttachmentPresigner(s3, this.config.mailBucket);
     const quarantinePresigner = new S3AttachmentPresigner(s3, this.config.quarantineBucket);
-    const inboundStore = new S3InboundObjectStore(s3, this.config.mailBucket);
     const outboundStore = new S3OutboundObjectStore(s3, this.config.mailBucket);
     const bodyStore = new S3MailBodyStore(s3, this.config.mailBucket);
     const uploadStore = new S3UploadStore(s3, createUploadPresignClient(), this.config.mailBucket);
@@ -122,7 +120,6 @@ export class DependencyFactory {
         presigner,
         quarantinePresigner,
         bodies: bodyStore,
-        rawMime: inboundStore,
       }),
       attachmentService: new AttachmentService({
         uploads: uploadStore,

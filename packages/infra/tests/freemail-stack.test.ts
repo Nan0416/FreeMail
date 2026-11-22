@@ -117,20 +117,6 @@ describe('FreeMailStack', () => {
     expect(canQueryEmailIndexes(template, 'AuthorizerHandler')).toBe(false);
   });
 
-  it('lets every mailbox reader DescribeTable — how the DAO knows the index is ACTIVE', () => {
-    const template = synth(makeConfig({ inbound: { enabled: true, confirmInboundMx: true } }));
-    const canDescribe = (rolePrefix: string): boolean =>
-      Object.values(template.findResources('AWS::IAM::Policy')).some(
-        (policy) =>
-          JSON.stringify(policy.Properties.Roles).includes(rolePrefix) &&
-          (policy.Properties.PolicyDocument.Statement as Record<string, unknown>[]).some(
-            (statement) => ([] as unknown[]).concat(statement.Action).includes('dynamodb:DescribeTable') && JSON.stringify(statement.Resource).includes('EmailsTable'),
-          ),
-      );
-    expect(canDescribe('RestHandler')).toBe(true);
-    expect(canDescribe('McpHandler')).toBe(true);
-  });
-
   it('expires only fully ingested raw inbound MIME after the retention window', () => {
     const template = synth(makeConfig());
     // Exactly two rules. Raw inbound: inbound/ AND the ingested tag — untagged raw MIME

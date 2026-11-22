@@ -125,8 +125,7 @@ export function quarantineNotice(email: EmailDetail): QuarantineNotice | null {
 }
 
 /**
- * A delivery-status notice for a sent message, or null when it went out (or is inbound / a
- * legacy row with no status). The body still renders below it — the archive is written
+ * A delivery-status notice for a sent message, or null when it went out (or is inbound). The body still renders below it — the archive is written
  * before the SES call, so even a failed send has its composed message on file.
  */
 export function sentStatusNotice(email: EmailDetail): string | null {

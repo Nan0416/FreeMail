@@ -51,7 +51,7 @@ class FakePresigner implements AttachmentPresigner {
 function record(overrides: Partial<ClaimDownloadTokenOutput> = {}): ClaimDownloadTokenOutput {
   return {
     token: 'tok-1',
-    s3Key: 'attachments/outbound/email-1/0',
+    s3Key: 'attachments/sent/email-1/0',
     filename: 'the report.pdf',
     contentType: 'application/pdf',
     sizeBytes: 5 * 1024 * 1024,
@@ -176,7 +176,7 @@ describe('AttachmentService.resolveAttachmentDownloadPresignedUrl', () => {
     expect(t.tokens.claimCalls).toEqual([{ token: VALID_TOKEN, nowIso: NOW.toISOString() }]);
     expect(t.presigner.calls).toHaveLength(1);
     expect(t.presigner.calls[0]).toEqual({
-      key: 'attachments/outbound/email-1/0',
+      key: 'attachments/sent/email-1/0',
       contentType: 'application/octet-stream',
       contentDisposition: contentDispositionForDownload('the report.pdf'),
       expiresInSeconds: DOWNLOAD_PRESIGN_TTL_SECONDS,

@@ -13,7 +13,6 @@ import { SESv2Client } from '@aws-sdk/client-sesv2';
 import { DdbDownloadTokensDao } from '../data/ddb-download-tokens-dao.js';
 import { DdbEmailsDao } from '../data/ddb-emails-dao.js';
 import { createDocumentClient } from '../data/document-client.js';
-import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { S3UploadStore } from '../facades/s3-upload-store.js';
@@ -106,7 +105,6 @@ export class McpDependencyFactory {
         emailsDao,
         presigner,
         bodies: bodyStore,
-        rawMime: new S3InboundObjectStore(s3, this.config.mailBucket),
       }),
       inboundEnabled: true,
       deployment,

@@ -63,7 +63,7 @@ class FakeDoc {
 function record(overrides: Partial<ClaimDownloadTokenOutput> = {}): ClaimDownloadTokenOutput {
   return {
     token: 'tok-1',
-    s3Key: 'attachments/outbound/email-1/0',
+    s3Key: 'attachments/sent/email-1/0',
     filename: 'report.pdf',
     contentType: 'application/pdf',
     sizeBytes: 5 * 1024 * 1024,
@@ -89,7 +89,7 @@ describe('DdbDownloadTokensDao.create', () => {
     const stored = doc.store.get('tok-1');
     expect(stored).toMatchObject({
       token: 'tok-1',
-      s3Key: 'attachments/outbound/email-1/0',
+      s3Key: 'attachments/sent/email-1/0',
       filename: 'report.pdf',
       revoked: false,
       downloadCount: 0,
@@ -161,7 +161,7 @@ describe('DdbDownloadTokensDao.claim', () => {
 
     expect(claimed).not.toBeNull();
     expect(claimed?.downloadCount).toBe(1);
-    expect(claimed?.s3Key).toBe('attachments/outbound/email-1/0');
+    expect(claimed?.s3Key).toBe('attachments/sent/email-1/0');
     // The gate + increment ride ONE conditional UpdateItem returning the new row.
     const input = doc.updateInputs[0];
     expect(input.ReturnValues).toBe('ALL_NEW');

@@ -131,7 +131,7 @@ export async function handleListEmails(readService: EmailReadService, nonce: () 
   }
 }
 
-/** `get_email`: one message (body materialized on demand for exposable inbound). */
+/** `get_email`: one message, with its stored body when its content is exposable. */
 export async function handleGetEmail(readService: EmailReadService, nonce: () => string, args: { id: string }): Promise<CallToolResult> {
   try {
     const email = await readService.getEmail({ handle: args.id });

@@ -551,9 +551,9 @@ export class EmailService {
     if (row === null) {
       throw emailErrors.invalidRequest('"inReplyTo" names no message in the mailbox.');
     }
-    // Received mail: its own header. Sent mail: the id recorded when SES accepted it, or — on a
-    // row from before that was recorded — derived from the SES id the same way.
-    const messageId = row.messageIdHeader ?? (row.direction === 'sent' && row.sesMessageId !== undefined ? sesMessageIdHeader(row.sesMessageId, this.sesRegion) : undefined);
+    // Received mail: its own header. Sent mail: the id recorded when SES accepted it (a send that
+    // failed has none, so a reply to it starts a new thread).
+    const messageId = row.messageIdHeader;
     if (messageId === undefined) {
       return { subject: row.subject };
     }
@@ -668,7 +668,7 @@ export class EmailService {
         throw emailErrors.invalidRequest(`${where}: that message was flagged as spam, so its attachments are not forwarded. ` + "Sending such a file on is the mailbox owner's decision.");
       }
     }
-    const descriptor = (row.direction === 'inbound' ? row.attachments : (row.attachments ?? [])).find((candidate) => candidate.id === source.attachmentId);
+    const descriptor = row.attachments.find((candidate) => candidate.id === source.attachmentId);
     if (descriptor === undefined) {
       throw emailErrors.invalidRequest(`${where}: that message has no such attachment.`);
     }

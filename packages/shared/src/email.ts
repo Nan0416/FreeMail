@@ -177,8 +177,7 @@ export function isValidEmailAddress(value: string): boolean {
  * newest-first timeline; failed mail is its own folder. Every message is addressed by an
  * OPAQUE `id` handle (minted by the list, echoed on read); the client never constructs it
  * and no S3 key ever appears on the wire. Bodies are stored when a message is received
- * (verdict-gated) or sent, so reading one never re-parses raw MIME; a row stored before
- * that falls back to its raw MIME while it still exists.
+ * (verdict-gated) or sent, so reading one never re-parses raw MIME.
  * ------------------------------------------------------------------ */
 
 /** Which way a stored message travelled. */
@@ -198,8 +197,7 @@ export type EmailListFilter = EmailDirection | 'failed';
  * in the mailbox instead of vanishing. SES's later reports then move it on: `delivered` once a
  * receiving server accepted it for at least one recipient (each recipient's outcome is in the
  * delivery events), `bounced` once any recipient's copy bounced (which outranks
- * `delivered`), `send_failed` if SES rejected it after all. Absent on inbound rows (and on any
- * legacy sent row written before this field existed).
+ * `delivered`), `send_failed` if SES rejected it after all. Absent on inbound rows.
  */
 export type SentStatus = 'sending' | 'sent' | 'delivered' | 'bounced' | 'send_failed';
 
@@ -260,7 +258,7 @@ export interface EmailListItem {
   readonly snippet?: string;
   /** Timeline sort time, ISO-8601 UTC (sent → send time, inbound → server receipt time). */
   readonly date: string;
-  /** Sent only: delivery status (`sending`/`sent`/`send_failed`). Absent on inbound + legacy rows. */
+  /** Sent only: delivery status (`sending`/`sent`/`send_failed`). Absent on inbound. */
   readonly status?: SentStatus;
   readonly hasAttachments: boolean;
   readonly attachmentCount: number;
@@ -294,7 +292,7 @@ export interface EmailDetail {
   readonly subject: string;
   /** Timeline sort time, ISO-8601 UTC. */
   readonly date: string;
-  /** Sent only: delivery status (`sending`/`sent`/`send_failed`). Absent on inbound + legacy rows. */
+  /** Sent only: delivery status (`sending`/`sent`/`send_failed`). Absent on inbound. */
   readonly status?: SentStatus;
   /**
    * Sent only: what SES reported after accepting it — deliveries, bounces, complaints, delays —
@@ -314,10 +312,10 @@ export interface EmailDetail {
   /** True when a body part hit the read-size cap and was truncated. */
   readonly bodyTruncated?: boolean;
   /**
-   * True when the original message (`.eml`) can be downloaded via `GET /emails/{id}/raw`:
-   * sent mail with an archive, received mail that passed the virus scan — for fully processed
-   * mail, only while it is younger than the raw-MIME retention window (14 days) — and every
-   * message in the Errors folder (kept in quarantine).
+   * True when the original message (`.eml`) can be downloaded via `GET /emails/{id}/raw`: sent
+   * mail (archived permanently), received mail that passed the virus scan while it is younger
+   * than the raw-MIME retention window (14 days), and every message in the Errors folder (kept
+   * in quarantine).
    */
   readonly rawAvailable?: boolean;
   /**

@@ -122,16 +122,6 @@ export interface ParseLimits {
   readonly maxRetainedBodyChars: number;
 }
 
-/**
- * Non-limit parse options. `assumeExposed` forces the body/attachments to be retained
- * regardless of the SES virus verdict — used ONLY by the read path when re-parsing our OWN
- * archived sent MIME (#29), which carries no `X-SES-*-Verdict` header (so the verdict-based
- * gate would otherwise drop the body). Never set for inbound (attacker-controlled) mail.
- */
-export interface ParseOptions {
-  readonly assumeExposed?: boolean;
-}
-
 const DEFAULT_LIMITS: ParseLimits = {
   maxRawBytes: MAX_RAW_MESSAGE_BYTES,
   maxChildNodes: MAX_MIME_PARTS,
@@ -150,7 +140,7 @@ const DEFAULT_LIMITS: ParseLimits = {
  * failures — the `parseStatus` distinguishes them. Rejects only for a real infra
  * failure from the sink or the source stream, so those retry.
  */
-export function parseInbound(source: Readable, sink: AttachmentSink, limits: ParseLimits = DEFAULT_LIMITS, options: ParseOptions = {}): Promise<ParsedInbound> {
+export function parseInbound(source: Readable, sink: AttachmentSink, limits: ParseLimits = DEFAULT_LIMITS): Promise<ParsedInbound> {
   return new Promise<ParsedInbound>((resolve, reject) => {
     const rawLimiter = new RawByteLimiter(limits.maxRawBytes);
     const splitter = new Splitter({
@@ -203,9 +193,8 @@ export function parseInbound(source: Readable, sink: AttachmentSink, limits: Par
       const lines: HeaderLine[] = parseHeaderLines(bodyLimiter.rootHeaderBlock);
       verdicts = extractVerdicts(lines);
       authenticatedDomain = dmarcPassDomain(lines);
-      // Own archived sent MIME has no verdict header → assumeExposed retains the body;
-      // inbound mail is gated on an affirmative virus PASS.
-      exposed = (options.assumeExposed ?? false) || verdicts.virusVerdict === 'PASS';
+      // Content is exposed only on an affirmative virus PASS.
+      exposed = verdicts.virusVerdict === 'PASS';
     };
 
     const teardown = (): void => {

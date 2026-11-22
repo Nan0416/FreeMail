@@ -65,26 +65,18 @@ export interface CreateSentEmailInput {
   readonly attachmentCount: number;
   /** Size of the raw MIME message in bytes. */
   readonly sizeBytes: number;
-  /**
-   * Delivery status, set write-before-send (`sending` → `sent`/`send_failed`). Optional on the
-   * type so a legacy row written before this field reads back without it (→ envelope-only detail).
-   */
-  readonly status?: SentStatus;
-  /**
-   * S3 pointer to the archived composed raw MIME (`sent/<id>`) — permanent; backs the `.eml`
-   * download (and the body of a legacy row stored before `body`). Absent on a pre-#29 row.
-   */
-  readonly rawS3Key?: string;
+  /** Delivery status, set write-before-send (`sending` → `sent`/`send_failed`), then moved on by SES's reports. */
+  readonly status: SentStatus;
+  /** S3 pointer to the archived composed raw MIME (`sent/<id>`) — permanent; backs the `.eml` download. */
+  readonly rawS3Key: string;
   /** Short failure reason on a `send_failed` row — server-side only, never surfaced in the read DTO. */
   readonly error?: string;
   /**
    * One descriptor per attachment the message carried, in request order, each pointing at its
-   * permanent copy `attachments/sent/<id>/<index>` (embedded or linked alike; rows from before
-   * direct uploads point linked ones at `attachments/outbound/*`). Absent on a row written
-   * before attachments were recorded (the read path treats that as none).
+   * permanent copy `attachments/sent/<id>/<index>` (embedded or linked alike).
    */
-  readonly attachments?: readonly SentAttachmentDescriptor[];
-  /** The body as sent (download links included). Absent on a row written before bodies were stored. */
+  readonly attachments: readonly SentAttachmentDescriptor[];
+  /** The body as sent (download links included). */
   readonly body?: StoredEmailBody;
   /** `Reply-To` addresses the message carried, if any. */
   readonly replyTo?: readonly string[];
@@ -95,7 +87,7 @@ export interface CreateSentEmailInput {
   readonly references?: readonly string[];
   /**
    * The `Message-ID` SES gave the message (it replaces the composer's), set with the `sent`
-   * transition. Absent before SES accepts it, and on rows from before it was recorded.
+   * transition. Absent before SES accepts it, so on a failed send.
    */
   readonly messageIdHeader?: string;
   /**
@@ -244,7 +236,7 @@ export interface CreateInboundEmailInput {
   readonly quarantineS3Key?: string;
   /**
    * The decoded body — present ONLY when content is exposable (parsed + virus `PASS`), like
-   * the snippet. Absent on a row written before bodies were stored.
+   * the snippet, so absent on an Errors-folder row.
    */
   readonly body?: StoredEmailBody;
   /**
@@ -311,7 +303,8 @@ export interface GetEmailInput {
   readonly sk: string;
 }
 
-export interface QueryEmailsByDirectionInput {
+/** One list page's query: a partition, newest-first, optionally a date range and a start key. */
+export interface ListEmailSummariesInput {
   /** Which partition: a direction, or `failed` (received mail in the Errors folder). */
   readonly direction: EmailListFilter;
   readonly limit: number;
@@ -323,11 +316,6 @@ export interface QueryEmailsByDirectionInput {
   readonly maxSk?: string | undefined;
 }
 
-export interface QueryEmailsByDirectionOutput {
-  /** Newest-first, at most the requested `limit`. */
-  readonly emails: ReadonlyArray<GetEmailOutput>;
-}
-
 /**
  * One row as the list index carries it: its keys plus only the projected list fields. Derived
  * from the projection list itself, so a field the index does not carry is not on this type —
@@ -336,9 +324,6 @@ export interface QueryEmailsByDirectionOutput {
 export type EmailSummary =
   | ({ readonly direction: 'sent'; readonly pk: string; readonly sk: string } & Pick<CreateSentEmailInput, EmailListIndexAttribute & keyof CreateSentEmailInput>)
   | ({ readonly direction: 'inbound'; readonly pk: string; readonly sk: string } & Pick<CreateInboundEmailInput, EmailListIndexAttribute & keyof CreateInboundEmailInput>);
-
-/** Same paging contract as {@link QueryEmailsByDirectionInput}, answered from the list index. */
-export interface ListEmailSummariesInput extends QueryEmailsByDirectionInput {}
 
 export interface ListEmailSummariesOutput {
   /** Newest-first, at most the requested `limit`. */
@@ -425,17 +410,12 @@ export interface EmailsDao {
   updateInboundEmailForward(input: UpdateInboundEmailForwardInput): Promise<UpdateInboundEmailForwardOutput>;
 
   /**
-   * One partition (`'sent'` → `pk='SENT'`, `'inbound'` → `pk='INBOUND'`), newest-first, at
-   * most `limit` rows strictly older than `afterSk` (omit `afterSk` to start from the
-   * newest). Fewer than `limit` rows means the partition is exhausted past that point — the
-   * read service uses that to decide when a direction is drained.
-   */
-  queryEmailsByDirection(input: QueryEmailsByDirectionInput): Promise<QueryEmailsByDirectionOutput>;
-
-  /**
-   * The mailbox list page for one partition: the same paging contract as
-   * {@link queryEmailsByDirection}, but read from the list index, so each row carries only the
-   * list fields ({@link EmailSummary}) and the read is sized by those, not by the full items.
+   * The mailbox list page for one partition (`'sent'` → `pk='SENT'`, `'inbound'` →
+   * `pk='INBOUND'`, `'failed'` → `pk='FAILED'`), newest-first, at most `limit` rows strictly
+   * older than `afterSk` (omit `afterSk` to start from the newest). Fewer than `limit` rows means
+   * the partition is exhausted past that point — the read service uses that to decide when a
+   * direction is drained. Read from the list index, so each row carries only the list fields
+   * ({@link EmailSummary}) and the read is sized by those, not by the full items.
    */
   listEmailSummaries(input: ListEmailSummariesInput): Promise<ListEmailSummariesOutput>;
 

@@ -1,6 +1,5 @@
-import { DescribeTableCommand } from '@aws-sdk/client-dynamodb';
 import { GetCommand, PutCommand, QueryCommand, UpdateCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { EMAIL_LIST_INDEX_ATTRIBUTES } from '@freemail/shared/storage';
 import { DdbEmailsDao } from '../../src/data/ddb-emails-dao.js';
 import type { CreateInboundEmailInput, CreateSentEmailInput } from '../../src/data/emails-dao.js';
@@ -284,24 +283,8 @@ class ReadFakeDoc {
  */
 class PagedFakeDoc {
   readonly queries: QueryCommand[] = [];
-  describes = 0;
-  /**
-   * What DescribeTable reports for the list index: `undefined` = the table has no such index;
-   * an Error = DescribeTable itself fails. Defaults to a ready (ACTIVE) index.
-   */
-  indexState: { IndexStatus: string; Backfilling?: boolean } | undefined | Error = {
-    IndexStatus: 'ACTIVE',
-  };
   constructor(private readonly pages: ({ Items: Record<string, unknown>[]; LastEvaluatedKey?: unknown } | Error)[]) {}
-  send(command: QueryCommand | DescribeTableCommand): Promise<unknown> {
-    if (command instanceof DescribeTableCommand) {
-      this.describes += 1;
-      if (this.indexState instanceof Error) {
-        return Promise.reject(this.indexState);
-      }
-      const indexes = this.indexState ? [{ IndexName: 'list', ...this.indexState }] : [];
-      return Promise.resolve({ Table: { GlobalSecondaryIndexes: indexes } });
-    }
+  send(command: QueryCommand): Promise<unknown> {
     assertPlaceholdersUsed(command);
     this.queries.push(command);
     const page = this.pages.shift() ?? { Items: [] };
@@ -382,7 +365,7 @@ describe('DdbEmailsDao — reads', () => {
     };
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    const page = await dao.queryEmailsByDirection({ direction: 'inbound', limit: 10 });
+    const page = await dao.listEmailSummaries({ direction: 'inbound', limit: 10 });
 
     const input = (doc.lastCommand as QueryCommand).input;
     expect(input.KeyConditionExpression).toBe('pk = :pk');
@@ -398,7 +381,7 @@ describe('DdbEmailsDao — reads', () => {
     doc.result = { Items: [] };
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    await dao.queryEmailsByDirection({
+    await dao.listEmailSummaries({
       direction: 'sent',
       limit: 5,
       afterSk: '2026-07-17T00:00:00.000Z#s1',
@@ -410,12 +393,12 @@ describe('DdbEmailsDao — reads', () => {
     expect(input.ExclusiveStartKey).toEqual({ pk: 'SENT', sk: '2026-07-17T00:00:00.000Z#s1' });
   });
 
-  it('maps a returned item to a typed row by its direction attribute', async () => {
+  it('maps a returned item to a typed summary by its direction attribute', async () => {
     const doc = new ReadFakeDoc();
     doc.result = { Items: [{ ...record(), pk: 'SENT', sk: 'sk-9', direction: 'sent' }] };
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
-    const page = await dao.queryEmailsByDirection({ direction: 'sent', limit: 1 });
+    const page = await dao.listEmailSummaries({ direction: 'sent', limit: 1 });
     expect(page.emails[0].direction).toBe('sent');
     expect(page.emails[0].sk).toBe('sk-9');
   });
@@ -450,15 +433,6 @@ describe('DdbEmailsDao — list index + paging', () => {
     expect(input.ExpressionAttributeValues).toEqual({ ':pk': 'INBOUND' });
     expect(input.ScanIndexForward).toBe(false);
     expect(result.emails[0]).toMatchObject({ direction: 'inbound', sk: 'sk-1' });
-  });
-
-  it('keeps the full-row query on the table, not the index', async () => {
-    const doc = new PagedFakeDoc([{ Items: [] }]);
-    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-    await dao.queryEmailsByDirection({ direction: 'sent', limit: 5 });
-
-    expect(doc.queries[0].input.IndexName).toBeUndefined();
   });
 
   it('follows LastEvaluatedKey after a 1 MB page cut until the page is full', async () => {
@@ -523,129 +497,7 @@ describe('DdbEmailsDao — list index + paging', () => {
     expect(result.emails[0]?.direction).toBe('inbound');
   });
 
-  it('lists from the table while the new index is still backfilling — never a partial page', async () => {
-    // A backfilling GSI answers queries with whatever it has indexed so far, so it must not be read.
-    const doc = new PagedFakeDoc([{ Items: [inboundItem('sk-1')] }]);
-    doc.indexState = { IndexStatus: 'CREATING', Backfilling: true };
-    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-    const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
-
-    expect(doc.queries.map((q) => q.input.IndexName)).toEqual([undefined]);
-    expect(result.emails.map((e) => e.sk)).toEqual(['sk-1']);
-  });
-
-  it('lists from the table when the table has no list index yet', async () => {
-    const doc = new PagedFakeDoc([{ Items: [] }]);
-    doc.indexState = undefined;
-    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
-
-    expect(doc.queries[0]?.input.IndexName).toBeUndefined();
-  });
-
-  it('lists from the table when DescribeTable itself fails', async () => {
-    const doc = new PagedFakeDoc([{ Items: [] }]);
-    doc.indexState = new Error('AccessDenied');
-    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
-
-    expect(doc.queries[0]?.input.IndexName).toBeUndefined();
-  });
-
-  it('asks once, then trusts an ACTIVE index for the life of the DAO', async () => {
-    const doc = new PagedFakeDoc([{ Items: [] }, { Items: [] }]);
-    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
-    await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
-
-    expect(doc.describes).toBe(1);
-    expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', 'list']);
-  });
-
-  it('re-asks at most every 30 s while the index is building, then switches over', async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date('2026-10-10T00:00:00.000Z'));
-      const doc = new PagedFakeDoc([{ Items: [] }, { Items: [] }, { Items: [] }]);
-      doc.indexState = { IndexStatus: 'CREATING', Backfilling: true };
-      const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-      await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
-      vi.setSystemTime(new Date('2026-10-10T00:00:10.000Z'));
-      doc.indexState = { IndexStatus: 'ACTIVE' };
-      await dao.listEmailSummaries({ direction: 'sent', limit: 5 }); // inside 30 s: no re-ask
-      vi.setSystemTime(new Date('2026-10-10T00:00:31.000Z'));
-      await dao.listEmailSummaries({ direction: 'sent', limit: 5 }); // re-asks → ACTIVE
-
-      expect(doc.describes).toBe(2);
-      expect(doc.queries.map((q) => q.input.IndexName)).toEqual([undefined, undefined, 'list']);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('falls back to the table if the index disappears, and stops trusting it', async () => {
-    vi.useFakeTimers();
-    try {
-      vi.setSystemTime(new Date('2026-10-10T00:00:00.000Z'));
-      const doc = new PagedFakeDoc([validationError('The table does not have the specified index: list'), { Items: [inboundItem('sk-1')] }, { Items: [] }]);
-      const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-      const result = await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
-      expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', undefined]);
-      expect(result.emails.map((e) => e.sk)).toEqual(['sk-1']);
-      // From the table, only the list fields are read — never full items with their bodies.
-      const fallback = doc.queries[1]!.input;
-      expect(Object.values(fallback.ExpressionAttributeNames ?? {})).toEqual(expect.arrayContaining(['pk', 'sk', 'from', 'to', 'subject', 'status']));
-      expect(Object.values(fallback.ExpressionAttributeNames ?? {})).not.toContain('body');
-      expect(fallback.ProjectionExpression).toMatch(/^#l0, #l1, /);
-
-      // The trust was reset: the next call (after the recheck window) asks DescribeTable again.
-      doc.indexState = undefined;
-      vi.setSystemTime(new Date('2026-10-10T00:00:31.000Z'));
-      await dao.listEmailSummaries({ direction: 'inbound', limit: 5 });
-      expect(doc.describes).toBe(2);
-      expect(doc.queries[2]?.input.IndexName).toBeUndefined();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('does not read an ACTIVE index that is still backfilling', async () => {
-    const doc = new PagedFakeDoc([{ Items: [] }]);
-    doc.indexState = { IndexStatus: 'ACTIVE', Backfilling: true };
-    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
-
-    expect(doc.queries[0]?.input.IndexName).toBeUndefined();
-  });
-
-  it('reads an index that is UPDATING a setting — it is already fully built', async () => {
-    const doc = new PagedFakeDoc([{ Items: [] }]);
-    doc.indexState = { IndexStatus: 'UPDATING' };
-    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-    await dao.listEmailSummaries({ direction: 'sent', limit: 5 });
-
-    expect(doc.queries[0]?.input.IndexName).toBe('list');
-  });
-
-  it('shares one DescribeTable between concurrent first calls', async () => {
-    const doc = new PagedFakeDoc([{ Items: [] }, { Items: [] }]);
-    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
-
-    await Promise.all([dao.listEmailSummaries({ direction: 'sent', limit: 5 }), dao.listEmailSummaries({ direction: 'inbound', limit: 5 })]);
-
-    expect(doc.describes).toBe(1);
-    expect(doc.queries.map((q) => q.input.IndexName)).toEqual(['list', 'list']);
-  });
-
-  it('does not mask any other failure behind the fallback', async () => {
+  it('propagates a query failure', async () => {
     const doc = new PagedFakeDoc([validationError('ExclusiveStartKey is invalid')]);
     const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
 
