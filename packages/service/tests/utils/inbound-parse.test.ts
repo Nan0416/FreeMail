@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import type { InboundAttachmentDescriptor } from '../../src/data/emails-dao.js';
@@ -403,5 +404,35 @@ describe('parseInbound threading headers', () => {
     expect(parsed.messageIdHeader).toBeUndefined();
     expect(parsed.references).toEqual([]);
     expect(parsed.replyTo).toEqual([]);
+  });
+});
+
+describe('parseInbound — the enforcing splitter and mailparser agree on structure', () => {
+  /** 50 text parts of 200 bytes; each delimiter line ends with `suffix`. */
+  function manyParts(suffix: string): Readable {
+    const lines = ['X-SES-Spam-Verdict: PASS', 'X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Subject: t', 'MIME-Version: 1.0', 'Content-Type: multipart/mixed; boundary="BB"', ''];
+    for (let i = 0; i < 50; i += 1) {
+      lines.push(`--BB${suffix}`, 'Content-Type: text/plain', '', 'x'.repeat(200));
+    }
+    lines.push(`--BB--${suffix}`, '');
+    return mime(lines);
+  }
+
+  // mailsplit accepts a delimiter line with trailing whitespace; if the front splitter (which
+  // enforces the limits) ran an older mailsplit than mailparser's, it would see one big text part
+  // while mailparser decoded 50, and the limits would be bypassed.
+  it.each([
+    ['plain delimiter lines', ''],
+    ['delimiter lines with trailing whitespace', ' \t'],
+  ])('enforces the part and body limits with %s', async (_label, suffix) => {
+    const p = await parseInbound(manyParts(suffix), new FakeSink(), looseLimits({ maxChildNodes: 20, maxTextBodyBytes: 1000, maxTotalBodyBytes: 1000 }));
+    expect(p.parseStatus).toBe('limit_exceeded');
+  });
+
+  it('resolves one copy of @zone-eu/mailsplit for both (pin it to the version mailparser pins)', () => {
+    const require = createRequire(import.meta.url);
+    const ours = require.resolve('@zone-eu/mailsplit');
+    const mailparsers = createRequire(require.resolve('mailparser')).resolve('@zone-eu/mailsplit');
+    expect(mailparsers).toBe(ours);
   });
 });
