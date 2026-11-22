@@ -26,6 +26,8 @@ import { DdbAuthDao } from '../data/ddb-auth-dao.js';
 import { DdbDownloadTokensDao } from '../data/ddb-download-tokens-dao.js';
 import { DdbEmailsDao } from '../data/ddb-emails-dao.js';
 import { DdbApiKeysDao } from '../data/ddb-api-keys-dao.js';
+import { DdbForwardingRulesDao } from '../data/ddb-forwarding-rules-dao.js';
+import type { ForwardingRulesDao } from '../data/forwarding-rules-dao.js';
 import { createDocumentClient } from '../data/document-client.js';
 import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
 import type { EmailsDao } from '../data/emails-dao.js';
@@ -41,6 +43,7 @@ import { EmailReadService } from '../services/email-read-service.js';
 import { EmailService } from '../services/email-service.js';
 import { SesV2Sender } from '../facades/ses-email-facade.js';
 import { ApiKeyService } from '../services/api-key-service.js';
+import { ForwardingRuleService } from '../services/forwarding-rule-service.js';
 import type { ServiceConfig } from '../handlers/service-config.js';
 
 export interface Dependencies {
@@ -48,12 +51,14 @@ export interface Dependencies {
   readonly apiKeysDao: ApiKeysDao;
   readonly emailsDao: EmailsDao;
   readonly downloadTokensDao: DownloadTokensDao;
+  readonly forwardingRulesDao: ForwardingRulesDao;
   readonly signingKeyProvider: SigningKeyProvider;
   readonly authService: AuthService;
   readonly apiKeyService: ApiKeyService;
   readonly emailService: EmailService;
   readonly emailReadService: EmailReadService;
   readonly attachmentService: AttachmentService;
+  readonly forwardingRuleService: ForwardingRuleService;
 }
 
 export class DependencyFactory {
@@ -71,6 +76,7 @@ export class DependencyFactory {
     const apiKeysDao = new DdbApiKeysDao(doc, this.config.apiKeysTable);
     const emailsDao = new DdbEmailsDao(doc, this.config.emailsTable);
     const downloadTokensDao = new DdbDownloadTokensDao(doc, this.config.downloadTokensTable);
+    const forwardingRulesDao = new DdbForwardingRulesDao(doc, this.config.forwardingRulesTable);
 
     const presigner = new S3AttachmentPresigner(s3, this.config.mailBucket);
     const quarantinePresigner = new S3AttachmentPresigner(s3, this.config.quarantineBucket);
@@ -93,6 +99,7 @@ export class DependencyFactory {
       apiKeysDao,
       emailsDao,
       downloadTokensDao,
+      forwardingRulesDao,
       signingKeyProvider,
       authService: new AuthService({ authDao, signingKey: signingKeyProvider }),
       apiKeyService: new ApiKeyService({ apiKeysDao }),
@@ -121,6 +128,10 @@ export class DependencyFactory {
         uploads: uploadStore,
         tokensDao: downloadTokensDao,
         presigner,
+      }),
+      forwardingRuleService: new ForwardingRuleService({
+        forwardingRulesDao,
+        emailDomain: this.config.emailDomain,
       }),
     };
   }

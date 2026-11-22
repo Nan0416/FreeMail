@@ -66,3 +66,14 @@ export const INBOUND_RAW_RETENTION_DAYS = 14;
  * ingest dead-lettered), anything stored before tagging existed — is kept.
  */
 export const INBOUND_INGESTED_TAG = { key: 'freemail-ingested', value: 'true' } as const;
+
+/** Emails-table partition holding sent messages. */
+export const SENT_PARTITION = 'SENT';
+/** Emails-table partition holding received messages (the forwarder's IAM is scoped to it). */
+export const INBOUND_PARTITION = 'INBOUND';
+/**
+ * Emails-table partition holding received messages whose content could not be extracted — a
+ * virus verdict other than `PASS`, or a parse failure / limit breach. Their raw MIME is kept in
+ * the quarantine bucket. Listed as the Errors folder, never in the main timeline.
+ */
+export const FAILED_PARTITION = 'FAILED';

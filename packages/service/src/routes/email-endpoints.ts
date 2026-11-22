@@ -23,7 +23,7 @@ import type { EmailService } from '../services/email-service.js';
 import { requireAccessScheme, requireAuthenticated } from '../middleware/auth-middleware.js';
 import { requireJsonContentType } from '../middleware/json-content-type.js';
 import { getLogger } from '../utils/logger.js';
-import { optionalString, requireBody, requirePathParam, requireString } from '../utils/request-validation.js';
+import { optionalString, optionalStringArray, requireBody, requirePathParam, requireString } from '../utils/request-validation.js';
 import type { Endpoints } from './endpoints.js';
 
 const logger = getLogger('EmailEndpoints');
@@ -166,17 +166,6 @@ function parseSendEmailBody(body: Record<string, unknown>): SendEmailRequest {
     ...(idempotencyKey !== undefined ? { idempotencyKey } : {}),
     ...(replyTo !== undefined ? { replyTo } : {}),
   };
-}
-
-function optionalStringArray(body: Record<string, unknown>, field: string): string[] | undefined {
-  const value = body[field];
-  if (value === undefined) {
-    return undefined;
-  }
-  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
-    throw emailErrors.invalidRequest(`"${field}" must be an array of strings.`);
-  }
-  return value as string[];
 }
 
 function optionalAttachments(body: Record<string, unknown>): EmailAttachmentRef[] | undefined {

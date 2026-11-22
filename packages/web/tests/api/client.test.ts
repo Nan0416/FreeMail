@@ -11,7 +11,11 @@ function json(status: number, body: unknown): Response {
 const BASE = 'http://api.test';
 
 function makeClient(fetchImpl: typeof fetch, opts: { onAuthLost?: () => void } = {}): FreeMailClient {
-  return new FreeMailClient({ baseUrl: BASE, fetchImpl, onAuthLost: opts.onAuthLost });
+  return new FreeMailClient({
+    baseUrl: BASE,
+    fetchImpl,
+    onAuthLost: opts.onAuthLost,
+  });
 }
 
 function authHeader(init: RequestInit | undefined): string | undefined {
@@ -189,6 +193,40 @@ describe('FreeMailClient (cookie auth)', () => {
     expect(JSON.parse(String(init?.body))).toEqual({ name: 'agent' });
   });
 
+  it('manages forwarding rules: list, create, replace (PUT), delete', async () => {
+    const fields = {
+      name: 'Amazon returns',
+      enabled: true,
+      senderDomains: ['returns.amazon.com'],
+      senderAddresses: [],
+      recipientDomains: [],
+      recipientAddresses: [],
+      forwardTo: ['trex@example.com'],
+      ignoreDmarcVerification: false,
+    };
+    const rule = { ...fields, id: 'r/1', createdAt: 't', updatedAt: 't' };
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(json(200, { rules: [rule] }))
+      .mockResolvedValueOnce(json(201, rule))
+      .mockResolvedValueOnce(json(200, { ...rule, enabled: false }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const client = makeClient(fetchMock);
+
+    await expect(client.listForwardingRules()).resolves.toEqual({ rules: [rule] });
+    await expect(client.createForwardingRule(fields)).resolves.toEqual(rule);
+    await expect(client.updateForwardingRule('r/1', { ...fields, enabled: false })).resolves.toEqual({ ...rule, enabled: false });
+    await expect(client.deleteForwardingRule('r/1')).resolves.toBeUndefined();
+
+    const calls = fetchMock.mock.calls.map(([url, init]) => [init?.method, String(url), init?.body === undefined ? undefined : JSON.parse(String(init.body)), init?.credentials]);
+    expect(calls).toEqual([
+      ['GET', `${BASE}/forwarding-rules`, undefined, 'include'],
+      ['POST', `${BASE}/forwarding-rules`, fields, 'include'],
+      ['PUT', `${BASE}/forwarding-rules/r%2F1`, { ...fields, enabled: false }, 'include'],
+      ['DELETE', `${BASE}/forwarding-rules/r%2F1`, undefined, 'include'],
+    ]);
+  });
+
   it('sendEmail posts the message and returns the send result', async () => {
     const sendResult = { id: 'm1', messageId: 'ses-1', sentAt: '2026-07-17T00:00:00.000Z' };
     const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(json(200, sendResult));
@@ -238,7 +276,11 @@ describe('FreeMailClient (cookie auth)', () => {
       onProgress(file.size);
       return 200;
     });
-    const client = new FreeMailClient({ baseUrl: BASE, fetchImpl: vi.fn(), uploadImpl });
+    const client = new FreeMailClient({
+      baseUrl: BASE,
+      fetchImpl: vi.fn(),
+      uploadImpl,
+    });
     const file = new Blob(['abc'], { type: 'application/pdf' });
     const progress: number[] = [];
 

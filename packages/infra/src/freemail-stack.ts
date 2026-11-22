@@ -47,6 +47,7 @@ export class FreeMailStack extends Stack {
               mailBucket: data.mailBucket,
               emailsTable: data.emailsTable,
               quarantineBucket: data.quarantineBucket,
+              forwardingRulesTable: data.forwardingRulesTable,
             },
           }
         : {}),
@@ -60,6 +61,7 @@ export class FreeMailStack extends Stack {
       apiKeysTable: data.apiKeysTable,
       emailsTable: data.emailsTable,
       downloadTokensTable: data.downloadTokensTable,
+      forwardingRulesTable: data.forwardingRulesTable,
       mailBucket: data.mailBucket,
       quarantineBucket: data.quarantineBucket,
       emailDomain: props.config.emailDomain,

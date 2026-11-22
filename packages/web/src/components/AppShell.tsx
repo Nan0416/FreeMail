@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import type { ComposeHandle, ComposeInit } from './ComposeWindow.js';
 import { DraftList } from './DraftList.js';
 import { EmailReader } from './EmailReader.js';
+import { ForwardingRulesView } from './ForwardingRulesView.js';
 import { Kbd } from './Kbd.js';
 import { McpServerView } from './McpServerView.js';
 import { MessageList } from './MessageList.js';
@@ -278,6 +279,10 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
       {folder === 'mcp' ? (
         <main className="min-w-0 flex-1">
           <McpServerView onOpenNav={() => setNavOpen(true)} inboundEnabled={props.inboundEnabled ?? false} />
+        </main>
+      ) : folder === 'forwarding' ? (
+        <main className="min-w-0 flex-1">
+          <ForwardingRulesView onOpenNav={() => setNavOpen(true)} />
         </main>
       ) : (
         <>

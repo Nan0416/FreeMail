@@ -31,3 +31,4 @@ export * from './api-keys.js';
 export * from './email.js';
 export * from './web.js';
 export * from './service-api.js';
+export * from './forwarding.js';

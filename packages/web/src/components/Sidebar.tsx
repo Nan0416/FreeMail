@@ -1,11 +1,11 @@
-import { FileText, Inbox, Layers, LogOut, Mail, PenSquare, Plug, Send, ShieldAlert } from 'lucide-react';
+import { FileText, Forward, Inbox, Layers, LogOut, Mail, PenSquare, Plug, Send, ShieldAlert } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Kbd } from './Kbd.js';
 import { cn } from '@/lib/utils';
 
-export type FolderId = 'inbox' | 'all' | 'sent' | 'drafts' | 'errors' | 'mcp';
+export type FolderId = 'inbox' | 'all' | 'sent' | 'drafts' | 'errors' | 'forwarding' | 'mcp';
 
 interface NavItem {
   readonly id: FolderId;
@@ -58,6 +58,15 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
             <NavRow key={item.id} item={item} active={props.folder === item.id} count={item.id === 'drafts' ? props.draftCount : undefined} onSelect={props.onSelectFolder} />
           ))}
         </ul>
+        {/* Forwarding acts on received mail, so it exists only with inbound. */}
+        {props.inboundEnabled && (
+          <>
+            <p className="mt-5 mb-1 px-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Settings</p>
+            <ul>
+              <NavRow item={{ id: 'forwarding', label: 'Forwarding', icon: Forward }} active={props.folder === 'forwarding'} onSelect={props.onSelectFolder} />
+            </ul>
+          </>
+        )}
         <p className="mt-5 mb-1 px-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Developers</p>
         <ul>
           <NavRow item={{ id: 'mcp', label: 'MCP server', icon: Plug }} active={props.folder === 'mcp'} onSelect={props.onSelectFolder} />

@@ -79,6 +79,7 @@ describe('Lambda bundles', () => {
       'ApiMcpHandler',
       'ApiRestHandler',
       'SesDeliveryTrackerFn',
+      'SesForwardingForwarderFn',
       'SesInboundParserFn',
     ]);
   });

@@ -2,6 +2,7 @@ export type { Endpoints } from './endpoints.js';
 export { AuthEndpoints } from './auth-endpoints.js';
 export { KeysEndpoints } from './keys-endpoints.js';
 export { EmailEndpoints } from './email-endpoints.js';
+export { ForwardingRuleEndpoints } from './forwarding-rule-endpoints.js';
 export { DownloadEndpoints } from './download-endpoints.js';
 export { McpEndpoints } from './mcp-endpoints.js';
 export { ServiceApiEndpoints } from './service-api-endpoints.js';

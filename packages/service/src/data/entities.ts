@@ -44,6 +44,11 @@ export const ApiKeyEntity = {
   key: (keyId: string): { readonly keyId: string } => ({ keyId }),
 } as const;
 
+/** Forwarding rules table — keyed by the rule's id. */
+export const ForwardingRuleEntity = {
+  key: (id: string): { readonly id: string } => ({ id }),
+} as const;
+
 /**
  * Emails table — two partitions, each sorted newest-first by a timestamp-prefixed sort key.
  * The `<iso>#<id>` shape is load-bearing: ISO-8601 UTC is fixed-width and sorts

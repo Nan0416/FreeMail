@@ -48,6 +48,8 @@ import type {
   ListEmailSummariesOutput,
   QueryEmailsByDirectionInput,
   QueryEmailsByDirectionOutput,
+  UpdateInboundEmailForwardInput,
+  UpdateInboundEmailForwardOutput,
   UpdateSentEmailStatusInput,
   UpdateSentEmailStatusOutput,
 } from './emails-dao.js';
@@ -299,6 +301,28 @@ export class DdbEmailsDao implements EmailsDao {
     } catch (err) {
       if (err instanceof Error && err.name === CONDITIONAL_CHECK_FAILED) {
         return { created: false };
+      }
+      throw err;
+    }
+  }
+
+  async updateInboundEmailForward(input: UpdateInboundEmailForwardInput): Promise<UpdateInboundEmailForwardOutput> {
+    try {
+      await this.doc.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: EmailEntity.inbound(input.receivedAt, input.id, false),
+          UpdateExpression: 'SET #forward = :forward',
+          ExpressionAttributeNames: { '#forward': 'forward' },
+          ExpressionAttributeValues: { ':forward': input.forward },
+          // Never create a stray row, and the first forward recorded stays.
+          ConditionExpression: 'attribute_exists(pk) AND attribute_not_exists(#forward)',
+        }),
+      );
+      return { recorded: true };
+    } catch (err) {
+      if (isConditionalCheckFailed(err)) {
+        return { recorded: false };
       }
       throw err;
     }

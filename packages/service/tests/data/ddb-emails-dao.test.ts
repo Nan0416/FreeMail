@@ -1134,3 +1134,63 @@ describe('DdbEmailsDao.updateSentEmailStatus — a missing row', () => {
     expect(doc.commands).toHaveLength(1);
   });
 });
+
+describe('DdbEmailsDao.updateInboundEmailForward', () => {
+  const forward = {
+    to: ['ops@example.org'],
+    ruleIds: ['rule-1'],
+    sesMessageId: 'ses-fwd-1',
+    forwardedAt: '2026-11-13T10:00:05.000Z',
+  };
+
+  it('sets the forward on the INBOUND row, only where the row exists and has none yet', async () => {
+    const doc = new FakeDoc();
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    expect(
+      await dao.updateInboundEmailForward({
+        id: 'ses-in-1',
+        receivedAt: '2026-11-13T10:00:00.000Z',
+        forward,
+      }),
+    ).toEqual({ recorded: true });
+
+    expect(doc.commands[0]).toBeInstanceOf(UpdateCommand);
+    expect(doc.commands[0]?.input).toEqual({
+      TableName: 'emails-test',
+      Key: { pk: 'INBOUND', sk: '2026-11-13T10:00:00.000Z#ses-in-1' },
+      UpdateExpression: 'SET #forward = :forward',
+      ExpressionAttributeNames: { '#forward': 'forward' },
+      ExpressionAttributeValues: { ':forward': forward },
+      ConditionExpression: 'attribute_exists(pk) AND attribute_not_exists(#forward)',
+    });
+  });
+
+  it('reports a failed condition (row gone, or already forwarded) as not recorded', async () => {
+    const doc = new FakeDoc();
+    doc.failWith = 'ConditionalCheckFailedException';
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    expect(
+      await dao.updateInboundEmailForward({
+        id: 'ses-in-1',
+        receivedAt: '2026-11-13T10:00:00.000Z',
+        forward,
+      }),
+    ).toEqual({ recorded: false });
+  });
+
+  it('propagates any other failure, so the invocation retries', async () => {
+    const doc = new FakeDoc();
+    doc.failWith = 'ProvisionedThroughputExceededException';
+    const dao = new DdbEmailsDao(asDocClient(doc), 'emails-test');
+
+    await expect(
+      dao.updateInboundEmailForward({
+        id: 'ses-in-1',
+        receivedAt: '2026-11-13T10:00:00.000Z',
+        forward,
+      }),
+    ).rejects.toThrow();
+  });
+});
