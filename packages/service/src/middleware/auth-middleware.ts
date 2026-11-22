@@ -12,7 +12,7 @@ import { getCurrentInvoke } from '@codegenie/serverless-express';
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { authErrors } from '../utils/errors.js';
-import { optionalSubjectFromContext, schemeFromContext } from '../utils/request-context.js';
+import { iamCallerFromContext, optionalSubjectFromContext, schemeFromContext, type IamCaller } from '../utils/request-context.js';
 
 /** What the Lambda authorizer resolved for this request. */
 export interface AuthContext {
@@ -26,6 +26,11 @@ declare module 'express-serve-static-core' {
   interface Request {
     /** Attached by {@link authMiddleware}; absent on the public routes. */
     readonly authContext?: AuthContext;
+    /**
+     * Attached by {@link authMiddleware} on IAM-authorized (`/api/*`) requests only. Kept
+     * apart from `authContext`, so an IAM caller passes none of the session/API-key guards.
+     */
+    readonly iamCaller?: IamCaller;
   }
 }
 
@@ -37,11 +42,20 @@ function attachAuthContext(req: Request, context: AuthContext): void {
   (req as { authContext?: AuthContext }).authContext = context;
 }
 
+/** The single writer of `iamCaller`, `readonly` on `Request` for the same reason. */
+function attachIamCaller(req: Request, caller: IamCaller): void {
+  (req as { iamCaller?: IamCaller }).iamCaller = caller;
+}
+
 export const authMiddleware: RequestHandler = (req, _res, next) => {
   const event = getCurrentInvoke().event as APIGatewayProxyEventV2 | undefined;
   const subject = event ? optionalSubjectFromContext(event) : undefined;
   if (event && subject !== undefined) {
     attachAuthContext(req, { subject, scheme: schemeFromContext(event) });
+  }
+  const iamCaller = event ? iamCallerFromContext(event) : undefined;
+  if (iamCaller) {
+    attachIamCaller(req, iamCaller);
   }
   next();
 };
@@ -87,6 +101,19 @@ export function requireAccessScheme(req: Request, _res: Response, next: NextFunc
 export function requireAuthenticated(req: Request, _res: Response, next: NextFunction): void {
   if (!req.authContext) {
     next(authErrors.invalidToken());
+    return;
+  }
+  next();
+}
+
+/**
+ * Guard for `/api/*`: only a caller API Gateway authorized with IAM (SigV4). A session or
+ * API-key caller is refused, and so is a request with no authorizer context, so a
+ * misconfigured gateway route fails closed.
+ */
+export function requireIamCaller(req: Request, _res: Response, next: NextFunction): void {
+  if (!req.iamCaller) {
+    next(authErrors.forbidden('This route requires AWS IAM authorization.'));
     return;
   }
   next();

@@ -1,6 +1,6 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CustomResource, Duration, RemovalPolicy } from 'aws-cdk-lib';
+import { CustomResource, Duration, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import type { ITable, Table } from 'aws-cdk-lib/aws-dynamodb';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Architecture, Code, Function as LambdaFunction, Runtime } from 'aws-cdk-lib/aws-lambda';
@@ -12,6 +12,7 @@ import { EventType, type Bucket } from 'aws-cdk-lib/aws-s3';
 import { LambdaDestination } from 'aws-cdk-lib/aws-s3-notifications';
 import { ReceiptRuleSet } from 'aws-cdk-lib/aws-ses';
 import { S3 as S3Action } from 'aws-cdk-lib/aws-ses-actions';
+import { Topic } from 'aws-cdk-lib/aws-sns';
 import { Queue } from 'aws-cdk-lib/aws-sqs';
 import { Provider } from 'aws-cdk-lib/custom-resources';
 import { Construct } from 'constructs';
@@ -56,6 +57,11 @@ const RECORD_TTL = '1800';
  */
 export class InboundConstruct extends Construct {
   readonly ruleSet: ReceiptRuleSet;
+  /**
+   * Notified for each received message stored with its content; other services subscribe.
+   * The name is fixed so they can find it.
+   */
+  readonly emailReceivedTopic: Topic;
   private readonly parser: NodejsFunction;
   private ownDownloadsLinked = false;
 
@@ -92,6 +98,11 @@ export class InboundConstruct extends Construct {
 
     this.activateRuleSet(this.ruleSet.receiptRuleSetName);
     this.parser = this.wireParser(props.mailBucket, props.emailsTable, props.quarantineBucket);
+    this.emailReceivedTopic = new Topic(this, 'EmailReceivedTopic', {
+      topicName: `${Stack.of(this).stackName}-email-received`,
+    });
+    this.parser.addEnvironment('EMAIL_RECEIVED_TOPIC_ARN', this.emailReceivedTopic.topicArn);
+    this.emailReceivedTopic.grantPublish(this.parser);
     // The parser's config requires the token lookup's env, which only linkOwnDownloads sets:
     // fail the synth rather than deploy a parser that throws on every message.
     this.node.addValidation({

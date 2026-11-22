@@ -76,6 +76,7 @@ describe('InboundDependencyFactory', () => {
       quarantineBucket: 'q',
       downloadTokensTable: 'tokens',
       downloadBaseUrl: 'https://api.example.com',
+      emailReceivedTopicArn: 'arn:aws:sns:us-east-1:111111111111:received',
     }).build();
     expect(deps.processor).toBeDefined();
     expect(deps.emailsDao).toBeDefined();

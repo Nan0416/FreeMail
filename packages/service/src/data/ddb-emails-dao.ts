@@ -515,7 +515,10 @@ export class DdbEmailsDao implements EmailsDao {
   }
 
   async getEmail(input: GetEmailInput): Promise<GetEmailOutput | null> {
-    const out = (await this.doc.send(new GetCommand({ TableName: this.tableName, Key: { pk: input.pk, sk: input.sk } }))) as GetCommandOutput;
+    // Strongly consistent: a backend service fetches a message the moment its email-received
+    // notification arrives, right after the parser wrote the row, and an eventually consistent
+    // read could still miss it (a 404 for a message that exists). One item, so the cost is nil.
+    const out = (await this.doc.send(new GetCommand({ TableName: this.tableName, Key: { pk: input.pk, sk: input.sk }, ConsistentRead: true }))) as GetCommandOutput;
     return out.Item ? toRow(out.Item) : null;
   }
 }

@@ -3,6 +3,7 @@
  * {@link InboundConfig}.
  */
 import { S3Client } from '@aws-sdk/client-s3';
+import { SNSClient } from '@aws-sdk/client-sns';
 import { DdbDownloadTokensDao } from '../data/ddb-download-tokens-dao.js';
 import { DdbEmailsDao } from '../data/ddb-emails-dao.js';
 import { createDocumentClient } from '../data/document-client.js';
@@ -10,6 +11,7 @@ import type { EmailsDao } from '../data/emails-dao.js';
 import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import { S3MailBodyStore } from '../facades/s3-mail-body-store.js';
 import { S3QuarantineStore } from '../facades/s3-quarantine-store.js';
+import { SnsEmailReceivedNotifier } from '../facades/sns-email-received-notifier.js';
 import type { InboundConfig } from '../handlers/inbound-config.js';
 import { InboundProcessor } from '../processors/inbound-processor.js';
 import { OwnLinkAttachments } from '../processors/own-link-attachments.js';
@@ -41,6 +43,7 @@ export class InboundDependencyFactory {
         new S3MailBodyStore(s3, this.config.mailBucket),
         new S3QuarantineStore(s3, this.config.mailBucket, this.config.quarantineBucket),
         new OwnLinkAttachments(new DdbDownloadTokensDao(doc, this.config.downloadTokensTable), this.config.downloadBaseUrl),
+        new SnsEmailReceivedNotifier(new SNSClient({}), this.config.emailReceivedTopicArn),
       ),
     };
   }

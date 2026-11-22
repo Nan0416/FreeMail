@@ -22,13 +22,13 @@
  *
  * A readable message that links this deployment's own download links (`/d/{token}`) — a file
  * one of your addresses sent another — also carries each linked file as an attachment, pointing
- * at the sent copy (see {@link OwnLinkAttachments}).
+ * at the sent copy (see `OwnLinkAttachments`).
  */
 import { Readable } from 'node:stream';
 import type { EmailsDao, CreateInboundEmailInput, InboundAttachmentDescriptor, InboundVerdict } from '../data/emails-dao.js';
 import type { InboundObjectStore } from '../facades/s3-inbound-object-store.js';
 import type { MailBodyStore } from '../facades/s3-mail-body-store.js';
-import type { OwnLinkAttachments } from './own-link-attachments.js';
+import type { LinkedAttachmentResolver } from './own-link-attachments.js';
 import type { QuarantineStore } from '../facades/s3-quarantine-store.js';
 import { validateInboundEventKey } from '../utils/event-key.js';
 import { rootHeaderBlock } from '../utils/inbound-headers.js';
@@ -37,6 +37,8 @@ import { parseInbound, type AttachmentSink, type ParsedInbound } from '../utils/
 import { sanitizeContentType, sanitizeFilename, snippetFromHtml, snippetFromText } from '../utils/sanitize.js';
 import { decideExposure, type Exposure } from '../utils/verdicts.js';
 import { bodyKey, estimateRowBytes, storeEmailBody } from '../services/email-body-storage.js';
+import type { EmailReceivedNotifier } from '../facades/sns-email-received-notifier.js';
+import { buildEmailReceivedNotification } from './email-received-notification.js';
 
 /** Extracted attachments live OUTSIDE the `inbound/` trigger prefix so writes never re-invoke the parser. */
 export const ATTACHMENTS_PREFIX = 'attachments/inbound/';
@@ -82,8 +84,8 @@ export class InboundProcessor {
     private readonly emails: EmailsDao,
     private readonly bodies: MailBodyStore,
     private readonly quarantine: QuarantineStore,
-    /** Absent → links stay links (no attachment is added for them). */
-    private readonly ownLinks?: OwnLinkAttachments,
+    private readonly ownLinks: LinkedAttachmentResolver,
+    private readonly notifier: EmailReceivedNotifier,
   ) {}
 
   /** Process the object identified by a raw (still-encoded) S3 event key. */
@@ -162,6 +164,10 @@ export class InboundProcessor {
         otherRowBytes: estimateRowBytes(record),
       });
       response = await this.commit({ ...record, body }, base.messageId);
+      // Cases 7–9 (indexed, spam, or a redelivery): the row exists now, so GET /api/emails/{id}
+      // works. A failed publish fails the invocation; the retry finds the row (duplicate) and
+      // publishes again, so delivery is at-least-once. Before markIngested, for the least delay.
+      await this.notifier.emailReceived(buildEmailReceivedNotification(record));
     } else {
       // Nothing readable is kept (virus / parse failure): keep the raw MIME in quarantine —
       // the only way to recover the message later — and file the row in the Errors folder.
@@ -208,7 +214,7 @@ export class InboundProcessor {
    * that is readable and not flagged as spam: anything else keeps its links as plain links.
    */
   private async linkedAttachments(base: RecordBase, parsed: ParsedInbound, exposure: Exposure): Promise<InboundAttachmentDescriptor[]> {
-    if (this.ownLinks === undefined || !exposure.exposeContent || exposure.quarantined) {
+    if (!exposure.exposeContent || exposure.quarantined) {
       return [];
     }
     const resolved = await this.ownLinks.resolveLinkedAttachments({

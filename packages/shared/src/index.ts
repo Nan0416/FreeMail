@@ -30,3 +30,4 @@ export * from './auth.js';
 export * from './api-keys.js';
 export * from './email.js';
 export * from './web.js';
+export * from './service-api.js';

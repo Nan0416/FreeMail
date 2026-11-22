@@ -1129,3 +1129,100 @@ describe('EmailReadService — delivery reports', () => {
     expect(detail.deliveryEvents).toEqual([delivered, bounced]);
   });
 });
+
+describe('EmailReadService.getEmailWithDownloadUrls', () => {
+  it('returns the detail with a 5-minute download URL on every attachment, without the .eml fields', async () => {
+    const repo = new FakeDao();
+    const presigner = new FakePresigner();
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ body: { kind: 'inline', text: 'hi' } }));
+
+    const result = await service(repo, presigner, new FakeRawMime()).getEmailWithDownloadUrls({
+      handle,
+    });
+
+    expect(result.id).toBe(handle);
+    expect(result.attachments).toEqual([
+      expect.objectContaining({
+        id: '0',
+        filename: 'r.pdf',
+        downloadUrl: presigner.url,
+        downloadUrlExpiresAt: '2026-07-17T12:05:00.000Z', // now + 300s
+      }),
+    ]);
+    expect(presigner.last?.key).toBe('attachments/inbound/i1/0');
+    expect(presigner.last?.contentType).toBe('application/octet-stream');
+    expect(presigner.last?.expiresInSeconds).toBe(300);
+    expect(result).not.toHaveProperty('rawAvailable');
+    expect(result).not.toHaveProperty('rawSuspicious');
+  });
+
+  it('matches getEmail apart from the download URLs and the .eml fields', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ body: { kind: 'inline', text: 'hi' } }));
+    const svc = service(repo, new FakePresigner(), new FakeRawMime());
+
+    const detail = await svc.getEmail({ handle });
+    const withUrls = await svc.getEmailWithDownloadUrls({ handle });
+
+    const expected: Record<string, unknown> = { ...detail };
+    delete expected.rawAvailable;
+    delete expected.rawSuspicious;
+    delete expected.attachments;
+    expect(withUrls).toMatchObject(expected);
+    expect(
+      withUrls.attachments.map((a) => ({
+        id: a.id,
+        filename: a.filename,
+        contentType: a.contentType,
+        sizeBytes: a.sizeBytes,
+      })),
+    ).toEqual(detail.attachments);
+  });
+
+  it('has exactly getEmail’s keys minus the .eml fields — nothing web-only leaks into /api', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ body: { kind: 'inline', text: 'hi' } }));
+    const svc = service(repo, new FakePresigner(), new FakeRawMime());
+
+    const webKeys = Object.keys(await svc.getEmail({ handle })).filter((key) => key !== 'rawAvailable' && key !== 'rawSuspicious');
+    expect(Object.keys(await svc.getEmailWithDownloadUrls({ handle })).sort()).toEqual(webKeys.sort());
+  });
+
+  it('unknown handle → not_found', async () => {
+    await expect(
+      service(new FakeDao(), new FakePresigner(), new FakeRawMime()).getEmailWithDownloadUrls({
+        handle: 'not-a-handle',
+      }),
+    ).rejects.toMatchObject({ code: 'not_found' });
+  });
+});
+
+describe('EmailReadService.getEmailWithDownloadUrls — presign concurrency', () => {
+  it('presigns at most 5 attachments at once', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const presigner = {
+      async presign(): Promise<string> {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        inFlight -= 1;
+        return 'https://s3.example/presigned';
+      },
+    } as unknown as FakePresigner;
+    const attachments = Array.from({ length: 12 }, (_, i) => ({
+      id: String(i),
+      filename: `f${i}.bin`,
+      contentType: 'application/octet-stream',
+      sizeBytes: 1,
+      s3Key: `attachments/inbound/i1/${i}`,
+    }));
+    const repo = new FakeDao();
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ attachments, attachmentCount: 12, body: { kind: 'inline', text: 'hi' } }));
+
+    const result = await service(repo, presigner, new FakeRawMime()).getEmailWithDownloadUrls({ handle });
+
+    expect(result.attachments.map((a) => a.id)).toEqual(attachments.map((a) => a.id));
+    expect(maxInFlight).toBe(5);
+  });
+});
