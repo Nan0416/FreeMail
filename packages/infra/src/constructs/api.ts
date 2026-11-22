@@ -1,13 +1,7 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Duration, Stack } from 'aws-cdk-lib';
-import {
-  ApiMapping,
-  CorsHttpMethod,
-  DomainName,
-  HttpApi,
-  HttpMethod,
-} from 'aws-cdk-lib/aws-apigatewayv2';
+import { ApiMapping, CorsHttpMethod, DomainName, HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
 import { Certificate, CertificateValidation } from 'aws-cdk-lib/aws-certificatemanager';
 import type { Table } from 'aws-cdk-lib/aws-dynamodb';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
@@ -16,25 +10,14 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { AaaaRecord, ARecord, RecordTarget } from 'aws-cdk-lib/aws-route53';
 import { ApiGatewayv2DomainProperties } from 'aws-cdk-lib/aws-route53-targets';
 import type { IBucket } from 'aws-cdk-lib/aws-s3';
-import {
-  HttpLambdaAuthorizer,
-  HttpLambdaResponseType,
-} from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+import { HttpLambdaAuthorizer, HttpLambdaResponseType } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { Construct } from 'constructs';
 import type { AttachmentsConfig } from '@freemail/shared/config';
 import type { CustomDomainProps } from './web.js';
 import { SELF_CONTAINED_BUNDLING } from './bundling.js';
 
-const HANDLERS_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  '..',
-  'service',
-  'src',
-  'handlers',
-);
+const HANDLERS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'service', 'src', 'handlers');
 
 export interface ApiConstructProps {
   /** Single-tenant password hash + rotating refresh tokens + lockout counters. */
@@ -86,12 +69,8 @@ const SEND_TIMEOUT = Duration.seconds(29);
 /** The embed limits as the send Lambdas' environment (absent → the service's defaults). */
 function embedEnv(attachments: AttachmentsConfig | undefined): Record<string, string> {
   return {
-    ...(attachments?.embedMaxBytes !== undefined
-      ? { EMBED_MAX_BYTES: String(attachments.embedMaxBytes) }
-      : {}),
-    ...(attachments?.embedTotalBytes !== undefined
-      ? { EMBED_TOTAL_BYTES: String(attachments.embedTotalBytes) }
-      : {}),
+    ...(attachments?.embedMaxBytes !== undefined ? { EMBED_MAX_BYTES: String(attachments.embedMaxBytes) } : {}),
+    ...(attachments?.embedTotalBytes !== undefined ? { EMBED_TOTAL_BYTES: String(attachments.embedTotalBytes) } : {}),
   };
 }
 
@@ -148,12 +127,7 @@ export class ApiConstruct extends Construct {
       // are entirely unaffected.
       corsPreflight: {
         allowOrigins: [props.appOrigin],
-        allowMethods: [
-          CorsHttpMethod.GET,
-          CorsHttpMethod.POST,
-          CorsHttpMethod.DELETE,
-          CorsHttpMethod.OPTIONS,
-        ],
+        allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.POST, CorsHttpMethod.DELETE, CorsHttpMethod.OPTIONS],
         // Only what the SPA actually sends. `content-type` is required because Layer 3
         // makes every cookie-authenticated mutation carry `application/json`.
         allowHeaders: ['content-type'],
@@ -363,12 +337,7 @@ export class ApiConstruct extends Construct {
       domainName,
       stage: this.httpApi.defaultStage,
     });
-    const aliasTarget = RecordTarget.fromAlias(
-      new ApiGatewayv2DomainProperties(
-        domainName.regionalDomainName,
-        domainName.regionalHostedZoneId,
-      ),
-    );
+    const aliasTarget = RecordTarget.fromAlias(new ApiGatewayv2DomainProperties(domainName.regionalDomainName, domainName.regionalHostedZoneId));
     new ARecord(this, 'AliasRecord', {
       zone: props.customDomain.hostedZone,
       recordName: props.customDomain.domainName,
@@ -408,11 +377,7 @@ export class ApiConstruct extends Construct {
    * identity alone fails at runtime, not at deploy, with a 403 AccessDeniedException
    * naming the configuration set.
    */
-  private grantSesSend(
-    fn: NodejsFunction,
-    emailDomain: string,
-    configurationSetName: string,
-  ): void {
+  private grantSesSend(fn: NodejsFunction, emailDomain: string, configurationSetName: string): void {
     fn.addToRolePolicy(
       new PolicyStatement({
         actions: ['ses:SendEmail', 'ses:SendRawEmail'],

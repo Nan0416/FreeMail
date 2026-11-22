@@ -7,11 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { SesConstruct, dmarcRecordValue } from '../../src/constructs/ses.js';
 import type { SesIdentityMode } from '@freemail/shared/config';
 
-function synth(
-  emailDomain = 'mail.example.com',
-  zoneName = 'example.com',
-  sesIdentityMode: SesIdentityMode = 'create',
-): Template {
+function synth(emailDomain = 'mail.example.com', zoneName = 'example.com', sesIdentityMode: SesIdentityMode = 'create'): Template {
   const stack = new Stack(new App(), 'TestStack', {
     env: { region: 'us-east-1', account: '111111111111' },
   });
@@ -86,9 +82,7 @@ describe('dmarcRecordValue', () => {
     // The reports are ordinary email. With inbound off the domain has no MX at all, so
     // advertising dmarc@<domain> would point every reporter at a mailbox that cannot
     // receive; with inbound on the catch-all rule delivers it like any other address.
-    expect(dmarcRecordValue('mail.example.com', true)).toBe(
-      'v=DMARC1; p=none; rua=mailto:dmarc@mail.example.com;',
-    );
+    expect(dmarcRecordValue('mail.example.com', true)).toBe('v=DMARC1; p=none; rua=mailto:dmarc@mail.example.com;');
     expect(dmarcRecordValue('mail.example.com', false)).toBe('v=DMARC1; p=none;');
   });
 });
@@ -158,18 +152,12 @@ describe('SesConstruct', () => {
       Description: Match.stringLikeRegexp('SES delivery reports'),
       Environment: { Variables: { EMAILS_TABLE: Match.anyValue() } },
     });
-    const policies = Object.values(template.findResources('AWS::IAM::Policy')).filter((policy) =>
-      JSON.stringify(policy).includes('DeliveryTracker'),
-    );
+    const policies = Object.values(template.findResources('AWS::IAM::Policy')).filter((policy) => JSON.stringify(policy).includes('DeliveryTracker'));
     const actions = policies.flatMap((policy) =>
-      (
-        policy as { Properties: { PolicyDocument: { Statement: { Action: string | string[] }[] } } }
-      ).Properties.PolicyDocument.Statement.flatMap((statement) => statement.Action),
+      (policy as { Properties: { PolicyDocument: { Statement: { Action: string | string[] }[] } } }).Properties.PolicyDocument.Statement.flatMap((statement) => statement.Action),
     );
     // On the table: UpdateItem only. (Its other grant is SendMessage to its own DLQ.)
-    expect(actions.filter((action) => action.startsWith('dynamodb:'))).toEqual([
-      'dynamodb:UpdateItem',
-    ]);
+    expect(actions.filter((action) => action.startsWith('dynamodb:'))).toEqual(['dynamodb:UpdateItem']);
     // A report that still fails after the retries is kept, not lost.
     template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
       MaximumRetryAttempts: 2,
@@ -267,11 +255,7 @@ describe('SesConstruct', () => {
     template.hasResourceProperties('AWS::Route53::RecordSet', {
       Name: 'example.com',
       Type: 'TXT',
-      ResourceRecords: [
-        '"v=spf1 include:amazonses.com ~all"',
-        '"google-site-verification=abc123"',
-        '"MS=ms42"',
-      ],
+      ResourceRecords: ['"v=spf1 include:amazonses.com ~all"', '"google-site-verification=abc123"', '"MS=ms42"'],
     });
   });
 
@@ -286,9 +270,7 @@ describe('SesConstruct', () => {
 
   it('emits the 3 DKIM CNAMEs using the raw token host verbatim (no L2 zone double-suffix)', () => {
     const template = synth();
-    const cnames = Object.values(template.findResources('AWS::Route53::RecordSet')).filter(
-      (record) => record.Properties?.Type === 'CNAME',
-    );
+    const cnames = Object.values(template.findResources('AWS::Route53::RecordSet')).filter((record) => record.Properties?.Type === 'CNAME');
     expect(cnames).toHaveLength(3);
     for (const cname of cnames) {
       // The DKIM host name is SES's already-fully-qualified token used verbatim

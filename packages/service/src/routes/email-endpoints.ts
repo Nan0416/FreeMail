@@ -12,11 +12,7 @@
  * presence, size caps — live in `EmailService`, and list defaulting/clamping lives in
  * `parseListEmailsQuery`, so REST and MCP can never drift apart.
  */
-import type {
-  CreateAttachmentUploadRequest,
-  EmailAttachmentRef,
-  SendEmailRequest,
-} from '@freemail/shared';
+import type { CreateAttachmentUploadRequest, EmailAttachmentRef, SendEmailRequest } from '@freemail/shared';
 import { Router } from 'express';
 import type { Express, NextFunction, Request, Response } from 'express';
 import { emailErrors } from '../utils/errors.js';
@@ -27,12 +23,7 @@ import type { EmailService } from '../services/email-service.js';
 import { requireAccessScheme } from '../middleware/auth-middleware.js';
 import { requireJsonContentType } from '../middleware/json-content-type.js';
 import { getLogger } from '../utils/logger.js';
-import {
-  optionalString,
-  requireBody,
-  requirePathParam,
-  requireString,
-} from '../utils/request-validation.js';
+import { optionalString, requireBody, requirePathParam, requireString } from '../utils/request-validation.js';
 import type { Endpoints } from './endpoints.js';
 
 const logger = getLogger('EmailEndpoints');
@@ -40,102 +31,72 @@ const logger = getLogger('EmailEndpoints');
 export class EmailEndpoints implements Endpoints {
   private readonly router: Router;
 
-  constructor(
-    emailService: EmailService,
-    readService: EmailReadService,
-    attachmentService: AttachmentUploader,
-  ) {
+  constructor(emailService: EmailService, readService: EmailReadService, attachmentService: AttachmentUploader) {
     this.router = Router();
 
     // Step one of sending an attachment: a presigned PUT straight to S3 (the bytes never come
     // through here). Dual-scheme like the send it serves: NO requireAccessScheme.
-    this.router.post(
-      '/attachments/uploads',
-      requireJsonContentType,
-      async (req: Request, res: Response, next: NextFunction) => {
-        try {
-          const request = parseCreateUploadBody(requireBody(req));
-          logger.info('POST /attachments/uploads.');
-          res.status(201).json(await attachmentService.createAttachmentUpload(request));
-        } catch (err) {
-          next(err);
-        }
-      },
-    );
+    this.router.post('/attachments/uploads', requireJsonContentType, async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const request = parseCreateUploadBody(requireBody(req));
+        logger.info('POST /attachments/uploads.');
+        res.status(201).json(await attachmentService.createAttachmentUpload(request));
+      } catch (err) {
+        next(err);
+      }
+    });
 
     // Dual-scheme by design: NO requireAccessScheme here.
-    this.router.post(
-      '/emails',
-      requireJsonContentType,
-      async (req: Request, res: Response, next: NextFunction) => {
-        try {
-          const request = parseSendEmailBody(requireBody(req));
-          logger.info('POST /emails.');
-          res.status(200).json(await emailService.sendEmail(request));
-        } catch (err) {
-          next(err);
-        }
-      },
-    );
+    this.router.post('/emails', requireJsonContentType, async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const request = parseSendEmailBody(requireBody(req));
+        logger.info('POST /emails.');
+        res.status(200).json(await emailService.sendEmail(request));
+      } catch (err) {
+        next(err);
+      }
+    });
 
-    this.router.get(
-      '/emails',
-      requireAccessScheme,
-      async (req: Request, res: Response, next: NextFunction) => {
-        try {
-          const query = parseListQuery(req);
-          logger.info('GET /emails.');
-          res.status(200).json(await readService.listEmails(query));
-        } catch (err) {
-          next(err);
-        }
-      },
-    );
+    this.router.get('/emails', requireAccessScheme, async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const query = parseListQuery(req);
+        logger.info('GET /emails.');
+        res.status(200).json(await readService.listEmails(query));
+      } catch (err) {
+        next(err);
+      }
+    });
 
-    this.router.get(
-      '/emails/:id',
-      requireAccessScheme,
-      async (req: Request, res: Response, next: NextFunction) => {
-        try {
-          logger.info('GET /emails/:id.');
-          res.status(200).json(await readService.getEmail({ handle: requirePathParam(req, 'id') }));
-        } catch (err) {
-          next(err);
-        }
-      },
-    );
+    this.router.get('/emails/:id', requireAccessScheme, async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        logger.info('GET /emails/:id.');
+        res.status(200).json(await readService.getEmail({ handle: requirePathParam(req, 'id') }));
+      } catch (err) {
+        next(err);
+      }
+    });
 
-    this.router.get(
-      '/emails/:id/attachments/:attachmentId',
-      requireAccessScheme,
-      async (req: Request, res: Response, next: NextFunction) => {
-        try {
-          logger.info('GET /emails/:id/attachments/:attachmentId.');
-          const url = await readService.getAttachmentUrl({
-            handle: requirePathParam(req, 'id'),
-            attachmentId: requirePathParam(req, 'attachmentId'),
-          });
-          res.status(200).json(url);
-        } catch (err) {
-          next(err);
-        }
-      },
-    );
+    this.router.get('/emails/:id/attachments/:attachmentId', requireAccessScheme, async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        logger.info('GET /emails/:id/attachments/:attachmentId.');
+        const url = await readService.getAttachmentUrl({
+          handle: requirePathParam(req, 'id'),
+          attachmentId: requirePathParam(req, 'attachmentId'),
+        });
+        res.status(200).json(url);
+      } catch (err) {
+        next(err);
+      }
+    });
 
-    this.router.get(
-      '/emails/:id/raw',
-      requireAccessScheme,
-      async (req: Request, res: Response, next: NextFunction) => {
-        try {
-          logger.info('GET /emails/:id/raw.');
-          res
-            .status(200)
-            .json(await readService.getRawUrl({ handle: requirePathParam(req, 'id') }));
-        } catch (err) {
-          next(err);
-        }
-      },
-    );
+    this.router.get('/emails/:id/raw', requireAccessScheme, async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        logger.info('GET /emails/:id/raw.');
+        res.status(200).json(await readService.getRawUrl({ handle: requirePathParam(req, 'id') }));
+      } catch (err) {
+        next(err);
+      }
+    });
   }
 
   bind(app: Express): void {
@@ -236,10 +197,7 @@ function optionalAttachments(body: Record<string, unknown>): EmailAttachmentRef[
     if (typeof record.emailId === 'string' && typeof record.attachmentId === 'string') {
       return { emailId: record.emailId, attachmentId: record.attachmentId };
     }
-    throw emailErrors.invalidRequest(
-      `"attachments[${index}]" must be { "uploadId": ... } (create an upload first) or ` +
-        '{ "emailId": ..., "attachmentId": ... } (a file already on a message).',
-    );
+    throw emailErrors.invalidRequest(`"attachments[${index}]" must be { "uploadId": ... } (create an upload first) or ` + '{ "emailId": ..., "attachmentId": ... } (a file already on a message).');
   });
 }
 

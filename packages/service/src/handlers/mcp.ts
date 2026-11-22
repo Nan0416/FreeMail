@@ -19,18 +19,9 @@
  * The MCP SERVER deliberately is NOT cached — see `routes/mcp-endpoints.ts` for why a warm
  * singleton would be both unsafe and pointless.
  */
-import type {
-  APIGatewayProxyEventV2,
-  APIGatewayProxyStructuredResultV2,
-  Context,
-} from 'aws-lambda';
+import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
 import { McpDependencyFactory } from '../dependencies/index.js';
-import {
-  authMiddleware,
-  errorHandler,
-  notFoundHandler,
-  preserveWriteHeadHeaders,
-} from '../middleware/index.js';
+import { authMiddleware, errorHandler, notFoundHandler, preserveWriteHeadHeaders } from '../middleware/index.js';
 import { McpEndpoints } from '../routes/index.js';
 import type { McpServerDeps } from '../mcp/server.js';
 import { FreeMailService } from './service.js';
@@ -71,10 +62,7 @@ function buildHandler(): ApiGatewayHandler {
   return apigHandler;
 }
 
-export const handler = async (
-  event: APIGatewayProxyEventV2,
-  context: Context,
-): Promise<APIGatewayProxyStructuredResultV2> => {
+export const handler = async (event: APIGatewayProxyEventV2, context: Context): Promise<APIGatewayProxyStructuredResultV2> => {
   try {
     const processor = buildHandler();
     return await processor(event, context, () => {});

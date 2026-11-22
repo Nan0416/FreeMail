@@ -67,14 +67,8 @@ const logger = getLogger('DdbEmailsDao');
 /** How long to trust a "list index not readable yet" answer before asking DynamoDB again. */
 const INDEX_RECHECK_MS = 30_000;
 
-type SentSummaryFields = Omit<
-  Extract<EmailSummary, { readonly direction: 'sent' }>,
-  'direction' | 'pk' | 'sk'
->;
-type InboundSummaryFields = Omit<
-  Extract<EmailSummary, { readonly direction: 'inbound' }>,
-  'direction' | 'pk' | 'sk'
->;
+type SentSummaryFields = Omit<Extract<EmailSummary, { readonly direction: 'sent' }>, 'direction' | 'pk' | 'sk'>;
+type InboundSummaryFields = Omit<Extract<EmailSummary, { readonly direction: 'inbound' }>, 'direction' | 'pk' | 'sk'>;
 
 /**
  * The same reconstruction for a list-index entry, which carries only the projected fields.
@@ -93,11 +87,7 @@ function toSummary(item: Record<string, unknown>, filter: EmailListFilter): Emai
 
 /** DynamoDB's answer to a query on an index the table does not have (removed, or never created). */
 function isIndexNotReadable(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    err.name === 'ValidationException' &&
-    /does not have the specified index/i.test(err.message)
-  );
+  return err instanceof Error && err.name === 'ValidationException' && /does not have the specified index/i.test(err.message);
 }
 
 export class DdbEmailsDao implements EmailsDao {
@@ -149,9 +139,7 @@ export class DdbEmailsDao implements EmailsDao {
     return {};
   }
 
-  async updateSentEmailStatus(
-    input: UpdateSentEmailStatusInput,
-  ): Promise<UpdateSentEmailStatusOutput> {
+  async updateSentEmailStatus(input: UpdateSentEmailStatusInput): Promise<UpdateSentEmailStatusOutput> {
     // 'status' is a DynamoDB reserved word; alias every updated name to be safe.
     const names: Record<string, string> = { '#status': 'status' };
     const values: Record<string, unknown> = { ':status': input.status };
@@ -212,9 +200,7 @@ export class DdbEmailsDao implements EmailsDao {
     return {};
   }
 
-  async updateSentEmailDelivery(
-    input: UpdateSentEmailDeliveryInput,
-  ): Promise<UpdateSentEmailDeliveryOutput> {
+  async updateSentEmailDelivery(input: UpdateSentEmailDeliveryInput): Promise<UpdateSentEmailDeliveryOutput> {
     const key = { pk: EmailEntity.SENT_PARTITION, sk: `${input.sentAt}#${input.id}` };
     try {
       await this.doc.send(
@@ -230,8 +216,7 @@ export class DdbEmailsDao implements EmailsDao {
           },
           // Only a message we recorded — never create a stray row from a report — and only while
           // the list has room, so the row stays inside DynamoDB's item limit.
-          ConditionExpression:
-            'attribute_exists(pk) AND (attribute_not_exists(#events) OR size(#events) < :max)',
+          ConditionExpression: 'attribute_exists(pk) AND (attribute_not_exists(#events) OR size(#events) < :max)',
           ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
         }),
       );
@@ -319,9 +304,7 @@ export class DdbEmailsDao implements EmailsDao {
     }
   }
 
-  async queryEmailsByDirection(
-    input: QueryEmailsByDirectionInput,
-  ): Promise<QueryEmailsByDirectionOutput> {
+  async queryEmailsByDirection(input: QueryEmailsByDirectionInput): Promise<QueryEmailsByDirectionOutput> {
     return { emails: (await this.queryPartition(input)).map(toRow) };
   }
 
@@ -338,10 +321,7 @@ export class DdbEmailsDao implements EmailsDao {
         if (!isIndexNotReadable(err)) {
           throw err;
         }
-        logger.warn(
-          `List index "${EMAIL_LIST_INDEX_NAME}" is missing; listing from the table.`,
-          err,
-        );
+        logger.warn(`List index "${EMAIL_LIST_INDEX_NAME}" is missing; listing from the table.`, err);
         this.listIndexReadable = false;
         items = await this.queryPartition(input, undefined, LIST_FIELDS_PROJECTION);
       }
@@ -365,10 +345,7 @@ export class DdbEmailsDao implements EmailsDao {
       return this.listIndexCheck;
     }
     const nowMs = Date.now();
-    if (
-      this.listIndexCheckedAtMs !== undefined &&
-      nowMs - this.listIndexCheckedAtMs < INDEX_RECHECK_MS
-    ) {
+    if (this.listIndexCheckedAtMs !== undefined && nowMs - this.listIndexCheckedAtMs < INDEX_RECHECK_MS) {
       return false;
     }
     this.listIndexCheckedAtMs = nowMs;
@@ -382,9 +359,7 @@ export class DdbEmailsDao implements EmailsDao {
   private async describeListIndex(): Promise<boolean> {
     try {
       const out = await this.doc.send(new DescribeTableCommand({ TableName: this.tableName }));
-      const index = out.Table?.GlobalSecondaryIndexes?.find(
-        (candidate) => candidate.IndexName === EMAIL_LIST_INDEX_NAME,
-      );
+      const index = out.Table?.GlobalSecondaryIndexes?.find((candidate) => candidate.IndexName === EMAIL_LIST_INDEX_NAME);
       const built = index?.IndexStatus === 'ACTIVE' || index?.IndexStatus === 'UPDATING';
       this.listIndexReadable = built && index?.Backfilling !== true;
     } catch (err) {
@@ -392,9 +367,7 @@ export class DdbEmailsDao implements EmailsDao {
       return false;
     }
     if (!this.listIndexReadable) {
-      logger.warn(
-        `List index "${EMAIL_LIST_INDEX_NAME}" is not built yet; listing from the table.`,
-      );
+      logger.warn(`List index "${EMAIL_LIST_INDEX_NAME}" is not built yet; listing from the table.`);
     }
     return this.listIndexReadable;
   }
@@ -409,19 +382,12 @@ export class DdbEmailsDao implements EmailsDao {
    * decides a direction is drained on it), and a 1 MB cut would otherwise silently end the
    * timeline early.
    */
-  private async queryPartition(
-    input: QueryEmailsByDirectionInput,
-    indexName?: string,
-    projection?: Projection,
-  ): Promise<Record<string, unknown>[]> {
+  private async queryPartition(input: QueryEmailsByDirectionInput, indexName?: string, projection?: Projection): Promise<Record<string, unknown>[]> {
     const pk = EmailEntity.partitionFor(input.direction);
     const items: Record<string, unknown>[] = [];
     // A cursor at or below the range's floor has nothing older left in range, and an empty
     // range (the parser never builds one) has nothing at all.
-    if (
-      (input.afterSk !== undefined && input.minSk !== undefined && input.afterSk <= input.minSk) ||
-      (input.minSk !== undefined && input.maxSk !== undefined && input.minSk > input.maxSk)
-    ) {
+    if ((input.afterSk !== undefined && input.minSk !== undefined && input.afterSk <= input.minSk) || (input.minSk !== undefined && input.maxSk !== undefined && input.minSk > input.maxSk)) {
       return items;
     }
     // Resume strictly after the last row we emitted for this partition. pk is server-derived
@@ -429,10 +395,7 @@ export class DdbEmailsDao implements EmailsDao {
     // table's keys, so the same {pk, sk} is a valid start key for either. A cursor above the
     // range's ceiling (the filters changed between pages) starts from the ceiling instead —
     // DynamoDB rejects a start key outside the key condition.
-    const resumeSk =
-      input.afterSk !== undefined && (input.maxSk === undefined || input.afterSk <= input.maxSk)
-        ? input.afterSk
-        : undefined;
+    const resumeSk = input.afterSk !== undefined && (input.maxSk === undefined || input.afterSk <= input.maxSk) ? input.afterSk : undefined;
     let startKey: Record<string, unknown> | undefined = resumeSk ? { pk, sk: resumeSk } : undefined;
     const range = sortKeyCondition(input);
     do {
@@ -460,9 +423,7 @@ export class DdbEmailsDao implements EmailsDao {
     return items;
   }
 
-  async createIdempotencyRecord(
-    input: CreateIdempotencyRecordInput,
-  ): Promise<CreateIdempotencyRecordOutput> {
+  async createIdempotencyRecord(input: CreateIdempotencyRecordInput): Promise<CreateIdempotencyRecordOutput> {
     // One atomic write: each field is set only where the record doesn't exist yet, and the old
     // record (if any) comes back as ALL_OLD — no read, no read grant. A fresh claim returns no
     // attributes; a repeat returns the earlier claim untouched.
@@ -480,11 +441,7 @@ export class DdbEmailsDao implements EmailsDao {
       }),
     )) as UpdateCommandOutput;
     const old = out.Attributes;
-    if (
-      old === undefined ||
-      old.requestFingerprint === undefined ||
-      old.claimId === input.claimId
-    ) {
+    if (old === undefined || old.requestFingerprint === undefined || old.claimId === input.claimId) {
       return { created: true };
     }
     if (Number(old.ttl) < input.nowSeconds) {
@@ -497,18 +454,13 @@ export class DdbEmailsDao implements EmailsDao {
    * An expired record DynamoDB has not swept yet holds the key as if it were live: replace it,
    * compare-and-swap on its `ttl` so a concurrent claimant can't be overwritten in turn.
    */
-  private async takeOverExpiredClaim(
-    input: CreateIdempotencyRecordInput,
-    old: Record<string, unknown>,
-  ): Promise<CreateIdempotencyRecordOutput> {
+  private async takeOverExpiredClaim(input: CreateIdempotencyRecordInput, old: Record<string, unknown>): Promise<CreateIdempotencyRecordOutput> {
     try {
       await this.doc.send(
         new UpdateCommand({
           TableName: this.tableName,
           Key: EmailEntity.idempotencyKey(input.key),
-          UpdateExpression:
-            'SET #fp = :fp, #state = :pending, #created = :created, #ttl = :ttl, #claim = :claim ' +
-            'REMOVE #response',
+          UpdateExpression: 'SET #fp = :fp, #state = :pending, #created = :created, #ttl = :ttl, #claim = :claim ' + 'REMOVE #response',
           // Its own earlier attempt (an SDK retry after a lost response) also counts as won.
           ConditionExpression: '#ttl = :oldTtl OR #claim = :claim',
           ExpressionAttributeNames: { ...IDEMPOTENCY_NAMES, '#response': 'response' },
@@ -528,9 +480,7 @@ export class DdbEmailsDao implements EmailsDao {
     }
   }
 
-  async updateIdempotencyRecord(
-    input: UpdateIdempotencyRecordInput,
-  ): Promise<UpdateIdempotencyRecordOutput> {
+  async updateIdempotencyRecord(input: UpdateIdempotencyRecordInput): Promise<UpdateIdempotencyRecordOutput> {
     await this.doc.send(
       new UpdateCommand({
         TableName: this.tableName,
@@ -544,9 +494,7 @@ export class DdbEmailsDao implements EmailsDao {
     return {};
   }
 
-  async deleteIdempotencyRecord(
-    input: DeleteIdempotencyRecordInput,
-  ): Promise<DeleteIdempotencyRecordOutput> {
+  async deleteIdempotencyRecord(input: DeleteIdempotencyRecordInput): Promise<DeleteIdempotencyRecordOutput> {
     try {
       await this.doc.send(
         new DeleteCommand({
@@ -567,9 +515,7 @@ export class DdbEmailsDao implements EmailsDao {
   }
 
   async getEmail(input: GetEmailInput): Promise<GetEmailOutput | null> {
-    const out = (await this.doc.send(
-      new GetCommand({ TableName: this.tableName, Key: { pk: input.pk, sk: input.sk } }),
-    )) as GetCommandOutput;
+    const out = (await this.doc.send(new GetCommand({ TableName: this.tableName, Key: { pk: input.pk, sk: input.sk } }))) as GetCommandOutput;
     return out.Item ? toRow(out.Item) : null;
   }
 }
@@ -638,19 +584,14 @@ function toIdempotencyRecord(key: string, item: Record<string, unknown>): Idempo
     key,
     requestFingerprint: String(item.requestFingerprint),
     state: item.state === 'sent' ? 'sent' : 'pending',
-    ...(item.response !== undefined
-      ? { response: item.response as IdempotencyRecord['response'] }
-      : {}),
+    ...(item.response !== undefined ? { response: item.response as IdempotencyRecord['response'] } : {}),
     createdAt: String(item.createdAt),
     ttl: Number(item.ttl),
   };
 }
 
 /** The statuses each delivery outcome may replace — a status never moves backwards. */
-const STATUS_ADVANCES_FROM: Record<
-  UpdateSentEmailDeliveryInput['status'] & string,
-  readonly string[]
-> = {
+const STATUS_ADVANCES_FROM: Record<UpdateSentEmailDeliveryInput['status'] & string, readonly string[]> = {
   delivered: ['sending', 'sent'],
   bounced: ['sending', 'sent', 'delivered'],
   send_failed: ['sending', 'sent'],

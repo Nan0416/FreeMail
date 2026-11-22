@@ -54,13 +54,10 @@ describe('per-Lambda configs are narrow', () => {
 });
 
 describe('INBOUND_ENABLED is fail-closed', () => {
-  it.each([undefined, '', 'TRUE', 'True', '1', 'yes', 'false'])(
-    'treats %o as disabled — only the exact string "true" enables the read tools',
-    (value) => {
-      const env = value === undefined ? MCP_ENV : { ...MCP_ENV, INBOUND_ENABLED: value };
-      expect(getMcpConfig(env).inboundEnabled).toBe(false);
-    },
-  );
+  it.each([undefined, '', 'TRUE', 'True', '1', 'yes', 'false'])('treats %o as disabled — only the exact string "true" enables the read tools', (value) => {
+    const env = value === undefined ? MCP_ENV : { ...MCP_ENV, INBOUND_ENABLED: value };
+    expect(getMcpConfig(env).inboundEnabled).toBe(false);
+  });
 
   it('enables on exactly "true"', () => {
     expect(getMcpConfig({ ...MCP_ENV, INBOUND_ENABLED: 'true' }).inboundEnabled).toBe(true);
@@ -69,9 +66,7 @@ describe('INBOUND_ENABLED is fail-closed', () => {
 
 describe('config validation names every missing variable at once', () => {
   it('reports all of them in one error, not just the first', () => {
-    expect(() => getMcpConfig({ EMAILS_TABLE: 'emails' })).toThrow(
-      /DOWNLOAD_BASE_URL, DOWNLOAD_TOKENS_TABLE, EMAIL_DOMAIN, MAIL_BUCKET/,
-    );
+    expect(() => getMcpConfig({ EMAILS_TABLE: 'emails' })).toThrow(/DOWNLOAD_BASE_URL, DOWNLOAD_TOKENS_TABLE, EMAIL_DOMAIN, MAIL_BUCKET/);
   });
 
   it('names the component so the failing Lambda is obvious in the logs', () => {

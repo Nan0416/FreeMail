@@ -121,9 +121,7 @@ describe('ComposeWindow — sending', () => {
 
     await waitFor(() => expect(compose.onClose).toHaveBeenCalled());
     const [[, init]] = callsTo(compose.fetchImpl, '/emails', 'POST');
-    expect(JSON.parse(String(init?.body)).attachments).toEqual([
-      { emailId: 'H', attachmentId: '2' },
-    ]);
+    expect(JSON.parse(String(init?.body)).attachments).toEqual([{ emailId: 'H', attachmentId: '2' }]);
     // Nothing was uploaded for a forwarded file.
     expect(callsTo(compose.fetchImpl, '/attachments/uploads')).toHaveLength(0);
   });
@@ -149,14 +147,9 @@ describe('ComposeWindow — sending', () => {
 
   it('surfaces a send failure and keeps the window open', async () => {
     const fetchImpl = vi.fn<typeof fetch>(async (url) =>
-      pathOf(url) === '/me'
-        ? json(200, { subject: 'owner' })
-        : json(400, { error: 'invalid_sender', message: 'From must be under your domain.' }),
+      pathOf(url) === '/me' ? json(200, { subject: 'owner' }) : json(400, { error: 'invalid_sender', message: 'From must be under your domain.' }),
     );
-    const compose = renderCompose(
-      { from: 'me@elsewhere.com', to: 'a@y.com', html: '<p>x</p>' },
-      fetchImpl,
-    );
+    const compose = renderCompose({ from: 'me@elsewhere.com', to: 'a@y.com', html: '<p>x</p>' }, fetchImpl);
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('From must be under your domain.');
     expect(compose.onClose).not.toHaveBeenCalled();
@@ -193,10 +186,7 @@ describe('ComposeWindow — attachments', () => {
   }
 
   it('uploads each file straight to S3, then sends only its upload id', async () => {
-    const compose = renderCompose(
-      { from: 'me@x.com', to: 'a@y.com', html: '<p>see attached</p>' },
-      uploadingApi(),
-    );
+    const compose = renderCompose({ from: 'me@x.com', to: 'a@y.com', html: '<p>see attached</p>' }, uploadingApi());
     const file = new File(['%PDF-1.7'], 'report.pdf', { type: 'application/pdf' });
     attach(file);
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -217,10 +207,7 @@ describe('ComposeWindow — attachments', () => {
   });
 
   it('refuses a file over 100 MB before uploading anything', async () => {
-    const compose = renderCompose(
-      { from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' },
-      uploadingApi(),
-    );
+    const compose = renderCompose({ from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' }, uploadingApi());
     const huge = new File(['x'], 'huge.bin');
     Object.defineProperty(huge, 'size', { value: 100 * 1024 * 1024 + 1 });
     attach(huge);
@@ -254,20 +241,12 @@ describe('ComposeWindow — attachments', () => {
     await waitFor(() => expect(compose.onClose).toHaveBeenCalled());
     expect(callsTo(fetchImpl, '/attachments/uploads')).toHaveLength(1);
     expect(fetchImpl.mock.calls.filter(([url]) => url === S3_URL)).toHaveLength(1);
-    const sendBodies = callsTo(fetchImpl, '/emails', 'POST').map(([, init]) =>
-      JSON.parse(String(init?.body)),
-    );
-    expect(sendBodies.map((body) => body.attachments)).toEqual([
-      [{ uploadId: 'U1' }],
-      [{ uploadId: 'U1' }],
-    ]);
+    const sendBodies = callsTo(fetchImpl, '/emails', 'POST').map(([, init]) => JSON.parse(String(init?.body)));
+    expect(sendBodies.map((body) => body.attachments)).toEqual([[{ uploadId: 'U1' }], [{ uploadId: 'U1' }]]);
   });
 
   it('refuses an empty file before uploading anything', async () => {
-    const compose = renderCompose(
-      { from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' },
-      uploadingApi(),
-    );
+    const compose = renderCompose({ from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' }, uploadingApi());
     attach(new File([], 'empty.txt', { type: 'text/plain' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
 
@@ -309,14 +288,7 @@ describe('ComposeWindow — attachments', () => {
 
   function renderWithUploads(fetchImpl: typeof fetch, uploadImpl: UploadTransport) {
     const onClose = vi.fn();
-    renderWithApp(
-      <ComposeWindow
-        init={{ from: 'me@x.com', to: 'a@y.com', html: '<p>files</p>' }}
-        onClose={onClose}
-      />,
-      fetchImpl,
-      uploadImpl,
-    );
+    renderWithApp(<ComposeWindow init={{ from: 'me@x.com', to: 'a@y.com', html: '<p>files</p>' }} onClose={onClose} />, fetchImpl, uploadImpl);
     return onClose;
   }
 
@@ -340,9 +312,7 @@ describe('ComposeWindow — attachments', () => {
 
     await waitFor(() => expect(onClose).toHaveBeenCalled());
     const [[, sendInit]] = callsTo(fetchImpl, '/emails', 'POST');
-    expect(JSON.parse(String(sendInit?.body)).attachments).toEqual(
-      names.map((name) => ({ uploadId: name })),
-    );
+    expect(JSON.parse(String(sendInit?.body)).attachments).toEqual(names.map((name) => ({ uploadId: name })));
   });
 
   it("shows each file's upload progress and the overall percent on the send button", async () => {
@@ -350,10 +320,7 @@ describe('ComposeWindow — attachments', () => {
     renderWithUploads(perFileUploadsApi(), s3.uploadImpl);
     fireEvent.change(screen.getByLabelText('Attach files', { selector: 'input' }), {
       target: {
-        files: [
-          new File(['12345678'], 'big.bin', { type: 'application/octet-stream' }),
-          new File(['12'], 'small.txt', { type: 'text/plain' }),
-        ],
+        files: [new File(['12345678'], 'big.bin', { type: 'application/octet-stream' }), new File(['12'], 'small.txt', { type: 'text/plain' })],
       },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -363,14 +330,8 @@ describe('ComposeWindow — attachments', () => {
       s3.open.get('big.bin')?.report(4);
       s3.open.get('small.txt')?.report(2);
     });
-    expect(screen.getByRole('progressbar', { name: 'Uploading big.bin' })).toHaveAttribute(
-      'aria-valuenow',
-      '50',
-    );
-    expect(screen.getByRole('progressbar', { name: 'Uploading small.txt' })).toHaveAttribute(
-      'aria-valuenow',
-      '100',
-    );
+    expect(screen.getByRole('progressbar', { name: 'Uploading big.bin' })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.getByRole('progressbar', { name: 'Uploading small.txt' })).toHaveAttribute('aria-valuenow', '100');
     // 6 of 10 bytes across both files.
     expect(screen.getByRole('button', { name: 'Uploading 60%' })).toBeDisabled();
     // Nothing can be added or removed mid-send.
@@ -410,25 +371,16 @@ describe('ComposeWindow — attachments', () => {
     await waitFor(() => expect(s3.open.has('bad.txt')).toBe(true));
     await act(async () => s3.open.get('bad.txt')?.finish());
     await waitFor(() => expect(onClose).toHaveBeenCalled());
-    const uploads = callsTo(fetchImpl, '/attachments/uploads', 'POST').map(
-      (call) => JSON.parse(String(call[1]?.body)).filename,
-    );
+    const uploads = callsTo(fetchImpl, '/attachments/uploads', 'POST').map((call) => JSON.parse(String(call[1]?.body)).filename);
     expect(uploads.sort()).toEqual(['bad.txt', 'bad.txt', 'slow.txt']);
     const [[, sendInit]] = callsTo(fetchImpl, '/emails', 'POST');
-    expect(JSON.parse(String(sendInit?.body)).attachments).toEqual([
-      { uploadId: 'bad.txt' },
-      { uploadId: 'slow.txt' },
-    ]);
+    expect(JSON.parse(String(sendInit?.body)).attachments).toEqual([{ uploadId: 'bad.txt' }, { uploadId: 'slow.txt' }]);
   });
 
   it('keeps the window open when an upload fails', async () => {
     const fetchImpl = uploadingApi();
     const base = fetchImpl.getMockImplementation();
-    fetchImpl.mockImplementation(async (url, init) =>
-      String(url).startsWith('https://mail-bucket.s3.')
-        ? new Response(null, { status: 403 })
-        : base!(url, init),
-    );
+    fetchImpl.mockImplementation(async (url, init) => (String(url).startsWith('https://mail-bucket.s3.') ? new Response(null, { status: 403 }) : base!(url, init)));
     const compose = renderCompose({ from: 'me@x.com', to: 'a@y.com', html: '<p>x</p>' }, fetchImpl);
     attach(new File(['x'], 'a.txt', { type: 'text/plain' }));
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
@@ -493,10 +445,7 @@ describe('ComposeWindow — dropping files', () => {
 
   it('attaches files dropped on the window', () => {
     renderCompose({ from: 'me@x.com' });
-    const drag = filesDrag(
-      item(notes()),
-      item(new File(['jpeg'], 'photo.jpg', { type: 'image/jpeg' })),
-    );
+    const drag = filesDrag(item(notes()), item(new File(['jpeg'], 'photo.jpg', { type: 'image/jpeg' })));
 
     fireEvent.dragEnter(document.body, { dataTransfer: drag });
     drag.dropEffect = 'none';
@@ -505,10 +454,7 @@ describe('ComposeWindow — dropping files', () => {
     fireEvent.drop(screen.getByRole('dialog'), { dataTransfer: drag });
 
     expect(screen.queryByText(TARGET)).not.toBeInTheDocument();
-    expect(attachments()).toEqual([
-      expect.stringContaining('notes.txt'),
-      expect.stringContaining('photo.jpg'),
-    ]);
+    expect(attachments()).toEqual([expect.stringContaining('notes.txt'), expect.stringContaining('photo.jpg')]);
   });
 
   it('leaves out a dropped folder, and says why', async () => {
@@ -696,9 +642,7 @@ describe('ComposeWindow — drafts', () => {
       target: { files: [new File(['x'], 'a.txt', { type: 'text/plain' })] },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Discard draft' }));
-    expect(
-      await screen.findByText('Undo won’t bring back its attached files.'),
-    ).toBeInTheDocument();
+    expect(await screen.findByText('Undo won’t bring back its attached files.')).toBeInTheDocument();
   });
 
   it('does not save an untouched blank window', () => {

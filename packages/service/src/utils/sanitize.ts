@@ -7,14 +7,7 @@
  */
 import { convert as htmlToText } from 'html-to-text';
 import type { AddressObject, EmailAddress } from 'mailparser';
-import {
-  MAX_ADDRESS_CHARS,
-  MAX_ADDRESSES_PER_HEADER,
-  MAX_FILENAME_CHARS,
-  MAX_HTML_SNIPPET_INPUT_BYTES,
-  MAX_SNIPPET_CHARS,
-  MAX_SUBJECT_CHARS,
-} from './inbound-limits.js';
+import { MAX_ADDRESS_CHARS, MAX_ADDRESSES_PER_HEADER, MAX_FILENAME_CHARS, MAX_HTML_SNIPPET_INPUT_BYTES, MAX_SNIPPET_CHARS, MAX_SUBJECT_CHARS } from './inbound-limits.js';
 
 /** Control chars (incl. CR/LF/TAB) + DEL + Unicode line/para separators, replaced with a space. */
 // eslint-disable-next-line no-control-regex
@@ -116,8 +109,7 @@ export function snippetFromHtml(html: string | undefined): string {
   if (!html) {
     return '';
   }
-  const bounded =
-    html.length > MAX_HTML_SNIPPET_INPUT_BYTES ? html.slice(0, MAX_HTML_SNIPPET_INPUT_BYTES) : html;
+  const bounded = html.length > MAX_HTML_SNIPPET_INPUT_BYTES ? html.slice(0, MAX_HTML_SNIPPET_INPUT_BYTES) : html;
   const text = htmlToText(bounded, {
     wordwrap: false,
     limits: { maxInputLength: MAX_HTML_SNIPPET_INPUT_BYTES },

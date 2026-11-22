@@ -63,9 +63,7 @@ describe('EmailReader — body matrix', () => {
   });
 
   it('renders a SENT HTML body in the same sandbox, with images allowed (our own mail)', async () => {
-    renderReader(
-      mockReader({ ...BASE_INBOUND, direction: 'sent', status: 'sent', html: '<p>sent-html</p>' }),
-    );
+    renderReader(mockReader({ ...BASE_INBOUND, direction: 'sent', status: 'sent', html: '<p>sent-html</p>' }));
     const frame = await screen.findByTitle('Email content');
     expect(frame.getAttribute('sandbox')).toBe('allow-popups allow-popups-to-escape-sandbox');
     expect(frame.getAttribute('srcdoc')).toContain('img-src https:');
@@ -73,9 +71,7 @@ describe('EmailReader — body matrix', () => {
   });
 
   it('flags a send_failed message but still shows the archived body', async () => {
-    renderReader(
-      mockReader({ ...BASE_INBOUND, direction: 'sent', status: 'send_failed', text: 'draft body' }),
-    );
+    renderReader(mockReader({ ...BASE_INBOUND, direction: 'sent', status: 'send_failed', text: 'draft body' }));
     expect(await screen.findByRole('status')).toHaveTextContent(/failed to send/i);
     expect(screen.getByText('draft body')).toBeInTheDocument();
   });
@@ -111,9 +107,7 @@ describe('EmailReader — image toggle', () => {
     expect(frame.getAttribute('srcdoc')).toContain("img-src 'none'");
 
     fireEvent.click(screen.getByRole('button', { name: 'Show images' }));
-    await waitFor(() =>
-      expect(screen.getByTitle('Email content').getAttribute('srcdoc')).toContain('img-src https:'),
-    );
+    await waitFor(() => expect(screen.getByTitle('Email content').getAttribute('srcdoc')).toContain('img-src https:'));
     // The inline prompt goes away; re-blocking lives in the More actions menu.
     expect(screen.queryByRole('button', { name: 'Show images' })).not.toBeInTheDocument();
   });
@@ -138,9 +132,7 @@ describe('EmailReader — quarantine gating', () => {
   });
 
   it('shows NO reveal for a virus-failed message (no body exists)', async () => {
-    renderReader(
-      mockReader({ ...BASE_INBOUND, quarantined: true, virusVerdict: 'FAIL', spamVerdict: 'PASS' }),
-    );
+    renderReader(mockReader({ ...BASE_INBOUND, quarantined: true, virusVerdict: 'FAIL', spamVerdict: 'PASS' }));
     expect(await screen.findByText(/failed a virus scan/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Show message' })).not.toBeInTheDocument();
   });
@@ -149,9 +141,7 @@ describe('EmailReader — quarantine gating', () => {
 describe('EmailReader — attachment download', () => {
   it('mints a presigned URL and triggers a browser download without leaving the app', async () => {
     let clickedHref = '';
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
-      this: HTMLAnchorElement,
-    ) {
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
       clickedHref = this.href;
     });
 
@@ -161,40 +151,27 @@ describe('EmailReader — attachment download', () => {
         text: 'body',
         hasAttachments: true,
         attachmentCount: 1,
-        attachments: [
-          { id: 'a1', filename: 'report.pdf', contentType: 'application/pdf', sizeBytes: 2048 },
-        ],
+        attachments: [{ id: 'a1', filename: 'report.pdf', contentType: 'application/pdf', sizeBytes: 2048 }],
       },
-      (path) =>
-        path === '/emails/h1/attachments/a1'
-          ? json(200, { url: 'https://s3.example/signed', expiresAt: '2026-07-17T00:01:00.000Z' })
-          : null,
+      (path) => (path === '/emails/h1/attachments/a1' ? json(200, { url: 'https://s3.example/signed', expiresAt: '2026-07-17T00:01:00.000Z' }) : null),
     );
     renderReader(fetchMock);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Download report.pdf' }));
     await waitFor(() => expect(clickedHref).toBe('https://s3.example/signed'));
-    expect(
-      (fetchMock as ReturnType<typeof vi.fn>).mock.calls.some(
-        ([url]) => new URL(String(url)).pathname === '/emails/h1/attachments/a1',
-      ),
-    ).toBe(true);
+    expect((fetchMock as ReturnType<typeof vi.fn>).mock.calls.some(([url]) => new URL(String(url)).pathname === '/emails/h1/attachments/a1')).toBe(true);
   });
 });
 
 describe('EmailReader — download original (.eml)', () => {
   it('offers it in More actions when rawAvailable, and downloads via a minted URL', async () => {
     let clickedHref = '';
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
-      this: HTMLAnchorElement,
-    ) {
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
       clickedHref = this.href;
     });
     renderReader(
       mockReader({ ...BASE_INBOUND, text: 'body', rawAvailable: true }, (path) =>
-        path === '/emails/h1/raw'
-          ? json(200, { url: 'https://s3.example/raw', expiresAt: '2026-07-17T00:01:00.000Z' })
-          : null,
+        path === '/emails/h1/raw' ? json(200, { url: 'https://s3.example/raw', expiresAt: '2026-07-17T00:01:00.000Z' }) : null,
       ),
     );
     await screen.findByRole('heading', { name: 'Hello' });
@@ -207,9 +184,7 @@ describe('EmailReader — download original (.eml)', () => {
 
   it('offers a suspicious failed message’s original from its notice, with a warning', async () => {
     let clickedHref = '';
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
-      this: HTMLAnchorElement,
-    ) {
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
       clickedHref = this.href;
     });
     renderReader(
@@ -261,9 +236,7 @@ describe('EmailReader — download original (.eml)', () => {
 
     fireEvent.keyDown(screen.getByRole('button', { name: 'More actions' }), { key: 'Enter' });
     await screen.findByRole('menuitem', { name: 'Copy sender address' });
-    expect(
-      screen.queryByRole('menuitem', { name: 'Download original (.eml)' }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Download original (.eml)' })).not.toBeInTheDocument();
   });
 });
 

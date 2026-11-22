@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import {
-  getServiceConfig,
-  readServiceConfig,
-  resetServiceConfigCache,
-} from '../../src/handlers/service-config.js';
+import { getServiceConfig, readServiceConfig, resetServiceConfigCache } from '../../src/handlers/service-config.js';
 
 const COMPLETE: NodeJS.ProcessEnv = {
   AUTH_TABLE: 'auth',
@@ -57,9 +53,7 @@ describe('readServiceConfig', () => {
   });
 
   it.each(['0', '-1', '1.5', '3MB'])('rejects an embed limit of %s', (value) => {
-    expect(() => readServiceConfig({ ...COMPLETE, EMBED_MAX_BYTES: value })).toThrow(
-      /EMBED_MAX_BYTES/,
-    );
+    expect(() => readServiceConfig({ ...COMPLETE, EMBED_MAX_BYTES: value })).toThrow(/EMBED_MAX_BYTES/);
   });
 
   it('names EVERY missing variable in one error, not just the first', () => {

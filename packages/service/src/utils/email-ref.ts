@@ -46,12 +46,7 @@ export function decodeEmailRef(handle: string): EmailRef {
     throw emailErrors.notFound('No such message.');
   }
   const record = parsed as Record<string, unknown>;
-  if (
-    record.v !== 1 ||
-    typeof record.pk !== 'string' ||
-    typeof record.sk !== 'string' ||
-    record.sk.length === 0
-  ) {
+  if (record.v !== 1 || typeof record.pk !== 'string' || typeof record.sk !== 'string' || record.sk.length === 0) {
     throw emailErrors.notFound('No such message.');
   }
   if (!EMAIL_PARTITIONS.has(record.pk)) {

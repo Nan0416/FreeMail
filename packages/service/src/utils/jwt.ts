@@ -24,18 +24,13 @@ export interface SignAccessTokenOptions {
   readonly ttlSeconds: number;
 }
 
-export type VerifyResult =
-  | { readonly valid: true; readonly claims: AccessTokenClaims }
-  | { readonly valid: false; readonly reason: 'malformed' | 'bad_signature' | 'expired' };
+export type VerifyResult = { readonly valid: true; readonly claims: AccessTokenClaims } | { readonly valid: false; readonly reason: 'malformed' | 'bad_signature' | 'expired' };
 
 function encodeKey(key: string): Uint8Array {
   return new TextEncoder().encode(key);
 }
 
-export async function signAccessToken(
-  key: string,
-  options: SignAccessTokenOptions,
-): Promise<string> {
+export async function signAccessToken(key: string, options: SignAccessTokenOptions): Promise<string> {
   return new SignJWT()
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setSubject(options.subject)
@@ -50,21 +45,13 @@ export async function signAccessToken(
  * against `nowSeconds` so tests are deterministic. Never throws — every failure is
  * a typed `{ valid: false }`.
  */
-export async function verifyAccessToken(
-  token: string,
-  key: string,
-  nowSeconds: number,
-): Promise<VerifyResult> {
+export async function verifyAccessToken(token: string, key: string, nowSeconds: number): Promise<VerifyResult> {
   try {
     const verified = await jwtVerify(token, encodeKey(key), {
       algorithms: ['HS256'],
       currentDate: new Date(nowSeconds * 1000),
     });
-    if (
-      typeof verified.payload.sub !== 'string' ||
-      typeof verified.payload.iat !== 'number' ||
-      typeof verified.payload.exp !== 'number'
-    ) {
+    if (typeof verified.payload.sub !== 'string' || typeof verified.payload.iat !== 'number' || typeof verified.payload.exp !== 'number') {
       return { valid: false, reason: 'malformed' };
     }
     return {

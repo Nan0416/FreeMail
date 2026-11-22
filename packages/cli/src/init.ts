@@ -67,17 +67,6 @@ export async function runInit(io: InitIo): Promise<number> {
   }
 
   await io.write(outPath, config);
-  io.log(
-    [
-      ``,
-      `Wrote ${outPath}`,
-      ``,
-      `Next steps:`,
-      `  cd packages/infra`,
-      `  npx cdk bootstrap   # first time in this account/region`,
-      `  npx cdk deploy`,
-      ``,
-    ].join('\n'),
-  );
+  io.log([``, `Wrote ${outPath}`, ``, `Next steps:`, `  cd packages/infra`, `  npx cdk bootstrap   # first time in this account/region`, `  npx cdk deploy`, ``].join('\n'));
   return 0;
 }

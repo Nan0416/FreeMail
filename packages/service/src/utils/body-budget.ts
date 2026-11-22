@@ -13,10 +13,7 @@
  */
 
 /** Truncate a string to at most `maxBytes` UTF-8 bytes, cutting on a character boundary. */
-export function truncateToUtf8Bytes(
-  value: string,
-  maxBytes: number,
-): { value: string; truncated: boolean } {
+export function truncateToUtf8Bytes(value: string, maxBytes: number): { value: string; truncated: boolean } {
   const buf = Buffer.from(value, 'utf8');
   if (buf.length <= maxBytes) {
     return { value, truncated: false };
@@ -40,11 +37,7 @@ function utf8Len(value: string | undefined): number {
 }
 
 /** Cap each part to `partCapBytes` raw, then shrink until the JSON-escaped total ≤ budget. */
-export function fitBodyToBudget(
-  rawText: string | undefined,
-  rawHtml: string | undefined,
-  opts: { partCapBytes: number; serializedBudgetBytes: number },
-): FittedBody {
+export function fitBodyToBudget(rawText: string | undefined, rawHtml: string | undefined, opts: { partCapBytes: number; serializedBudgetBytes: number }): FittedBody {
   let truncated = false;
   let text = rawText;
   let html = rawHtml;

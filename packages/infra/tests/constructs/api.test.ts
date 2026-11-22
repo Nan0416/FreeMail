@@ -36,51 +36,25 @@ const MCP_DESCRIPTION = 'FreeMail MCP server (send_email + read tools).';
 
 /** All IAM policy statements attached to a Lambda function's execution role, by description. */
 function roleActions(template: Template, description: string): string[] {
-  const fn = Object.values(template.findResources('AWS::Lambda::Function')).find(
-    (f) => f.Properties?.Description === description,
-  );
-  const roleRef = (fn?.Properties?.Role as { 'Fn::GetAtt'?: [string, string] } | undefined)?.[
-    'Fn::GetAtt'
-  ]?.[0];
+  const fn = Object.values(template.findResources('AWS::Lambda::Function')).find((f) => f.Properties?.Description === description);
+  const roleRef = (fn?.Properties?.Role as { 'Fn::GetAtt'?: [string, string] } | undefined)?.['Fn::GetAtt']?.[0];
   expect(roleRef).toBeDefined();
   const statements = Object.values(template.findResources('AWS::IAM::Policy'))
-    .filter((p) =>
-      ((p.Properties?.Roles as { Ref?: string }[] | undefined) ?? []).some(
-        (r) => r.Ref === roleRef,
-      ),
-    )
+    .filter((p) => ((p.Properties?.Roles as { Ref?: string }[] | undefined) ?? []).some((r) => r.Ref === roleRef))
     .flatMap((p) => (p.Properties?.PolicyDocument?.Statement ?? []) as { Action: unknown }[]);
-  return statements
-    .flatMap((s) => (Array.isArray(s.Action) ? s.Action : [s.Action]))
-    .filter((a): a is string => typeof a === 'string');
+  return statements.flatMap((s) => (Array.isArray(s.Action) ? s.Action : [s.Action])).filter((a): a is string => typeof a === 'string');
 }
 
 /** True when the role behind `description` has a statement granting `action` on bucket objects under `prefix`. */
-function roleGrantsOnPrefix(
-  template: Template,
-  description: string,
-  action: string,
-  prefix: string,
-): boolean {
-  const fn = Object.values(template.findResources('AWS::Lambda::Function')).find(
-    (f) => f.Properties?.Description === description,
-  );
-  const roleRef = (fn?.Properties?.Role as { 'Fn::GetAtt'?: [string, string] } | undefined)?.[
-    'Fn::GetAtt'
-  ]?.[0];
+function roleGrantsOnPrefix(template: Template, description: string, action: string, prefix: string): boolean {
+  const fn = Object.values(template.findResources('AWS::Lambda::Function')).find((f) => f.Properties?.Description === description);
+  const roleRef = (fn?.Properties?.Role as { 'Fn::GetAtt'?: [string, string] } | undefined)?.['Fn::GetAtt']?.[0];
   return Object.values(template.findResources('AWS::IAM::Policy'))
-    .filter((p) =>
-      ((p.Properties?.Roles as { Ref?: string }[] | undefined) ?? []).some(
-        (r) => r.Ref === roleRef,
-      ),
-    )
+    .filter((p) => ((p.Properties?.Roles as { Ref?: string }[] | undefined) ?? []).some((r) => r.Ref === roleRef))
     .flatMap((p) => (p.Properties?.PolicyDocument?.Statement ?? []) as Record<string, unknown>[])
     .some((stmt) => {
       const actions = Array.isArray(stmt.Action) ? stmt.Action : [stmt.Action];
-      return (
-        actions.some((a) => typeof a === 'string' && a.startsWith(action)) &&
-        JSON.stringify(stmt.Resource).includes(`/${prefix}`)
-      );
+      return actions.some((a) => typeof a === 'string' && a.startsWith(action)) && JSON.stringify(stmt.Resource).includes(`/${prefix}`);
     });
 }
 
@@ -179,13 +153,9 @@ describe('ApiConstruct', () => {
 
   it('writes nothing to the legacy attachments/outbound/* prefix — REST only presigns old links', () => {
     const template = synth();
-    expect(
-      roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'attachments/outbound/*'),
-    ).toBe(true);
+    expect(roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'attachments/outbound/*')).toBe(true);
     for (const description of [REST_DESCRIPTION, MCP_DESCRIPTION]) {
-      expect(
-        roleGrantsOnPrefix(template, description, 's3:PutObject', 'attachments/outbound/*'),
-      ).toBe(false);
+      expect(roleGrantsOnPrefix(template, description, 's3:PutObject', 'attachments/outbound/*')).toBe(false);
     }
   });
 
@@ -343,30 +313,18 @@ describe('ApiConstruct', () => {
 
   it('lets the REST handler write + presign sent-attachment copies (attachments/sent/*)', () => {
     const template = synth();
-    expect(
-      roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:PutObject', 'attachments/sent/*'),
-    ).toBe(true);
-    expect(
-      roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'attachments/sent/*'),
-    ).toBe(true);
+    expect(roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:PutObject', 'attachments/sent/*')).toBe(true);
+    expect(roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'attachments/sent/*')).toBe(true);
   });
 
   it('MCP writes sent-attachment copies, and reads sent + linked attachments only with inbound ON', () => {
     const off = synth();
-    expect(roleGrantsOnPrefix(off, MCP_DESCRIPTION, 's3:PutObject', 'attachments/sent/*')).toBe(
-      true,
-    );
-    expect(roleGrantsOnPrefix(off, MCP_DESCRIPTION, 's3:GetObject', 'attachments/sent/*')).toBe(
-      false,
-    );
+    expect(roleGrantsOnPrefix(off, MCP_DESCRIPTION, 's3:PutObject', 'attachments/sent/*')).toBe(true);
+    expect(roleGrantsOnPrefix(off, MCP_DESCRIPTION, 's3:GetObject', 'attachments/sent/*')).toBe(false);
 
     const on = synthWithInbound();
-    expect(roleGrantsOnPrefix(on, MCP_DESCRIPTION, 's3:GetObject', 'attachments/sent/*')).toBe(
-      true,
-    );
-    expect(roleGrantsOnPrefix(on, MCP_DESCRIPTION, 's3:GetObject', 'attachments/outbound/*')).toBe(
-      true,
-    );
+    expect(roleGrantsOnPrefix(on, MCP_DESCRIPTION, 's3:GetObject', 'attachments/sent/*')).toBe(true);
+    expect(roleGrantsOnPrefix(on, MCP_DESCRIPTION, 's3:GetObject', 'attachments/outbound/*')).toBe(true);
   });
 
   it('gives the authorizer the API-keys table so it can validate presented keys', () => {
@@ -400,9 +358,7 @@ describe('ApiConstruct', () => {
 
 describe('ApiConstruct custom domain (apiDomain)', () => {
   function synthWith(overrides: Partial<FreeMailConfig>): Template {
-    return Template.fromStack(
-      new FreeMailStack(new App(), 'TestStack', { config: { ...config, ...overrides } }),
-    );
+    return Template.fromStack(new FreeMailStack(new App(), 'TestStack', { config: { ...config, ...overrides } }));
   }
 
   it('always wires the custom domain — there is no generated-execute-api fallback (#47)', () => {
@@ -425,9 +381,7 @@ describe('ApiConstruct custom domain (apiDomain)', () => {
     });
     template.resourceCountIs('AWS::ApiGatewayV2::ApiMapping', 1);
     const aliasRecords = Object.values(template.findResources('AWS::Route53::RecordSet')).filter(
-      (r) =>
-        r.Properties?.Name === 'api.example.com.' &&
-        (r.Properties?.Type === 'A' || r.Properties?.Type === 'AAAA'),
+      (r) => r.Properties?.Name === 'api.example.com.' && (r.Properties?.Type === 'A' || r.Properties?.Type === 'AAAA'),
     );
     expect(aliasRecords).toHaveLength(2);
     template.hasOutput('ApiCustomDomainUrl', { Value: 'https://api.example.com' });

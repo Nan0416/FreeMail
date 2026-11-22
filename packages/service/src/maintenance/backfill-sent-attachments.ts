@@ -24,20 +24,14 @@ import { DdbEmailsDao } from '../data/ddb-emails-dao.js';
 import type { EmailsDao, GetEmailOutput, SentAttachmentDescriptor } from '../data/emails-dao.js';
 import { EmailEntity } from '../data/entities.js';
 import { S3InboundObjectStore } from '../facades/s3-inbound-object-store.js';
-import {
-  type OutboundObjectStore,
-  S3OutboundObjectStore,
-} from '../facades/s3-outbound-object-store.js';
+import { type OutboundObjectStore, S3OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import type { ParseInbound, RawMimeSource } from '../services/email-read-service.js';
 import { sentAttachmentKey } from '../services/email-service.js';
 import { parseInbound } from '../utils/inbound-parse.js';
 
 /** Sets a sent row's descriptors — only if the row exists and has none yet. */
 export interface SentAttachmentsWriter {
-  setAttachments(
-    row: { readonly id: string; readonly sentAt: string },
-    attachments: readonly SentAttachmentDescriptor[],
-  ): Promise<void>;
+  setAttachments(row: { readonly id: string; readonly sentAt: string }, attachments: readonly SentAttachmentDescriptor[]): Promise<void>;
 }
 
 export interface BackfillDeps {
@@ -51,13 +45,7 @@ export interface BackfillDeps {
   readonly log?: (line: string) => void;
 }
 
-export type BackfillOutcome =
-  | 'backfilled'
-  | 'would_backfill'
-  | 'already_recorded'
-  | 'no_attachments'
-  | 'no_archive'
-  | 'mismatch';
+export type BackfillOutcome = 'backfilled' | 'would_backfill' | 'already_recorded' | 'no_attachments' | 'no_archive' | 'mismatch';
 
 export interface BackfillReport {
   readonly scanned: number;
@@ -97,11 +85,7 @@ export async function backfillSentAttachments(deps: BackfillDeps): Promise<Backf
   return { scanned, outcomes };
 }
 
-async function backfillRow(
-  row: GetEmailOutput,
-  deps: BackfillDeps,
-  log: (line: string) => void,
-): Promise<BackfillOutcome> {
+async function backfillRow(row: GetEmailOutput, deps: BackfillDeps, log: (line: string) => void): Promise<BackfillOutcome> {
   if (row.direction !== 'sent') {
     return 'no_attachments';
   }
@@ -143,10 +127,7 @@ async function backfillRow(
   );
 
   if (parsed.parseStatus !== 'ok' || descriptors.length !== row.attachmentCount) {
-    log(
-      `${row.id}: recorded ${row.attachmentCount} attachment(s), archive yielded ` +
-        `${descriptors.length} (parse ${parsed.parseStatus}) — left untouched`,
-    );
+    log(`${row.id}: recorded ${row.attachmentCount} attachment(s), archive yielded ` + `${descriptors.length} (parse ${parsed.parseStatus}) — left untouched`);
     return 'mismatch';
   }
   const summary = descriptors.map((d) => `${d.filename} (${d.sizeBytes} B)`).join(', ');
@@ -166,10 +147,7 @@ export class DdbSentAttachmentsWriter implements SentAttachmentsWriter {
     private readonly tableName: string,
   ) {}
 
-  async setAttachments(
-    row: { readonly id: string; readonly sentAt: string },
-    attachments: readonly SentAttachmentDescriptor[],
-  ): Promise<void> {
+  async setAttachments(row: { readonly id: string; readonly sentAt: string }, attachments: readonly SentAttachmentDescriptor[]): Promise<void> {
     await this.doc.send(
       new UpdateCommand({
         TableName: this.tableName,

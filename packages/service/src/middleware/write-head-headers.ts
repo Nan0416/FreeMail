@@ -29,20 +29,12 @@ import type { OutgoingHttpHeader, OutgoingHttpHeaders } from 'node:http';
 
 type WriteHeadHeaders = OutgoingHttpHeaders | OutgoingHttpHeader[] | undefined;
 
-export const preserveWriteHeadHeaders: RequestHandler = (
-  _req: Request,
-  res: Response,
-  next: NextFunction,
-): void => {
+export const preserveWriteHeadHeaders: RequestHandler = (_req: Request, res: Response, next: NextFunction): void => {
   const writeHead = res.writeHead.bind(res);
 
   function patched(statusCode: number, headers?: WriteHeadHeaders): Response;
   function patched(statusCode: number, reason: string, headers?: WriteHeadHeaders): Response;
-  function patched(
-    statusCode: number,
-    reasonOrHeaders?: string | WriteHeadHeaders,
-    maybeHeaders?: WriteHeadHeaders,
-  ): Response {
+  function patched(statusCode: number, reasonOrHeaders?: string | WriteHeadHeaders, maybeHeaders?: WriteHeadHeaders): Response {
     const headers = typeof reasonOrHeaders === 'string' ? maybeHeaders : reasonOrHeaders;
     // Only the object form is mirrored. The raw-array form is a flat [name, value, ...]
     // list that Node writes verbatim; nothing in this service produces one.

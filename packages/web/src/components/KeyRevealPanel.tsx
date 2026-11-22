@@ -29,31 +29,17 @@ export function KeyRevealPanel(props: KeyRevealPanelProps): React.JSX.Element {
   }
 
   return (
-    <div
-      role="alertdialog"
-      aria-label="New access key"
-      className="rounded-md border border-warning/30 bg-warning-surface p-4"
-    >
+    <div role="alertdialog" aria-label="New access key" className="rounded-md border border-warning/30 bg-warning-surface p-4">
       <div className="flex items-start gap-2.5">
         <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warning" />
         <div className="min-w-0 flex-1">
           <h3 className="text-[13px] font-semibold">Copy your new access key now</h3>
-          <p className="mt-0.5 text-[13px] text-muted-foreground">
-            This is the only time it will be shown. If you lose it, revoke it and create a new one.
-          </p>
-          <code
-            data-testid="revealed-key"
-            className="mt-3 block rounded border bg-background px-3 py-2 font-mono text-xs break-all select-all"
-          >
+          <p className="mt-0.5 text-[13px] text-muted-foreground">This is the only time it will be shown. If you lose it, revoke it and create a new one.</p>
+          <code data-testid="revealed-key" className="mt-3 block rounded border bg-background px-3 py-2 font-mono text-xs break-all select-all">
             {props.apiKey}
           </code>
           <div className="mt-3 flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              className="bg-background"
-              onClick={() => void onCopy()}
-            >
+            <Button size="sm" variant="outline" className="bg-background" onClick={() => void onCopy()}>
               {copied ? <Check /> : <Copy />}
               {copied ? 'Copied to clipboard' : 'Copy'}
             </Button>
@@ -61,9 +47,7 @@ export function KeyRevealPanel(props: KeyRevealPanelProps): React.JSX.Element {
               I&apos;ve saved it
             </Button>
           </div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            Copying places the key on your operating system clipboard.
-          </p>
+          <p className="mt-2 text-xs text-muted-foreground">Copying places the key on your operating system clipboard.</p>
         </div>
       </div>
     </div>

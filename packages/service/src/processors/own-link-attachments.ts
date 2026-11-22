@@ -61,25 +61,16 @@ export class OwnLinkAttachments {
     this.linkPattern = new RegExp(`${base}/d/([A-Za-z0-9_-]+)`, 'gi');
   }
 
-  async resolveLinkedAttachments(
-    request: ResolveLinkedAttachmentsRequest,
-  ): Promise<ResolveLinkedAttachmentsResponse> {
+  async resolveLinkedAttachments(request: ResolveLinkedAttachmentsRequest): Promise<ResolveLinkedAttachmentsResponse> {
     const from = request.from.trim().toLowerCase();
-    if (
-      request.authenticatedDomain === undefined ||
-      domainOf(from) !== request.authenticatedDomain.toLowerCase()
-    ) {
+    if (request.authenticatedDomain === undefined || domainOf(from) !== request.authenticatedDomain.toLowerCase()) {
       return { attachments: [] };
     }
     const attachments: InboundAttachmentDescriptor[] = [];
     const seenKeys = new Set<string>();
     for (const token of findTokens(this.linkPattern, request.bodies)) {
       const record = await this.lookup(token);
-      if (
-        record === null ||
-        !isLinkable(record, from, request.receivedAt) ||
-        seenKeys.has(record.s3Key)
-      ) {
+      if (record === null || !isLinkable(record, from, request.receivedAt) || seenKeys.has(record.s3Key)) {
         continue;
       }
       seenKeys.add(record.s3Key);
@@ -125,13 +116,7 @@ function findTokens(pattern: RegExp, bodies: readonly (string | undefined)[]): s
 }
 
 function isLinkable(record: GetDownloadTokenOutput, from: string, receivedAt: string): boolean {
-  return (
-    !record.revoked &&
-    record.expiresAt > receivedAt &&
-    record.sender === from &&
-    (record.ownDomainRecipients?.length ?? 0) > 0 &&
-    record.s3Key.startsWith(SENT_ATTACHMENTS_PREFIX)
-  );
+  return !record.revoked && record.expiresAt > receivedAt && record.sender === from && (record.ownDomainRecipients?.length ?? 0) > 0 && record.s3Key.startsWith(SENT_ATTACHMENTS_PREFIX);
 }
 
 function domainOf(address: string): string {

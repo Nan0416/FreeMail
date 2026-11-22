@@ -1,16 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type {
-  ClaimDownloadTokenOutput,
-  CreateDownloadTokenOutput,
-  DownloadTokensDao,
-  GetDownloadTokenInput,
-  GetDownloadTokenOutput,
-} from '../../src/data/download-tokens-dao.js';
-import {
-  MAX_LINKED_ATTACHMENTS,
-  OwnLinkAttachments,
-  type ResolveLinkedAttachmentsRequest,
-} from '../../src/processors/own-link-attachments.js';
+import type { ClaimDownloadTokenOutput, CreateDownloadTokenOutput, DownloadTokensDao, GetDownloadTokenInput, GetDownloadTokenOutput } from '../../src/data/download-tokens-dao.js';
+import { MAX_LINKED_ATTACHMENTS, OwnLinkAttachments, type ResolveLinkedAttachmentsRequest } from '../../src/processors/own-link-attachments.js';
 
 const BASE = 'https://api.example.com';
 const RECEIVED_AT = '2026-10-10T00:00:00.000Z';
@@ -69,10 +59,7 @@ function link(n: number): string {
 }
 
 /** A request for a message from me@example.com that passed SES's DMARC check. */
-function request(
-  bodies: readonly (string | undefined)[],
-  over: Partial<ResolveLinkedAttachmentsRequest> = {},
-): ResolveLinkedAttachmentsRequest {
+function request(bodies: readonly (string | undefined)[], over: Partial<ResolveLinkedAttachmentsRequest> = {}): ResolveLinkedAttachmentsRequest {
   return {
     bodies,
     from: 'me@example.com',
@@ -82,10 +69,7 @@ function request(
   };
 }
 
-async function attachedKeys(
-  links: OwnLinkAttachments,
-  req: ResolveLinkedAttachmentsRequest,
-): Promise<string[]> {
+async function attachedKeys(links: OwnLinkAttachments, req: ResolveLinkedAttachmentsRequest): Promise<string[]> {
   return (await links.resolveLinkedAttachments(req)).attachments.map((a) => a.s3Key);
 }
 
@@ -156,9 +140,7 @@ describe('OwnLinkAttachments.resolve', () => {
     tokens.failToken = token(1);
     const links = new OwnLinkAttachments(tokens, BASE);
 
-    const resolved = await links.resolveLinkedAttachments(
-      request([`${link(0)} ${link(1)} ${link(2)}`]),
-    );
+    const resolved = await links.resolveLinkedAttachments(request([`${link(0)} ${link(1)} ${link(2)}`]));
 
     expect(resolved.attachments.map((a) => a.s3Key)).toEqual(['attachments/sent/e1/2']);
     expect(resolved.attachments[0]?.id).toBe('link-0');
@@ -166,9 +148,7 @@ describe('OwnLinkAttachments.resolve', () => {
 
   it('attaches a file once even when two of its tokens are linked', async () => {
     const tokens = new FakeTokens().add(record(0), record(1, { s3Key: 'attachments/sent/e1/0' }));
-    const resolved = await new OwnLinkAttachments(tokens, BASE).resolveLinkedAttachments(
-      request([`${link(0)} ${link(1)}`]),
-    );
+    const resolved = await new OwnLinkAttachments(tokens, BASE).resolveLinkedAttachments(request([`${link(0)} ${link(1)}`]));
     expect(resolved.attachments).toHaveLength(1);
   });
 });

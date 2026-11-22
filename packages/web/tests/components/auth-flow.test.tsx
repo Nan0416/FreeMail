@@ -119,9 +119,7 @@ describe('AuthGate', () => {
 
     await findShell();
     expect(screen.queryByRole('form', { name: 'Set password' })).not.toBeInTheDocument();
-    const loginCalls = fetchMock.mock.calls.filter(
-      ([url]) => new URL(String(url)).pathname === '/auth/login',
-    );
+    const loginCalls = fetchMock.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/auth/login');
     expect(loginCalls).toHaveLength(1);
   });
 
@@ -141,9 +139,7 @@ describe('AuthGate', () => {
   });
 
   it('shows an error on invalid credentials', async () => {
-    const fetchMock = vi.fn<typeof fetch>(async () =>
-      json(401, { error: 'invalid_credentials', message: 'wrong password' }),
-    );
+    const fetchMock = vi.fn<typeof fetch>(async () => json(401, { error: 'invalid_credentials', message: 'wrong password' }));
     renderGate(fetchMock);
 
     fireEvent.change(await screen.findByLabelText('Password'), {

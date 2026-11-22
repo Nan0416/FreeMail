@@ -165,8 +165,7 @@ const txtValueSchema = z
     error: 'must be printable ASCII, without " or \\',
   })
   .refine((value) => !/^v=spf1(\s|$)/i.test(value), {
-    error:
-      'must not be an SPF value: FreeMail publishes the SPF value itself, and a second "v=spf1" value breaks SPF',
+    error: 'must not be an SPF value: FreeMail publishes the SPF value itself, and a second "v=spf1" value breaks SPF',
   });
 
 const sesIdentitySchema = z
@@ -179,9 +178,7 @@ const sesIdentitySchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['extraTxtValues'],
-        message:
-          '"sesIdentity.extraTxtValues" is only valid when mode is "create" — in import mode ' +
-          'FreeMail writes no TXT record at the email domain, so add the values there yourself.',
+        message: '"sesIdentity.extraTxtValues" is only valid when mode is "create" — in import mode ' + 'FreeMail writes no TXT record at the email domain, so add the values there yourself.',
       });
     }
     // Route53 rejects a record set that lists the same value twice.
@@ -268,9 +265,7 @@ const freeMailConfigSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['inbound', 'confirmInboundMx'],
-        message:
-          '"inbound.confirmInboundMx" must be true when inbound is enabled — ' +
-          'acknowledge the MX override before enabling inbound.',
+        message: '"inbound.confirmInboundMx" must be true when inbound is enabled — ' + 'acknowledge the MX override before enabling inbound.',
       });
     }
   });
@@ -313,18 +308,14 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
     hostedZone: {
       mode: result.data.hostedZone.mode,
       zoneName: result.data.hostedZone.zoneName,
-      ...(result.data.hostedZone.hostedZoneId
-        ? { hostedZoneId: result.data.hostedZone.hostedZoneId }
-        : {}),
+      ...(result.data.hostedZone.hostedZoneId ? { hostedZoneId: result.data.hostedZone.hostedZoneId } : {}),
     },
     emailDomain: result.data.emailDomain,
     appDomain: result.data.appDomain,
     apiDomain: result.data.apiDomain,
     sesIdentity: {
       mode: result.data.sesIdentity.mode,
-      ...(result.data.sesIdentity.extraTxtValues !== undefined
-        ? { extraTxtValues: result.data.sesIdentity.extraTxtValues }
-        : {}),
+      ...(result.data.sesIdentity.extraTxtValues !== undefined ? { extraTxtValues: result.data.sesIdentity.extraTxtValues } : {}),
     },
     inbound: {
       enabled: result.data.inbound.enabled,
@@ -333,12 +324,8 @@ export function parseFreeMailConfig(input: unknown): FreeMailConfig {
     ...(result.data.attachments !== undefined
       ? {
           attachments: {
-            ...(result.data.attachments.embedMaxBytes !== undefined
-              ? { embedMaxBytes: result.data.attachments.embedMaxBytes }
-              : {}),
-            ...(result.data.attachments.embedTotalBytes !== undefined
-              ? { embedTotalBytes: result.data.attachments.embedTotalBytes }
-              : {}),
+            ...(result.data.attachments.embedMaxBytes !== undefined ? { embedMaxBytes: result.data.attachments.embedMaxBytes } : {}),
+            ...(result.data.attachments.embedTotalBytes !== undefined ? { embedTotalBytes: result.data.attachments.embedTotalBytes } : {}),
           },
         }
       : {}),
@@ -355,10 +342,7 @@ export function loadFreeMailConfig(path: string): FreeMailConfig {
   try {
     raw = readFileSync(path, 'utf8');
   } catch {
-    throw new Error(
-      `FreeMail: no config found at ${path}. Run \`npx freemail init\` to create one, ` +
-        `or copy ${CONFIG_FILENAME.replace('.json', '.template.json')} and fill it in.`,
-    );
+    throw new Error(`FreeMail: no config found at ${path}. Run \`npx freemail init\` to create one, ` + `or copy ${CONFIG_FILENAME.replace('.json', '.template.json')} and fill it in.`);
   }
 
   let json: unknown;

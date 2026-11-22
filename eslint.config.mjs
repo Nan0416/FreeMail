@@ -34,10 +34,8 @@ const RESTRICTED_SYNTAX = [
   // dependency surface is explicit. Core exports (Duration, Stack, Fn, …) have no subpath and
   // stay imported from 'aws-cdk-lib'.
   {
-    selector:
-      "ImportDeclaration[source.value='aws-cdk-lib'] > ImportSpecifier[imported.name=/^aws_|^custom_resources$/]",
-    message:
-      "Import CDK service modules from their deep subpath (e.g. `import { Table } from 'aws-cdk-lib/aws-dynamodb'`), not the `aws-cdk-lib` namespace barrel.",
+    selector: "ImportDeclaration[source.value='aws-cdk-lib'] > ImportSpecifier[imported.name=/^aws_|^custom_resources$/]",
+    message: "Import CDK service modules from their deep subpath (e.g. `import { Table } from 'aws-cdk-lib/aws-dynamodb'`), not the `aws-cdk-lib` namespace barrel.",
   },
 ];
 

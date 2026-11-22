@@ -18,15 +18,7 @@ import { Construct } from 'constructs';
 import { buildActivateHandlerSource } from '../inbound/activate-rule-set.js';
 import { SELF_CONTAINED_BUNDLING } from './bundling.js';
 
-const HANDLERS_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  '..',
-  '..',
-  '..',
-  'service',
-  'src',
-  'handlers',
-);
+const HANDLERS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'service', 'src', 'handlers');
 
 export interface InboundConstructProps {
   /** The Route53 zone that owns the email domain — the inbound MX record is written here. */
@@ -103,10 +95,7 @@ export class InboundConstruct extends Construct {
     // The parser's config requires the token lookup's env, which only linkOwnDownloads sets:
     // fail the synth rather than deploy a parser that throws on every message.
     this.node.addValidation({
-      validate: () =>
-        this.ownDownloadsLinked
-          ? []
-          : ['InboundConstruct.linkOwnDownloads(...) was never called — the parser needs it.'],
+      validate: () => (this.ownDownloadsLinked ? [] : ['InboundConstruct.linkOwnDownloads(...) was never called — the parser needs it.']),
     });
   }
 
@@ -122,11 +111,7 @@ export class InboundConstruct extends Construct {
    * treats malformed/oversized/over-limit messages as handled quarantine writes and
    * returns success, so a poison message can't spin forever.
    */
-  private wireParser(
-    mailBucket: Bucket,
-    emailsTable: Table,
-    quarantineBucket: Bucket,
-  ): NodejsFunction {
+  private wireParser(mailBucket: Bucket, emailsTable: Table, quarantineBucket: Bucket): NodejsFunction {
     const dlq = new Queue(this, 'ParserDlq', {
       retentionPeriod: Duration.days(14),
     });

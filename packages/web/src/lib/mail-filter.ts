@@ -27,17 +27,7 @@ export function applyListView(emails: readonly EmailListItem[], view: ListView):
     if (terms.length === 0) {
       return true;
     }
-    const haystack = [
-      email.subject,
-      email.snippet,
-      email.from,
-      email.fromName,
-      ...email.to,
-      ...email.cc,
-    ]
-      .filter(Boolean)
-      .join(' ')
-      .toLowerCase();
+    const haystack = [email.subject, email.snippet, email.from, email.fromName, ...email.to, ...email.cc].filter(Boolean).join(' ').toLowerCase();
     return terms.every((term) => haystack.includes(term));
   });
   // The server returns newest-first; only "oldest" needs a reorder.

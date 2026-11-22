@@ -21,13 +21,7 @@
  * public — and those gates live in the routes, not here.
  */
 import { randomBytes } from 'node:crypto';
-import {
-  DOWNLOAD_PRESIGN_TTL_SECONDS,
-  MAX_UPLOAD_BYTES,
-  UPLOAD_URL_TTL_SECONDS,
-  type CreateAttachmentUploadRequest,
-  type CreateAttachmentUploadResponse,
-} from '@freemail/shared';
+import { DOWNLOAD_PRESIGN_TTL_SECONDS, MAX_UPLOAD_BYTES, UPLOAD_URL_TTL_SECONDS, type CreateAttachmentUploadRequest, type CreateAttachmentUploadResponse } from '@freemail/shared';
 import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
 import type { AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import type { UploadStore } from '../facades/s3-upload-store.js';
@@ -77,10 +71,7 @@ export interface ResolveAttachmentDownloadPresignedUrlServiceResponse {
 export type AttachmentUploader = Pick<AttachmentService, 'createAttachmentUpload'>;
 
 /** What the public `/d/{token}` route may call — and nothing else. */
-export type AttachmentDownloadResolver = Pick<
-  AttachmentService,
-  'resolveAttachmentDownloadPresignedUrl'
->;
+export type AttachmentDownloadResolver = Pick<AttachmentService, 'resolveAttachmentDownloadPresignedUrl'>;
 
 export interface AttachmentServiceDeps {
   /** Presigns upload PUTs (`uploads/<id>`). */
@@ -114,14 +105,10 @@ export class AttachmentService {
     this.presignTtlSeconds = deps.presignTtlSeconds ?? DOWNLOAD_PRESIGN_TTL_SECONDS;
   }
 
-  async createAttachmentUpload(
-    request: CreateAttachmentUploadServiceRequest,
-  ): Promise<CreateAttachmentUploadResponse> {
+  async createAttachmentUpload(request: CreateAttachmentUploadServiceRequest): Promise<CreateAttachmentUploadResponse> {
     const filename = typeof request.filename === 'string' ? request.filename.trim() : '';
     if (filename.length === 0 || filename.length > MAX_FILENAME_CHARS) {
-      throw emailErrors.invalidRequest(
-        `"filename" must be a non-empty string of at most ${MAX_FILENAME_CHARS} characters.`,
-      );
+      throw emailErrors.invalidRequest(`"filename" must be a non-empty string of at most ${MAX_FILENAME_CHARS} characters.`);
     }
     if (encodeURIComponent(filename).length > MAX_ENCODED_FILENAME_BYTES) {
       throw emailErrors.invalidRequest('"filename" is too long — shorten it and try again.');
@@ -129,17 +116,11 @@ export class AttachmentService {
     const contentType = normalizeContentType(request.contentType);
     const sizeBytes = request.sizeBytes;
     if (!Number.isInteger(sizeBytes) || sizeBytes < 1 || sizeBytes > MAX_UPLOAD_BYTES) {
-      throw emailErrors.invalidRequest(
-        `"sizeBytes" must be a whole number of bytes from 1 to ${MAX_UPLOAD_BYTES}.`,
-      );
+      throw emailErrors.invalidRequest(`"sizeBytes" must be a whole number of bytes from 1 to ${MAX_UPLOAD_BYTES}.`);
     }
 
     const uploadId = this.generateId();
-    const uploadUrl = await this.uploads.presignPut(
-      uploadKey(uploadId),
-      { filename, contentType, sizeBytes },
-      UPLOAD_URL_TTL_SECONDS,
-    );
+    const uploadUrl = await this.uploads.presignPut(uploadKey(uploadId), { filename, contentType, sizeBytes }, UPLOAD_URL_TTL_SECONDS);
     const expiresAt = new Date(this.now().getTime() + UPLOAD_URL_TTL_SECONDS * 1000).toISOString();
     return { uploadId, uploadUrl, uploadMethod: 'PUT', expiresAt };
   }
@@ -149,9 +130,7 @@ export class AttachmentService {
    * missing, revoked, expired, or exhausted. The claim is atomic (gate + consume in one write),
    * so concurrent requests cannot exceed a configured download cap.
    */
-  async resolveAttachmentDownloadPresignedUrl(
-    request: ResolveAttachmentDownloadPresignedUrlServiceRequest,
-  ): Promise<ResolveAttachmentDownloadPresignedUrlServiceResponse | null> {
+  async resolveAttachmentDownloadPresignedUrl(request: ResolveAttachmentDownloadPresignedUrlServiceRequest): Promise<ResolveAttachmentDownloadPresignedUrlServiceResponse | null> {
     // Reject anything not shaped like a minted token BEFORE any DB call — an overlong
     // token would otherwise throw a DynamoDB ValidationException (500), breaking the
     // uniform-404 contract. Empty / invalid-char tokens fail closed here too.
@@ -180,11 +159,7 @@ function normalizeContentType(value: unknown): string {
   if (value === undefined || value === '') {
     return 'application/octet-stream';
   }
-  if (
-    typeof value !== 'string' ||
-    value.length > MAX_CONTENT_TYPE_CHARS ||
-    !CONTENT_TYPE_RE.test(value.trim())
-  ) {
+  if (typeof value !== 'string' || value.length > MAX_CONTENT_TYPE_CHARS || !CONTENT_TYPE_RE.test(value.trim())) {
     throw emailErrors.invalidRequest('"contentType" must be a MIME type such as application/pdf.');
   }
   return value.trim();

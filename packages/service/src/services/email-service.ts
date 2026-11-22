@@ -34,12 +34,7 @@ import {
 } from '@freemail/shared';
 import type { DownloadTokensDao } from '../data/download-tokens-dao.js';
 import { EmailEntity } from '../data/entities.js';
-import type {
-  CreateSentEmailInput,
-  EmailsDao,
-  GetEmailOutput,
-  UpdateSentEmailStatusInput,
-} from '../data/emails-dao.js';
+import type { CreateSentEmailInput, EmailsDao, GetEmailOutput, UpdateSentEmailStatusInput } from '../data/emails-dao.js';
 import type { MailBodyStore } from '../facades/s3-mail-body-store.js';
 import type { OutboundObjectStore } from '../facades/s3-outbound-object-store.js';
 import { appendDownloadLinks, type DownloadLink } from '../utils/attachment-links.js';
@@ -176,9 +171,7 @@ export class EmailService {
     }
     const replyTo = normalizeRecipients(request.replyTo);
     if (replyTo.length > MAX_REPLY_TO_ADDRESSES) {
-      throw emailErrors.invalidRequest(
-        `"replyTo" may list at most ${MAX_REPLY_TO_ADDRESSES} addresses.`,
-      );
+      throw emailErrors.invalidRequest(`"replyTo" may list at most ${MAX_REPLY_TO_ADDRESSES} addresses.`);
     }
     for (const address of replyTo) {
       if (!isValidEmailAddress(address)) {
@@ -204,8 +197,7 @@ export class EmailService {
     }
     const attempt = new DeliveryAttempt();
     try {
-      const thread =
-        request.inReplyTo === undefined ? undefined : await this.resolveThread(request.inReplyTo);
+      const thread = request.inReplyTo === undefined ? undefined : await this.resolveThread(request.inReplyTo);
       const message: PreparedMessage = {
         from,
         ...(fromName !== undefined ? { fromName } : {}),
@@ -242,14 +234,9 @@ export class EmailService {
    * went out under it; throws when the key belongs to a different request, or to a send that is
    * still in flight (or was interrupted mid-way — then only the Sent list can say).
    */
-  private async claimIdempotencyKey(
-    key: unknown,
-    request: SendEmailServiceRequest,
-  ): Promise<SendEmailResponse | undefined> {
+  private async claimIdempotencyKey(key: unknown, request: SendEmailServiceRequest): Promise<SendEmailResponse | undefined> {
     if (!isValidIdempotencyKey(key)) {
-      throw emailErrors.invalidRequest(
-        '"idempotencyKey" must be 1–128 characters of letters, digits, ".", "_", ":", or "-".',
-      );
+      throw emailErrors.invalidRequest('"idempotencyKey" must be 1–128 characters of letters, digits, ".", "_", ":", or "-".');
     }
     const nowMs = this.now().getTime();
     const fingerprint = requestFingerprint(request);
@@ -277,8 +264,7 @@ export class EmailService {
       return { ...claim.existing.response, replayed: true };
     }
     throw emailErrors.invalidRequest(
-      'A send with this idempotencyKey is still in progress, or was interrupted and may have ' +
-        `gone out: ${check} before sending again, and use a new key if you do.`,
+      'A send with this idempotencyKey is still in progress, or was interrupted and may have ' + `gone out: ${check} before sending again, and use a new key if you do.`,
     );
   }
 
@@ -309,10 +295,7 @@ export class EmailService {
    * it, and hand it to SES. Throws only before SES accepts the message or at the SES call itself
    * — `attempt` records which, and whether SES refused it outright — never after acceptance.
    */
-  private async deliver(
-    message: PreparedMessage,
-    attempt: DeliveryAttempt,
-  ): Promise<SendEmailResponse> {
+  private async deliver(message: PreparedMessage, attempt: DeliveryAttempt): Promise<SendEmailResponse> {
     const from = message.from;
     const fromName = message.fromName;
     const to = message.to;
@@ -344,20 +327,12 @@ export class EmailService {
     // tools can read its own uploads, but not the sent attachments. A forwarded file's come from
     // the copy just made — forwarding needs the read grants, and the copy can't vanish.
     const embed: RawMimeAttachment[] = await mapBounded(
-      attachments
-        .map((attachment, index) => ({ attachment, index }))
-        .filter((entry) => entry.attachment.embed),
+      attachments.map((attachment, index) => ({ attachment, index })).filter((entry) => entry.attachment.embed),
       S3_CONCURRENCY,
       async (entry) => ({
         filename: entry.attachment.filename,
         contentType: entry.attachment.contentType,
-        contentBase64: (
-          await this.uploads.getBytes(
-            entry.attachment.forwarded
-              ? sentAttachmentKey(id, entry.index)
-              : entry.attachment.sourceKey,
-          )
-        ).toString('base64'),
+        contentBase64: (await this.uploads.getBytes(entry.attachment.forwarded ? sentAttachmentKey(id, entry.index) : entry.attachment.sourceKey)).toString('base64'),
       }),
     );
     const links = await this.mintDownloadLinks(attachments, id, nowDate, {
@@ -380,9 +355,7 @@ export class EmailService {
       bcc,
       subject,
       ...(replyTo.length > 0 ? { replyTo } : {}),
-      ...(threadHeaders
-        ? { inReplyTo: threadHeaders.inReplyTo, references: threadHeaders.references }
-        : {}),
+      ...(threadHeaders ? { inReplyTo: threadHeaders.inReplyTo, references: threadHeaders.references } : {}),
       ...(body.text !== undefined ? { text: body.text } : {}),
       ...(body.html !== undefined ? { html: body.html } : {}),
       attachments: embed,
@@ -435,8 +408,7 @@ export class EmailService {
     let messageId: string;
     try {
       attempt.sesCalled();
-      messageId = (await this.ses.send({ from, to, cc, bcc, raw, tags: deliveryTags(id, nowDate) }))
-        .messageId;
+      messageId = (await this.ses.send({ from, to, cc, bcc, raw, tags: deliveryTags(id, nowDate) })).messageId;
     } catch (error) {
       if (refusedBySes(error)) {
         // SES refused the message: mark the archived row send_failed so the failure is visible
@@ -486,11 +458,7 @@ export class EmailService {
     try {
       await this.emailsDao.updateSentEmailStatus(update);
     } catch (error) {
-      console.error(
-        'Failed to update sent-email status',
-        { emailId: update.id, status: update.status },
-        error,
-      );
+      console.error('Failed to update sent-email status', { emailId: update.id, status: update.status }, error);
     }
   }
 
@@ -503,12 +471,7 @@ export class EmailService {
    * who sent the message and which of its recipients are this deployment's own addresses, so
    * the copy that comes back in through inbound can carry the file as a real attachment.
    */
-  private async mintDownloadLinks(
-    attachments: readonly ResolvedAttachment[],
-    emailId: string,
-    nowDate: Date,
-    parties: TokenParties,
-  ): Promise<DownloadLink[]> {
+  private async mintDownloadLinks(attachments: readonly ResolvedAttachment[], emailId: string, nowDate: Date, parties: TokenParties): Promise<DownloadLink[]> {
     const createdAt = nowDate.toISOString();
     const expiresMs = nowDate.getTime() + DOWNLOAD_TOKEN_TTL_SECONDS * 1000;
     const expiresAt = new Date(expiresMs).toISOString();
@@ -534,9 +497,7 @@ export class EmailService {
         revoked: false,
         downloadCount: 0,
         sender: parties.sender,
-        ...(parties.ownDomainRecipients.length > 0
-          ? { ownDomainRecipients: parties.ownDomainRecipients }
-          : {}),
+        ...(parties.ownDomainRecipients.length > 0 ? { ownDomainRecipients: parties.ownDomainRecipients } : {}),
       });
       links.push({
         filename: attachment.filename,
@@ -576,9 +537,7 @@ export class EmailService {
       throw emailErrors.invalidRequest('"inReplyTo" must be a message id from the mailbox list.');
     }
     if (!this.canReadMailbox) {
-      throw emailErrors.invalidRequest(
-        '"inReplyTo" needs receiving enabled on this deployment, to look up the original message.',
-      );
+      throw emailErrors.invalidRequest('"inReplyTo" needs receiving enabled on this deployment, to look up the original message.');
     }
     let row;
     try {
@@ -594,11 +553,7 @@ export class EmailService {
     }
     // Received mail: its own header. Sent mail: the id recorded when SES accepted it, or — on a
     // row from before that was recorded — derived from the SES id the same way.
-    const messageId =
-      row.messageIdHeader ??
-      (row.direction === 'sent' && row.sesMessageId !== undefined
-        ? sesMessageIdHeader(row.sesMessageId, this.sesRegion)
-        : undefined);
+    const messageId = row.messageIdHeader ?? (row.direction === 'sent' && row.sesMessageId !== undefined ? sesMessageIdHeader(row.sesMessageId, this.sesRegion) : undefined);
     if (messageId === undefined) {
       return { subject: row.subject };
     }
@@ -619,9 +574,7 @@ export class EmailService {
     }
     const domain = normalizeDomain(address.slice(address.lastIndexOf('@') + 1));
     if (!isSubdomainOrEqual(domain, this.emailDomain)) {
-      throw emailErrors.invalidSender(
-        `"${address}" is not under the configured domain (${this.emailDomain}).`,
-      );
+      throw emailErrors.invalidSender(`"${address}" is not under the configured domain (${this.emailDomain}).`);
     }
     return address;
   }
@@ -633,31 +586,21 @@ export class EmailService {
    * embedded when it is at most `embedMaxBytes` and still fits the message's remaining
    * `embedTotalBytes` — so a small file after a linked one can still be embedded.
    */
-  private async resolveAttachments(
-    refs: SendEmailServiceRequest['attachments'],
-  ): Promise<ResolvedAttachment[]> {
+  private async resolveAttachments(refs: SendEmailServiceRequest['attachments']): Promise<ResolvedAttachment[]> {
     if (refs === undefined || refs.length === 0) {
       return [];
     }
     if (!Array.isArray(refs) || refs.length > MAX_ATTACHMENTS) {
-      throw emailErrors.invalidRequest(
-        `A message may have at most ${MAX_ATTACHMENTS} attachments.`,
-      );
+      throw emailErrors.invalidRequest(`A message may have at most ${MAX_ATTACHMENTS} attachments.`);
     }
     const sources = refs.map((ref, index) => attachmentSource(ref, index));
     // Several files forwarded from one message read its row once.
     const rows = new Map<string, Promise<GetEmailOutput | null>>();
-    const files = await mapBounded(sources, S3_CONCURRENCY, (source) =>
-      source.kind === 'upload'
-        ? this.resolveUpload(source.uploadId)
-        : this.resolveStored(source, rows),
-    );
+    const files = await mapBounded(sources, S3_CONCURRENCY, (source) => (source.kind === 'upload' ? this.resolveUpload(source.uploadId) : this.resolveStored(source, rows)));
     const resolved: ResolvedAttachment[] = [];
     let embeddedBytes = 0;
     for (const file of files) {
-      const embed =
-        file.sizeBytes <= this.embedMaxBytes &&
-        embeddedBytes + file.sizeBytes <= this.embedTotalBytes;
+      const embed = file.sizeBytes <= this.embedMaxBytes && embeddedBytes + file.sizeBytes <= this.embedTotalBytes;
       if (embed) {
         embeddedBytes += file.sizeBytes;
       }
@@ -693,15 +636,10 @@ export class EmailService {
    * received message flagged as spam is refused too: forwarding sends its file out from this
    * domain in one call, which a hostile message's text could ask an agent to do.
    */
-  private async resolveStored(
-    source: StoredAttachmentRef & { readonly index: number },
-    rows: Map<string, Promise<GetEmailOutput | null>>,
-  ): Promise<Omit<ResolvedAttachment, 'embed'>> {
+  private async resolveStored(source: StoredAttachmentRef & { readonly index: number }, rows: Map<string, Promise<GetEmailOutput | null>>): Promise<Omit<ResolvedAttachment, 'embed'>> {
     const where = `"attachments[${source.index}]"`;
     if (!this.canReadMailbox) {
-      throw emailErrors.invalidRequest(
-        `${where}: forwarding a stored attachment needs receiving enabled on this deployment.`,
-      );
+      throw emailErrors.invalidRequest(`${where}: forwarding a stored attachment needs receiving enabled on this deployment.`);
     }
     let row: GetEmailOutput | null;
     try {
@@ -714,9 +652,7 @@ export class EmailService {
       row = await lookup;
     } catch (error) {
       if (error instanceof EmailError) {
-        throw emailErrors.invalidRequest(
-          `${where}: "emailId" is not a message id from the mailbox.`,
-        );
+        throw emailErrors.invalidRequest(`${where}: "emailId" is not a message id from the mailbox.`);
       }
       throw error;
     }
@@ -724,23 +660,15 @@ export class EmailService {
       throw emailErrors.invalidRequest(`${where}: "emailId" names no message in the mailbox.`);
     }
     if (row.direction === 'inbound') {
-      const exposure = decideExposure(
-        { spamVerdict: row.spamVerdict, virusVerdict: row.virusVerdict },
-        row.parseStatus,
-      );
+      const exposure = decideExposure({ spamVerdict: row.spamVerdict, virusVerdict: row.virusVerdict }, row.parseStatus);
       if (!exposure.exposeContent) {
         throw emailErrors.invalidRequest(`${where}: that message has no attachments to forward.`);
       }
       if (row.quarantined) {
-        throw emailErrors.invalidRequest(
-          `${where}: that message was flagged as spam, so its attachments are not forwarded. ` +
-            "Sending such a file on is the mailbox owner's decision.",
-        );
+        throw emailErrors.invalidRequest(`${where}: that message was flagged as spam, so its attachments are not forwarded. ` + "Sending such a file on is the mailbox owner's decision.");
       }
     }
-    const descriptor = (
-      row.direction === 'inbound' ? row.attachments : (row.attachments ?? [])
-    ).find((candidate) => candidate.id === source.attachmentId);
+    const descriptor = (row.direction === 'inbound' ? row.attachments : (row.attachments ?? [])).find((candidate) => candidate.id === source.attachmentId);
     if (descriptor === undefined) {
       throw emailErrors.invalidRequest(`${where}: that message has no such attachment.`);
     }
@@ -829,26 +757,17 @@ function uploadNotFound(uploadId: string): string {
 }
 
 /** One attachment reference, checked for shape: an upload, or a stored message's attachment. */
-type AttachmentSource =
-  | { readonly kind: 'upload'; readonly uploadId: string }
-  | (StoredAttachmentRef & { readonly kind: 'stored'; readonly index: number });
+type AttachmentSource = { readonly kind: 'upload'; readonly uploadId: string } | (StoredAttachmentRef & { readonly kind: 'stored'; readonly index: number });
 
 function attachmentSource(ref: unknown, index: number): AttachmentSource {
   const record = (typeof ref === 'object' && ref !== null ? ref : {}) as Record<string, unknown>;
   if ('uploadId' in record) {
     if (!isValidUploadId(record.uploadId)) {
-      throw emailErrors.invalidRequest(
-        `"attachments[${index}].uploadId" must be the id of an attachment upload.`,
-      );
+      throw emailErrors.invalidRequest(`"attachments[${index}].uploadId" must be the id of an attachment upload.`);
     }
     return { kind: 'upload', uploadId: record.uploadId };
   }
-  if (
-    typeof record.emailId === 'string' &&
-    record.emailId.length > 0 &&
-    typeof record.attachmentId === 'string' &&
-    record.attachmentId.length > 0
-  ) {
+  if (typeof record.emailId === 'string' && record.emailId.length > 0 && typeof record.attachmentId === 'string' && record.attachmentId.length > 0) {
     return {
       kind: 'stored',
       index,
@@ -856,9 +775,7 @@ function attachmentSource(ref: unknown, index: number): AttachmentSource {
       attachmentId: record.attachmentId,
     };
   }
-  throw emailErrors.invalidRequest(
-    `"attachments[${index}]" must be { "uploadId" } or { "emailId", "attachmentId" }.`,
-  );
+  throw emailErrors.invalidRequest(`"attachments[${index}]" must be { "uploadId" } or { "emailId", "attachmentId" }.`);
 }
 
 /** Who a sent message's download tokens record: its sender and its own-domain recipients. */

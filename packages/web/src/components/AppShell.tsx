@@ -35,9 +35,7 @@ interface FolderSpec {
 }
 
 // The editor (Tiptap/ProseMirror) is most of the bundle; load it on first compose.
-const ComposeWindow = lazy(() =>
-  import('./ComposeWindow.js').then((m) => ({ default: m.ComposeWindow })),
-);
+const ComposeWindow = lazy(() => import('./ComposeWindow.js').then((m) => ({ default: m.ComposeWindow })));
 
 const MAIL_FOLDERS: Partial<Record<FolderId, FolderSpec>> = {
   inbox: { title: 'Inbox', direction: 'inbound', emptyMessage: 'Your inbox is empty.' },
@@ -87,10 +85,7 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
 
   const spec = MAIL_FOLDERS[folder];
   const mailbox = useMailbox(spec?.direction, spec !== undefined);
-  const visible = useMemo(
-    () => (mailbox.state.status === 'ready' ? applyListView(mailbox.state.emails, view) : []),
-    [mailbox.state, view],
-  );
+  const visible = useMemo(() => (mailbox.state.status === 'ready' ? applyListView(mailbox.state.emails, view) : []), [mailbox.state, view]);
 
   const selectFolder = useCallback((next: FolderId) => {
     setFolder(next);
@@ -245,10 +240,7 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
         case 'f':
           if (k.openEmail) {
             handled();
-            k.reply(
-              k.openEmail,
-              event.key === 'r' ? 'reply' : event.key === 'a' ? 'replyAll' : 'forward',
-            );
+            k.reply(k.openEmail, event.key === 'r' ? 'reply' : event.key === 'a' ? 'replyAll' : 'forward');
           }
           break;
       }
@@ -285,26 +277,13 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
 
       {folder === 'mcp' ? (
         <main className="min-w-0 flex-1">
-          <McpServerView
-            onOpenNav={() => setNavOpen(true)}
-            inboundEnabled={props.inboundEnabled ?? false}
-          />
+          <McpServerView onOpenNav={() => setNavOpen(true)} inboundEnabled={props.inboundEnabled ?? false} />
         </main>
       ) : (
         <>
-          <div
-            className={cn(
-              'w-full shrink-0 border-r md:w-[340px] xl:w-[400px]',
-              readerOpen && 'max-md:hidden',
-            )}
-          >
+          <div className={cn('w-full shrink-0 border-r md:w-[340px] xl:w-[400px]', readerOpen && 'max-md:hidden')}>
             {folder === 'drafts' ? (
-              <DraftList
-                drafts={drafts}
-                onOpen={openDraft}
-                onDiscard={discardDraft}
-                onOpenNav={() => setNavOpen(true)}
-              />
+              <DraftList drafts={drafts} onOpen={openDraft} onDiscard={discardDraft} onOpenNav={() => setNavOpen(true)} />
             ) : (
               spec && (
                 <MessageList
@@ -367,9 +346,7 @@ function NothingSelected(props: { drafts: boolean }): React.JSX.Element {
   return (
     <div className="flex h-full flex-col items-center justify-center bg-sidebar/50 px-6 text-center">
       <MailOpen className="size-10 text-muted-foreground/40" strokeWidth={1.25} />
-      <p className="mt-3 text-[13px] text-muted-foreground">
-        {props.drafts ? 'Select a draft to keep writing.' : 'Select a message to read it.'}
-      </p>
+      <p className="mt-3 text-[13px] text-muted-foreground">{props.drafts ? 'Select a draft to keep writing.' : 'Select a message to read it.'}</p>
       {!props.drafts && (
         <p className="mt-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 text-xs text-muted-foreground/90">
           <span className="flex items-center gap-1">

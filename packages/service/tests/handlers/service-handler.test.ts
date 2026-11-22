@@ -1,8 +1,4 @@
-import type {
-  APIGatewayProxyEventV2,
-  APIGatewayProxyStructuredResultV2,
-  Context,
-} from 'aws-lambda';
+import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emailErrors } from '../../src/utils/errors.js';
 import { authErrors } from '../../src/utils/errors.js';
@@ -212,29 +208,25 @@ describe('rest handler — the Express routes match the CDK route table', () => 
   // Two declarations of the same table, in two syntaxes (`{id}` vs `:id`). Anything that
   // reaches the terminal 404 handler is a route API Gateway would forward and Express
   // would drop.
-  it.each(ROUTES.map(([routeKey]) => routeKey))(
-    'routes %s to a handler, not the 404',
-    async (routeKey) => {
-      keysMocks.create.mockResolvedValue({ id: 'k', name: null, createdAt: 'now', key: 'raw' });
-      keysMocks.list.mockResolvedValue({ keys: [] });
-      keysMocks.revoke.mockResolvedValue(undefined);
-      readMocks.listEmails.mockResolvedValue({ emails: [] });
-      readMocks.getEmail.mockResolvedValue({ id: 'h', direction: 'inbound' });
-      readMocks.getAttachmentUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
-      readMocks.getRawUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
-      attachmentMocks.resolveAttachmentDownloadPresignedUrl.mockResolvedValue(null);
-      authMocks.refresh.mockResolvedValue(TOKEN_PAIR);
+  it.each(ROUTES.map(([routeKey]) => routeKey))('routes %s to a handler, not the 404', async (routeKey) => {
+    keysMocks.create.mockResolvedValue({ id: 'k', name: null, createdAt: 'now', key: 'raw' });
+    keysMocks.list.mockResolvedValue({ keys: [] });
+    keysMocks.revoke.mockResolvedValue(undefined);
+    readMocks.listEmails.mockResolvedValue({ emails: [] });
+    readMocks.getEmail.mockResolvedValue({ id: 'h', direction: 'inbound' });
+    readMocks.getAttachmentUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
+    readMocks.getRawUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
+    attachmentMocks.resolveAttachmentDownloadPresignedUrl.mockResolvedValue(null);
+    authMocks.refresh.mockResolvedValue(TOKEN_PAIR);
 
-      const res = await invoke(routeKey, {
-        lambda: lambdaContext('access'),
-        body:
-          routeKey === 'POST /auth/login' ? { password: 'a-password' } : { from: 'me@example.com' },
-        cookies: [`${REFRESH_COOKIE}=RT`],
-      });
+    const res = await invoke(routeKey, {
+      lambda: lambdaContext('access'),
+      body: routeKey === 'POST /auth/login' ? { password: 'a-password' } : { from: 'me@example.com' },
+      cookies: [`${REFRESH_COOKIE}=RT`],
+    });
 
-      expect(reachedTerminal404(res)).toBe(false);
-    },
-  );
+    expect(reachedTerminal404(res)).toBe(false);
+  });
 });
 
 /**
@@ -251,14 +243,11 @@ function reachedTerminal404(res: APIGatewayProxyStructuredResultV2): boolean {
 }
 
 describe('rest handler — key-management is access-token-only', () => {
-  it.each(['POST /keys', 'GET /keys', 'DELETE /keys/{id}'])(
-    'rejects an x-api-key credential on %s with 403 forbidden',
-    async (routeKey) => {
-      const res = await invoke(routeKey, { lambda: lambdaContext('apiKey') });
-      expect(res.statusCode).toBe(403);
-      expect(JSON.parse(res.body ?? '{}').error).toBe('forbidden');
-    },
-  );
+  it.each(['POST /keys', 'GET /keys', 'DELETE /keys/{id}'])('rejects an x-api-key credential on %s with 403 forbidden', async (routeKey) => {
+    const res = await invoke(routeKey, { lambda: lambdaContext('apiKey') });
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.body ?? '{}').error).toBe('forbidden');
+  });
 
   it('also rejects a missing scheme (fails closed)', async () => {
     const res = await invoke('POST /keys', { lambda: lambdaContext(undefined) });
@@ -274,22 +263,19 @@ describe('rest handler — key-management is access-token-only', () => {
 });
 
 describe('rest handler — send email is dual-scheme', () => {
-  it.each(['access', 'apiKey'])(
-    'lets a %s credential send (no access-only guard)',
-    async (scheme) => {
-      const res = await invoke('POST /emails', {
-        lambda: lambdaContext(scheme),
-        body: { from: 'me@example.com', to: ['x@y.com'], text: 'hi' },
-      });
-      expect(res.statusCode).toBe(200);
-      expect(JSON.parse(res.body ?? '{}')).toMatchObject({ messageId: 'ses-1' });
-      expect(sendMock).toHaveBeenCalledWith({
-        from: 'me@example.com',
-        to: ['x@y.com'],
-        text: 'hi',
-      });
-    },
-  );
+  it.each(['access', 'apiKey'])('lets a %s credential send (no access-only guard)', async (scheme) => {
+    const res = await invoke('POST /emails', {
+      lambda: lambdaContext(scheme),
+      body: { from: 'me@example.com', to: ['x@y.com'], text: 'hi' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body ?? '{}')).toMatchObject({ messageId: 'ses-1' });
+    expect(sendMock).toHaveBeenCalledWith({
+      from: 'me@example.com',
+      to: ['x@y.com'],
+      text: 'hi',
+    });
+  });
 });
 
 describe('rest handler — send passes reply fields through', () => {
@@ -363,9 +349,7 @@ describe('rest handler — send passes reply fields through', () => {
 
 describe('rest handler — key management reaches the API-key service', () => {
   it('creates a key: POST /keys → 201, createApiKey called with the name', async () => {
-    keysMocks.create
-      .mockReset()
-      .mockResolvedValue({ id: 'k1', name: 'ci', createdAt: 'now', key: 'fm_raw' });
+    keysMocks.create.mockReset().mockResolvedValue({ id: 'k1', name: 'ci', createdAt: 'now', key: 'fm_raw' });
     const res = await invoke('POST /keys', {
       lambda: lambdaContext('access'),
       body: { name: 'ci' },
@@ -424,12 +408,7 @@ describe('rest handler — reads are access-token-only', () => {
     readMocks.getRawUrl.mockReset().mockResolvedValue({ url: 'u', expiresAt: 't' });
   });
 
-  it.each([
-    'GET /emails',
-    'GET /emails/{id}',
-    'GET /emails/{id}/attachments/{attachmentId}',
-    'GET /emails/{id}/raw',
-  ])('rejects an x-api-key credential on %s with 403 forbidden', async (routeKey) => {
+  it.each(['GET /emails', 'GET /emails/{id}', 'GET /emails/{id}/attachments/{attachmentId}', 'GET /emails/{id}/raw'])('rejects an x-api-key credential on %s with 403 forbidden', async (routeKey) => {
     const res = await invoke(routeKey, { contentType: null, lambda: lambdaContext('apiKey') });
     expect(res.statusCode).toBe(403);
     expect(JSON.parse(res.body ?? '{}').error).toBe('forbidden');
@@ -490,12 +469,7 @@ describe('rest handler — reads are access-token-only', () => {
   });
 
   it('rejects a bad direction / non-positive-integer limit with 400', async () => {
-    for (const query of [
-      { direction: 'bogus' },
-      { limit: 'abc' },
-      { limit: '0' },
-      { limit: '-3' },
-    ]) {
+    for (const query of [{ direction: 'bogus' }, { limit: 'abc' }, { limit: '0' }, { limit: '-3' }]) {
       const res = await invoke('GET /emails', {
         contentType: null,
         lambda: lambdaContext('access'),
@@ -556,37 +530,22 @@ describe('rest handler — #47 Layer 3: state-changing routes require applicatio
   const gated = [...JSON_REQUIRED_ROUTES];
 
   it('gates exactly the documented six routes', () => {
-    expect(gated.sort()).toEqual(
-      [
-        'POST /auth/login',
-        'POST /auth/logout',
-        'POST /auth/refresh',
-        'POST /emails',
-        'POST /keys',
-        'POST /attachments/uploads',
-      ].sort(),
-    );
+    expect(gated.sort()).toEqual(['POST /auth/login', 'POST /auth/logout', 'POST /auth/refresh', 'POST /emails', 'POST /keys', 'POST /attachments/uploads'].sort());
   });
 
-  it.each(gated)(
-    'rejects %s with 415 when the content type is a simple-request type',
-    async (routeKey) => {
-      const res = await invoke(routeKey, {
-        contentType: 'application/x-www-form-urlencoded',
-        lambda: lambdaContext('access'),
-      });
-      expect(res.statusCode).toBe(415);
-      expect(JSON.parse(res.body ?? '{}').error).toBe('unsupported_media_type');
-    },
-  );
+  it.each(gated)('rejects %s with 415 when the content type is a simple-request type', async (routeKey) => {
+    const res = await invoke(routeKey, {
+      contentType: 'application/x-www-form-urlencoded',
+      lambda: lambdaContext('access'),
+    });
+    expect(res.statusCode).toBe(415);
+    expect(JSON.parse(res.body ?? '{}').error).toBe('unsupported_media_type');
+  });
 
-  it.each(gated)(
-    'rejects %s with 415 when the content-type header is absent entirely',
-    async (routeKey) => {
-      const res = await invoke(routeKey, { contentType: null, lambda: lambdaContext('access') });
-      expect(res.statusCode).toBe(415);
-    },
-  );
+  it.each(gated)('rejects %s with 415 when the content-type header is absent entirely', async (routeKey) => {
+    const res = await invoke(routeKey, { contentType: null, lambda: lambdaContext('access') });
+    expect(res.statusCode).toBe(415);
+  });
 
   it('rejects refresh BEFORE rotating or clearing any cookie', async () => {
     // The whole point of gating a bodyless cookie-only POST: a same-site sibling

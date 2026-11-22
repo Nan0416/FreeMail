@@ -1,9 +1,4 @@
-import {
-  GetCommand,
-  PutCommand,
-  UpdateCommand,
-  DynamoDBDocumentClient,
-} from '@aws-sdk/lib-dynamodb';
+import { GetCommand, PutCommand, UpdateCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { describe, expect, it } from 'vitest';
 import { DdbDownloadTokensDao } from '../../src/data/ddb-download-tokens-dao.js';
 import type { ClaimDownloadTokenOutput } from '../../src/data/download-tokens-dao.js';
@@ -36,9 +31,7 @@ class FakeDoc {
   readonly store = new Map<string, Record<string, unknown>>();
   readonly updateInputs: UpdateCommand['input'][] = [];
 
-  send(
-    command: GetCommand | PutCommand | UpdateCommand,
-  ): Promise<{ Attributes?: Record<string, unknown>; Item?: Record<string, unknown> }> {
+  send(command: GetCommand | PutCommand | UpdateCommand): Promise<{ Attributes?: Record<string, unknown>; Item?: Record<string, unknown> }> {
     if (command instanceof GetCommand) {
       const item = this.store.get(String(command.input.Key?.token));
       return Promise.resolve(item ? { Item: { ...item } } : {});
@@ -46,10 +39,7 @@ class FakeDoc {
     if (command instanceof PutCommand) {
       const item = command.input.Item as Record<string, unknown>;
       const key = String(item.token);
-      if (
-        command.input.ConditionExpression?.includes('attribute_not_exists') &&
-        this.store.has(key)
-      ) {
+      if (command.input.ConditionExpression?.includes('attribute_not_exists') && this.store.has(key)) {
         return Promise.reject(conditionalCheckFailed());
       }
       this.store.set(key, item);
@@ -61,11 +51,7 @@ class FakeDoc {
     const item = this.store.get(key);
     const values = command.input.ExpressionAttributeValues ?? {};
     const now = String(values[':now']);
-    const passes =
-      !!item &&
-      item.revoked === false &&
-      String(item.expiresAt) > now &&
-      (item.maxDownloads === undefined || Number(item.downloadCount) < Number(item.maxDownloads));
+    const passes = !!item && item.revoked === false && String(item.expiresAt) > now && (item.maxDownloads === undefined || Number(item.downloadCount) < Number(item.maxDownloads));
     if (!passes || !item) {
       return Promise.reject(conditionalCheckFailed());
     }
@@ -127,13 +113,9 @@ describe('DdbDownloadTokensDao — sender + own-domain recipients', () => {
   it('stores and reads back who sent the message and its own-domain recipients', async () => {
     const doc = new FakeDoc();
     const dao = new DdbDownloadTokensDao(asDocClient(doc), 'tokens');
-    await dao.createDownloadToken(
-      record({ sender: 'me@example.com', ownDomainRecipients: ['team@example.com'] }),
-    );
+    await dao.createDownloadToken(record({ sender: 'me@example.com', ownDomainRecipients: ['team@example.com'] }));
 
-    expect(await dao.getDownloadToken({ token: 'tok-1' })).toEqual(
-      record({ sender: 'me@example.com', ownDomainRecipients: ['team@example.com'] }),
-    );
+    expect(await dao.getDownloadToken({ token: 'tok-1' })).toEqual(record({ sender: 'me@example.com', ownDomainRecipients: ['team@example.com'] }));
   });
 
   it('omits an empty recipient list, and a token without either field reads back without them', async () => {

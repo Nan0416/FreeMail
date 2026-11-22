@@ -1,22 +1,12 @@
 import { Readable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import type { InboundAttachmentDescriptor } from '../../src/data/emails-dao.js';
-import {
-  parseInbound,
-  type AttachmentSink,
-  type ParseLimits,
-} from '../../src/utils/inbound-parse.js';
+import { parseInbound, type AttachmentSink, type ParseLimits } from '../../src/utils/inbound-parse.js';
 
 /** Records what the parser asked to store — the S3 write is faked. */
 class FakeSink implements AttachmentSink {
-  readonly stored: { partIndex: number; filename?: string; contentType: string; size: number }[] =
-    [];
-  store(
-    partIndex: number,
-    filename: string | undefined,
-    contentType: string,
-    bytes: Buffer,
-  ): Promise<InboundAttachmentDescriptor> {
+  readonly stored: { partIndex: number; filename?: string; contentType: string; size: number }[] = [];
+  store(partIndex: number, filename: string | undefined, contentType: string, bytes: Buffer): Promise<InboundAttachmentDescriptor> {
     this.stored.push({ partIndex, filename, contentType, size: bytes.length });
     return Promise.resolve({
       id: String(partIndex),
@@ -100,16 +90,7 @@ describe('parseInbound — clean text', () => {
 describe('parseInbound — html only', () => {
   it('retains the html body for the snippet path', async () => {
     const p = await parseInbound(
-      mime([
-        'X-SES-Spam-Verdict: PASS',
-        'X-SES-Virus-Verdict: PASS',
-        'From: a@x.com',
-        'Subject: HTML',
-        'Content-Type: text/html; charset=utf-8',
-        '',
-        '<p>Hello <b>world</b></p>',
-        '',
-      ]),
+      mime(['X-SES-Spam-Verdict: PASS', 'X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Subject: HTML', 'Content-Type: text/html; charset=utf-8', '', '<p>Hello <b>world</b></p>', '']),
       new FakeSink(),
     );
     expect(p.exposed).toBe(true);
@@ -142,18 +123,7 @@ describe('parseInbound — attachments', () => {
 
   it('does NOT expose when the virus verdict is absent (no affirmative PASS)', async () => {
     const sink = new FakeSink();
-    const p = await parseInbound(
-      mime([
-        'X-SES-Spam-Verdict: PASS',
-        'From: a@x.com',
-        'Subject: no virus header',
-        'Content-Type: text/plain',
-        '',
-        'body',
-        '',
-      ]),
-      sink,
-    );
+    const p = await parseInbound(mime(['X-SES-Spam-Verdict: PASS', 'From: a@x.com', 'Subject: no virus header', 'Content-Type: text/plain', '', 'body', '']), sink);
     expect(p.verdicts.virusVerdict).toBe('ABSENT');
     expect(p.exposed).toBe(false);
   });
@@ -236,23 +206,14 @@ describe('parseInbound — limits', () => {
   });
 
   it('limit_exceeded on total extracted bytes across attachments', async () => {
-    const p = await parseInbound(
-      mime(attachmentMessage('PASS')),
-      new FakeSink(),
-      looseLimits({ maxAttachmentTotalBytes: 4 }),
-    );
+    const p = await parseInbound(mime(attachmentMessage('PASS')), new FakeSink(), looseLimits({ maxAttachmentTotalBytes: 4 }));
     expect(p.parseStatus).toBe('limit_exceeded');
   });
 
   it('limit_exceeded on more than maxChildNodes REAL nodes (non-attachment text parts)', async () => {
     // Six text/plain child nodes (which MailParser aggregates into ONE event) — the
     // mailsplit Splitter counts REAL nodes, so this breaches where event-counting missed it.
-    const many = [
-      'X-SES-Virus-Verdict: PASS',
-      'From: a@x.com',
-      'Content-Type: multipart/mixed; boundary="B"',
-      '',
-    ];
+    const many = ['X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Content-Type: multipart/mixed; boundary="B"', ''];
     for (let i = 0; i < 6; i++) {
       many.push('--B', 'Content-Type: text/plain', '', `part ${i}`);
     }
@@ -265,18 +226,7 @@ describe('parseInbound — limits', () => {
   it('does NOT count `-- ` signature / `--foo` body lines as boundaries (no false quarantine)', async () => {
     // The old `--`-line heuristic would have quarantined this; real node counting does not.
     const p = await parseInbound(
-      mime([
-        'X-SES-Virus-Verdict: PASS',
-        'From: a@x.com',
-        'Content-Type: text/plain',
-        '',
-        'Hello there',
-        '-- ',
-        'My Signature',
-        '--foo this is not a boundary',
-        'more --bar --baz text',
-        '',
-      ]),
+      mime(['X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Content-Type: text/plain', '', 'Hello there', '-- ', 'My Signature', '--foo this is not a boundary', 'more --bar --baz text', '']),
       new FakeSink(),
       looseLimits({ maxChildNodes: 2 }), // low cap — a heuristic would trip; real counting won't
     );
@@ -286,26 +236,14 @@ describe('parseInbound — limits', () => {
   });
 
   it('limit_exceeded on an oversized per-node header block (maxHeadSize)', async () => {
-    const bigHeader =
-      'X-SES-Virus-Verdict: PASS\r\nX-Filler: ' + 'a'.repeat(64 * 1024) + '\r\n\r\nbody';
-    const p = await parseInbound(
-      mime([bigHeader]),
-      new FakeSink(),
-      looseLimits({ maxHeadSize: 8 * 1024 }),
-    );
+    const bigHeader = 'X-SES-Virus-Verdict: PASS\r\nX-Filler: ' + 'a'.repeat(64 * 1024) + '\r\n\r\nbody';
+    const p = await parseInbound(mime([bigHeader]), new FakeSink(), looseLimits({ maxHeadSize: 8 * 1024 }));
     expect(p.parseStatus).toBe('limit_exceeded');
   });
 
   it('limit_exceeded on total raw bytes over the cap (HEAD/GET-race defence)', async () => {
     const p = await parseInbound(
-      mime([
-        'X-SES-Virus-Verdict: PASS',
-        'From: a@x.com',
-        'Content-Type: text/plain',
-        '',
-        'z'.repeat(40 * 1024),
-        '',
-      ]),
+      mime(['X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Content-Type: text/plain', '', 'z'.repeat(40 * 1024), '']),
       new FakeSink(),
       looseLimits({ maxRawBytes: 8 * 1024 }),
     );
@@ -315,14 +253,7 @@ describe('parseInbound — limits', () => {
 
   it('limit_exceeded on an oversized plain-text body', async () => {
     const p = await parseInbound(
-      mime([
-        'X-SES-Virus-Verdict: PASS',
-        'From: a@x.com',
-        'Content-Type: text/plain',
-        '',
-        'x'.repeat(20 * 1024),
-        '',
-      ]),
+      mime(['X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Content-Type: text/plain', '', 'x'.repeat(20 * 1024), '']),
       new FakeSink(),
       looseLimits({ maxTextBodyBytes: 4 * 1024 }),
     );
@@ -332,21 +263,12 @@ describe('parseInbound — limits', () => {
 
   it('limit_exceeded on CUMULATIVE text body across many under-per-node-cap parts', async () => {
     // Four text/plain parts, each 4 KB (under the 6 KB per-node cap), total 16 KB > 10 KB budget.
-    const parts = [
-      'X-SES-Virus-Verdict: PASS',
-      'From: a@x.com',
-      'Content-Type: multipart/mixed; boundary="B"',
-      '',
-    ];
+    const parts = ['X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Content-Type: multipart/mixed; boundary="B"', ''];
     for (let i = 0; i < 4; i++) {
       parts.push('--B', 'Content-Type: text/plain', '', 'p'.repeat(4 * 1024));
     }
     parts.push('--B--', '');
-    const p = await parseInbound(
-      mime(parts),
-      new FakeSink(),
-      looseLimits({ maxTextBodyBytes: 6 * 1024, maxTotalBodyBytes: 10 * 1024, maxChildNodes: 50 }),
-    );
+    const p = await parseInbound(mime(parts), new FakeSink(), looseLimits({ maxTextBodyBytes: 6 * 1024, maxTotalBodyBytes: 10 * 1024, maxChildNodes: 50 }));
     expect(p.parseStatus).toBe('limit_exceeded'); // cumulative budget, not any single node
     expect(p.exposed).toBe(false);
   });
@@ -384,14 +306,7 @@ describe('parseInbound — limits', () => {
 
   it('limit_exceeded on an oversized HTML body', async () => {
     const p = await parseInbound(
-      mime([
-        'X-SES-Virus-Verdict: PASS',
-        'From: a@x.com',
-        'Content-Type: text/html',
-        '',
-        '<p>' + 'a'.repeat(20 * 1024) + '</p>',
-        '',
-      ]),
+      mime(['X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Content-Type: text/html', '', '<p>' + 'a'.repeat(20 * 1024) + '</p>', '']),
       new FakeSink(),
       looseLimits({ maxHtmlBodyBytes: 4 * 1024 }),
     );
@@ -402,14 +317,7 @@ describe('parseInbound — limits', () => {
   it('retains only a snippet-sized slice of an under-cap body — never the full body', async () => {
     // Body is under the quarantine cap but far larger than we need for a snippet.
     const p = await parseInbound(
-      mime([
-        'X-SES-Virus-Verdict: PASS',
-        'From: a@x.com',
-        'Content-Type: text/plain',
-        '',
-        'y'.repeat(50 * 1024),
-        '',
-      ]),
+      mime(['X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Content-Type: text/plain', '', 'y'.repeat(50 * 1024), '']),
       new FakeSink(),
       looseLimits({ maxTextBodyBytes: 1024 * 1024, maxRetainedBodyChars: 100 }),
     );
@@ -421,28 +329,14 @@ describe('parseInbound — limits', () => {
 
 describe('parseInbound — hostile / degenerate input', () => {
   it('does not throw on non-MIME garbage — produces a bounded record', async () => {
-    const p = await parseInbound(
-      mime(['this is not a real email', '', 'just some bytes', '']),
-      new FakeSink(),
-    );
+    const p = await parseInbound(mime(['this is not a real email', '', 'just some bytes', '']), new FakeSink());
     expect(['ok', 'parse_failed']).toContain(p.parseStatus);
     expect(typeof p.from).toBe('string');
     expect(Array.isArray(p.to)).toBe(true);
   });
 
   it('keeps an attacker Date as display-only (does not fail), preserving the raw value', async () => {
-    const p = await parseInbound(
-      mime([
-        'X-SES-Virus-Verdict: PASS',
-        'From: a@x.com',
-        'Date: Fri, 01 Jan 2100 00:00:00 +0000',
-        'Content-Type: text/plain',
-        '',
-        'body',
-        '',
-      ]),
-      new FakeSink(),
-    );
+    const p = await parseInbound(mime(['X-SES-Virus-Verdict: PASS', 'From: a@x.com', 'Date: Fri, 01 Jan 2100 00:00:00 +0000', 'Content-Type: text/plain', '', 'body', '']), new FakeSink());
     expect(p.headerDate).toBe('2100-01-01T00:00:00.000Z');
   });
 
@@ -472,14 +366,7 @@ describe('parseInbound threading headers', () => {
 
   it('captures Message-ID, References, and Reply-To', async () => {
     const parsed = await parseInbound(
-      mime(
-        withHeaders([
-          'Message-ID: <CAHAHw2P5@mail.gmail.com>',
-          'References: <root@x.com>',
-          ' <mid@x.com>',
-          'Reply-To: Desk <desk@x.com>, other@x.com',
-        ]),
-      ),
+      mime(withHeaders(['Message-ID: <CAHAHw2P5@mail.gmail.com>', 'References: <root@x.com>', ' <mid@x.com>', 'Reply-To: Desk <desk@x.com>, other@x.com'])),
       new FakeSink(),
       looseLimits(),
     );
@@ -490,33 +377,21 @@ describe('parseInbound threading headers', () => {
   });
 
   it('drops a malformed Message-ID and malformed References tokens', async () => {
-    const parsed = await parseInbound(
-      mime(withHeaders(['Message-ID: <has space@x.com>', 'References: <ok@x.com> <bad<id@x.com>'])),
-      new FakeSink(),
-      looseLimits(),
-    );
+    const parsed = await parseInbound(mime(withHeaders(['Message-ID: <has space@x.com>', 'References: <ok@x.com> <bad<id@x.com>'])), new FakeSink(), looseLimits());
 
     expect(parsed.messageIdHeader).toBeUndefined();
     expect(parsed.references).toEqual(['<ok@x.com>']);
   });
 
   it('drops a Message-ID that decodes to a header injection', async () => {
-    const parsed = await parseInbound(
-      mime(withHeaders(['Message-ID: =?utf-8?q?<a@x.com>=0D=0ABcc:_victim@evil.test?='])),
-      new FakeSink(),
-      looseLimits(),
-    );
+    const parsed = await parseInbound(mime(withHeaders(['Message-ID: =?utf-8?q?<a@x.com>=0D=0ABcc:_victim@evil.test?='])), new FakeSink(), looseLimits());
 
     expect(parsed.messageIdHeader).toBeUndefined();
   });
 
   it('keeps at most 10 Reply-To addresses', async () => {
     const many = Array.from({ length: 15 }, (_v, i) => `r${i}@x.com`).join(', ');
-    const parsed = await parseInbound(
-      mime(withHeaders([`Reply-To: ${many}`])),
-      new FakeSink(),
-      looseLimits(),
-    );
+    const parsed = await parseInbound(mime(withHeaders([`Reply-To: ${many}`])), new FakeSink(), looseLimits());
 
     expect(parsed.replyTo).toHaveLength(10);
     expect(parsed.replyTo[0]).toBe('r0@x.com');

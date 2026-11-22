@@ -2,11 +2,7 @@
  * Map over `items` with at most `limit` calls in flight, results in input order. The first
  * rejection rejects the map and stops new calls from starting (ones already running finish).
  */
-export async function mapBounded<T, R>(
-  items: readonly T[],
-  limit: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
+export async function mapBounded<T, R>(items: readonly T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array<R>(items.length);
   let next = 0;
   let failed = false;
@@ -22,9 +18,7 @@ export async function mapBounded<T, R>(
       }
     }
   }
-  const workers = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, () =>
-    worker(),
-  );
+  const workers = Array.from({ length: Math.min(Math.max(1, limit), items.length) }, () => worker());
   await Promise.all(workers);
   return results;
 }

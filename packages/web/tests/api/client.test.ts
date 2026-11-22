@@ -10,10 +10,7 @@ function json(status: number, body: unknown): Response {
 
 const BASE = 'http://api.test';
 
-function makeClient(
-  fetchImpl: typeof fetch,
-  opts: { onAuthLost?: () => void } = {},
-): FreeMailClient {
+function makeClient(fetchImpl: typeof fetch, opts: { onAuthLost?: () => void } = {}): FreeMailClient {
   return new FreeMailClient({ baseUrl: BASE, fetchImpl, onAuthLost: opts.onAuthLost });
 }
 
@@ -81,9 +78,7 @@ describe('FreeMailClient (cookie auth)', () => {
         return new Response(null, { status: 204 });
       }
       if (path === '/me') {
-        return refreshed
-          ? json(200, { subject: 'owner' })
-          : json(403, { error: 'invalid_token', message: 'expired' });
+        return refreshed ? json(200, { subject: 'owner' }) : json(403, { error: 'invalid_token', message: 'expired' });
       }
       throw new Error(`unexpected ${path}`);
     });
@@ -92,9 +87,7 @@ describe('FreeMailClient (cookie auth)', () => {
     const session = await client.getSession();
     expect(session).toEqual({ subject: 'owner' });
 
-    const refreshCalls = fetchMock.mock.calls.filter(
-      ([url]) => new URL(String(url)).pathname === '/auth/refresh',
-    );
+    const refreshCalls = fetchMock.mock.calls.filter(([url]) => new URL(String(url)).pathname === '/auth/refresh');
     expect(refreshCalls).toHaveLength(1);
     // The refresh token rides in the cookie — never a request body.
     expect(refreshCalls[0][1]?.body).toBeUndefined();
@@ -110,9 +103,7 @@ describe('FreeMailClient (cookie auth)', () => {
         return new Response(null, { status: 204 });
       }
       if (path === '/keys') {
-        return refreshed
-          ? json(200, { keys: [] })
-          : json(401, { error: 'invalid_token', message: 'expired' });
+        return refreshed ? json(200, { keys: [] }) : json(401, { error: 'invalid_token', message: 'expired' });
       }
       throw new Error(`unexpected ${path}`);
     });
@@ -131,9 +122,7 @@ describe('FreeMailClient (cookie auth)', () => {
         return new Response(null, { status: 204 });
       }
       if (path === '/me' || path === '/keys') {
-        return refreshed
-          ? json(200, path === '/keys' ? { keys: [] } : { subject: 'owner' })
-          : json(403, { error: 'invalid_token', message: 'expired' });
+        return refreshed ? json(200, path === '/keys' ? { keys: [] } : { subject: 'owner' }) : json(403, { error: 'invalid_token', message: 'expired' });
       }
       throw new Error(`unexpected ${path}`);
     });
@@ -253,9 +242,7 @@ describe('FreeMailClient (cookie auth)', () => {
     const file = new Blob(['abc'], { type: 'application/pdf' });
     const progress: number[] = [];
 
-    await client.putUpload('https://bucket.s3.example/uploads/u1?sig', file, (loaded) =>
-      progress.push(loaded),
-    );
+    await client.putUpload('https://bucket.s3.example/uploads/u1?sig', file, (loaded) => progress.push(loaded));
 
     const [url, body, contentType] = uploadImpl.mock.calls[0];
     expect(url).toBe('https://bucket.s3.example/uploads/u1?sig');
@@ -283,9 +270,7 @@ describe('FreeMailClient (cookie auth)', () => {
     try {
       const file = new Blob(['abcd'], { type: 'text/plain' });
       const progress: number[] = [];
-      const done = xhrUpload('https://s3/u1?sig', file, 'text/plain', (loaded) =>
-        progress.push(loaded),
-      );
+      const done = xhrUpload('https://s3/u1?sig', file, 'text/plain', (loaded) => progress.push(loaded));
       const xhr = FakeXhr.last;
       xhr.upload.onprogress?.({ loaded: 2 });
       xhr.upload.onprogress?.({ loaded: 4 });
@@ -318,9 +303,7 @@ describe('FreeMailClient (cookie auth)', () => {
   });
 
   it('logout posts to the revoke endpoint with no body and resolves on a 2xx', async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(null, { status: 204 }));
     const client = makeClient(fetchMock);
 
     await expect(client.logout()).resolves.toBeUndefined();
@@ -333,11 +316,7 @@ describe('FreeMailClient (cookie auth)', () => {
 
   it('PROPAGATES a logout failure — only a 2xx clears the httpOnly cookies', async () => {
     // Non-2xx: the server did not confirm a clean revoke → the caller must know.
-    const nonOk = makeClient(
-      vi
-        .fn<typeof fetch>()
-        .mockResolvedValue(json(500, { error: 'invalid_request', message: 'retry' })),
-    );
+    const nonOk = makeClient(vi.fn<typeof fetch>().mockResolvedValue(json(500, { error: 'invalid_request', message: 'retry' })));
     await expect(nonOk.logout()).rejects.toMatchObject({ status: 500 });
 
     // Network failure: the request never reached the server → cookies untouched.
@@ -413,9 +392,7 @@ describe('FreeMailClient (cookie auth)', () => {
   });
 
   it('surfaces the server error body as a typed ApiError', async () => {
-    const fetchMock = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(json(400, { error: 'weak_password', message: 'too short' }));
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(json(400, { error: 'weak_password', message: 'too short' }));
     const client = makeClient(fetchMock);
     const rejection = client.login('short');
     await expect(rejection).rejects.toBeInstanceOf(ApiError);

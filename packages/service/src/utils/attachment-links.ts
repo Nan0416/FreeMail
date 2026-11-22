@@ -24,10 +24,7 @@ const LINK_VALIDITY_LABEL = '30 days';
  * Append a download-links block to whichever body parts exist. Returns the body unchanged
  * when there are no links. Never invents a body part that wasn't already present.
  */
-export function appendDownloadLinks(
-  body: { text?: string; html?: string },
-  links: DownloadLink[],
-): { text?: string; html?: string } {
+export function appendDownloadLinks(body: { text?: string; html?: string }, links: DownloadLink[]): { text?: string; html?: string } {
   if (links.length === 0) {
     return body;
   }
@@ -42,38 +39,18 @@ export function appendDownloadLinks(
 }
 
 function textBlock(links: DownloadLink[]): string {
-  const lines = links.map(
-    (link) => `- ${sanitizeText(link.filename)} (${formatBytes(link.sizeBytes)}): ${link.url}`,
-  );
-  return [
-    '--',
-    `Large attachment${links.length > 1 ? 's' : ''} (available for ${LINK_VALIDITY_LABEL}):`,
-    ...lines,
-  ].join('\n');
+  const lines = links.map((link) => `- ${sanitizeText(link.filename)} (${formatBytes(link.sizeBytes)}): ${link.url}`);
+  return ['--', `Large attachment${links.length > 1 ? 's' : ''} (available for ${LINK_VALIDITY_LABEL}):`, ...lines].join('\n');
 }
 
 function htmlBlock(links: DownloadLink[]): string {
-  const items = links
-    .map(
-      (link) =>
-        `<li><a href="${escapeHtml(link.url)}">${escapeHtml(link.filename)}</a> ` +
-        `(${escapeHtml(formatBytes(link.sizeBytes))})</li>`,
-    )
-    .join('');
-  return (
-    `<div><p>Large attachment${links.length > 1 ? 's' : ''} ` +
-    `(available for ${LINK_VALIDITY_LABEL}):</p><ul>${items}</ul></div>`
-  );
+  const items = links.map((link) => `<li><a href="${escapeHtml(link.url)}">${escapeHtml(link.filename)}</a> ` + `(${escapeHtml(formatBytes(link.sizeBytes))})</li>`).join('');
+  return `<div><p>Large attachment${links.length > 1 ? 's' : ''} ` + `(available for ${LINK_VALIDITY_LABEL}):</p><ul>${items}</ul></div>`;
 }
 
 /** HTML-escape the five significant characters so attacker-controlled text can't break out. */
 export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 /** Control chars (incl. CR/LF/TAB/DEL) + Unicode line/para separators — stripped from the text block. */

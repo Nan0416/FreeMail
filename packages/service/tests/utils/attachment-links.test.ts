@@ -1,10 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  appendDownloadLinks,
-  escapeHtml,
-  formatBytes,
-  type DownloadLink,
-} from '../../src/utils/attachment-links.js';
+import { appendDownloadLinks, escapeHtml, formatBytes, type DownloadLink } from '../../src/utils/attachment-links.js';
 
 function link(overrides: Partial<DownloadLink> = {}): DownloadLink {
   return {
@@ -57,9 +52,7 @@ describe('appendDownloadLinks', () => {
   });
 
   it('strips control characters (incl. CR/LF) from a filename in the text block', () => {
-    const result = appendDownloadLinks({ text: 'x' }, [
-      link({ filename: 'evil\r\nBcc: victim@x.com.pdf' }),
-    ]);
+    const result = appendDownloadLinks({ text: 'x' }, [link({ filename: 'evil\r\nBcc: victim@x.com.pdf' })]);
     expect(result.text).not.toContain('\r');
     expect(result.text).not.toContain('\n Bcc');
     expect(result.text).toContain('evilBcc: victim@x.com.pdf');

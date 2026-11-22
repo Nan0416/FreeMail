@@ -50,10 +50,7 @@ describe('RawByteLimiter', () => {
 });
 
 describe('BodyLimiter', () => {
-  async function run(
-    chunks: unknown[],
-    limits = { maxTextBodyBytes: 100, maxHtmlBodyBytes: 100, maxTotalBodyBytes: 10_000 },
-  ) {
+  async function run(chunks: unknown[], limits = { maxTextBodyBytes: 100, maxHtmlBodyBytes: 100, maxTotalBodyBytes: 10_000 }) {
     const limiter = new BodyLimiter(limits);
     const out: unknown[] = [];
     let breach: string | undefined;
@@ -91,16 +88,7 @@ describe('BodyLimiter', () => {
 
   it('breaches on the CUMULATIVE budget across many under-per-node-cap text nodes', async () => {
     // Each node is 60 bytes (under the 100 per-node cap), but 4×60=240 > 200 total budget.
-    const chunks = [
-      node('text/plain'),
-      body(60),
-      node('text/plain'),
-      body(60),
-      node('text/plain'),
-      body(60),
-      node('text/plain'),
-      body(60),
-    ];
+    const chunks = [node('text/plain'), body(60), node('text/plain'), body(60), node('text/plain'), body(60), node('text/plain'), body(60)];
     const result = await run(chunks, {
       maxTextBodyBytes: 100,
       maxHtmlBodyBytes: 100,

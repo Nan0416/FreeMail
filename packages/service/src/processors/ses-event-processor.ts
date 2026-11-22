@@ -72,9 +72,7 @@ export class SesEventProcessor {
       events: [report.event],
       ...(report.status !== undefined ? { status: report.status } : {}),
     });
-    return result.found
-      ? { outcome: 'recorded', emailId: id }
-      : { outcome: 'skipped', reason: 'no such message', emailId: id };
+    return result.found ? { outcome: 'recorded', emailId: id } : { outcome: 'skipped', reason: 'no such message', emailId: id };
   }
 }
 
@@ -188,14 +186,9 @@ const STATUS_CODE_RE = /\b([245]\.\d{1,3}\.\d{1,3})\b/;
  * `Permanent/General (5.1.1)`: the SES type names that are well-formed tokens, and the first
  * enhanced status code found — nothing else of what the remote server wrote.
  */
-function joinDetail(
-  kinds: ReadonlyArray<string | undefined>,
-  statuses: ReadonlyArray<string | undefined> | undefined,
-): string {
+function joinDetail(kinds: ReadonlyArray<string | undefined>, statuses: ReadonlyArray<string | undefined> | undefined): string {
   const kind = kinds.filter((part) => part !== undefined && SES_TOKEN_RE.test(part)).join('/');
-  const code = (statuses ?? [])
-    .map((status) => (status === undefined ? undefined : STATUS_CODE_RE.exec(status)?.[1]))
-    .find((match) => match !== undefined);
+  const code = (statuses ?? []).map((status) => (status === undefined ? undefined : STATUS_CODE_RE.exec(status)?.[1])).find((match) => match !== undefined);
   return code === undefined ? kind : `${kind} (${code})`.trim();
 }
 

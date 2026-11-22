@@ -10,10 +10,7 @@
  * source and caching off, so this function always sees the full request — a stale
  * cache entry keyed on a now-authoritative cookie would be a session-confusion bug.
  */
-import type {
-  APIGatewayRequestAuthorizerEventV2,
-  APIGatewaySimpleAuthorizerWithContextResult,
-} from 'aws-lambda';
+import type { APIGatewayRequestAuthorizerEventV2, APIGatewaySimpleAuthorizerWithContextResult } from 'aws-lambda';
 import { getSigningKey } from '../utils/signing-key.js';
 import { verifyAccessToken } from '../utils/jwt.js';
 import { OWNER_SUBJECT } from '../services/auth-service.js';
@@ -58,9 +55,7 @@ const DENY: APIGatewaySimpleAuthorizerWithContextResult<Record<string, never>> =
   context: {},
 };
 
-export const handler = async (
-  event: APIGatewayRequestAuthorizerEventV2,
-): Promise<Result | typeof DENY> => {
+export const handler = async (event: APIGatewayRequestAuthorizerEventV2): Promise<Result | typeof DENY> => {
   const headers = event.headers ?? {};
 
   // Human/web credential: the access JWT in the __Host-fm_access cookie. A duplicate
