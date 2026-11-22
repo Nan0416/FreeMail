@@ -343,7 +343,7 @@ Other AWS services in your account call `/api/*` with IAM instead of a password 
 With inbound enabled, the SNS topic `<stack name>-email-received` (stack output `EmailReceivedTopicArn`) gets a message each time a received email is stored with its content: a normal message, a spam-flagged one, or a redelivery of either. Failed messages (the Errors folder) don't notify. Subscribe an SQS queue or a Lambda to it.
 
 - **The message** is metadata only, `EmailReceivedNotification` in `packages/shared/src/service-api.ts`: `id`, `receivedAt`, `from`, `to`, `cc`, `subject`, attachment count, size, and `spam`. It never contains the body or download links. `to` and `cc` come from the message headers, so a BCC'd recipient isn't listed.
-- **At-least-once:** the same message can arrive more than once, so de-duplicate on `id`.
+- **At-least-once:** the same message can arrive more than once, so de-duplicate on `id`. If SNS fails for longer than the parser's retries (a few minutes), the message is still stored, but its notification waits in the parser's dead-letter queue (the queue whose name contains `ParserDlq`); redrive it from the SQS console to send it.
 - **Filtering:** `type` (`email.received`) and `spam` (`"true"` / `"false"`) are also message attributes. For example, a subscription filter policy of `{"spam": ["false"]}` skips spam.
 
 #### `GET /api/emails/{id}`

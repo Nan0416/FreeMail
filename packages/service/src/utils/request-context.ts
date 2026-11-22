@@ -1,5 +1,6 @@
 /**
- * Pure readers over the Lambda authorizer's SIMPLE-response context. Kept framework-free
+ * Pure readers over the Lambda authorizer's SIMPLE-response context, and over the IAM context
+ * API Gateway sets on the `/api/*` route (`iamCallerFromContext`). Kept framework-free
  * (they only read the event, never an Express request) so the authorization boundary is
  * unit-testable without AWS.
  *

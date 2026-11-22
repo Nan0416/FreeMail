@@ -82,7 +82,8 @@ function embedEnv(attachments: AttachmentsConfig | undefined): Record<string, st
  * integration behind the same authorizer.
  *
  * API Gateway itself stays unauthenticated (managed CORS answers preflight, auth
- * routes are open); all authentication happens in the backend authorizer.
+ * routes are open); all authentication happens in the backend authorizer — except for
+ * `ANY /api/{proxy+}`, which API Gateway authorizes with IAM for other AWS services.
  */
 export class ApiConstruct extends Construct {
   readonly httpApi: HttpApi;

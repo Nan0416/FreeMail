@@ -1179,6 +1179,15 @@ describe('EmailReadService.getEmailWithDownloadUrls', () => {
     ).toEqual(detail.attachments);
   });
 
+  it('has exactly getEmail’s keys minus the .eml fields — nothing web-only leaks into /api', async () => {
+    const repo = new FakeDao();
+    const handle = repo.put(INBOUND_PARTITION, inboundRow({ body: { kind: 'inline', text: 'hi' } }));
+    const svc = service(repo, new FakePresigner(), new FakeRawMime());
+
+    const webKeys = Object.keys(await svc.getEmail({ handle })).filter((key) => key !== 'rawAvailable' && key !== 'rawSuspicious');
+    expect(Object.keys(await svc.getEmailWithDownloadUrls({ handle })).sort()).toEqual(webKeys.sort());
+  });
+
   it('unknown handle → not_found', async () => {
     await expect(
       service(new FakeDao(), new FakePresigner(), new FakeRawMime()).getEmailWithDownloadUrls({

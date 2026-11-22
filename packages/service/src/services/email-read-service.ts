@@ -151,6 +151,9 @@ export interface GetEmailServiceRequest {
 
 export type GetEmailServiceResponse = EmailDetail;
 
+/** The same handle as {@link GetEmailServiceRequest}. */
+export type GetEmailWithDownloadUrlsServiceRequest = GetEmailServiceRequest;
+
 export interface GetAttachmentUrlServiceRequest {
   readonly handle: string;
   /** The attachment's stable per-message id (a MIME part index, or `link-<n>`). */
@@ -274,7 +277,7 @@ export class EmailReadService {
    * fields, with a presigned download URL on every attachment. The URLs last
    * SERVICE_ATTACHMENT_URL_TTL_SECONDS, long enough to fetch several large files in turn.
    */
-  async getEmailWithDownloadUrls(request: GetEmailServiceRequest): Promise<ServiceEmailDetail> {
+  async getEmailWithDownloadUrls(request: GetEmailWithDownloadUrlsServiceRequest): Promise<ServiceEmailDetail> {
     const row = await this.loadRow(request.handle);
     const detail = await this.detailFor(row, request.handle);
     const descriptors = rowAttachments(row);
@@ -287,7 +290,8 @@ export class EmailReadService {
       return { ...info, downloadUrl: link.url, downloadUrlExpiresAt: link.expiresAt };
     });
     const typed: ServiceEmailDetail = { ...detail, attachments };
-    // No `.eml` route under /api, so its fields don't belong in the response.
+    // No `.eml` route under /api, so its fields don't belong in the response. A test pins the
+    // exact keys, so a field added to the web detail can't leak into this contract unnoticed.
     const result: Record<string, unknown> = { ...typed };
     delete result.rawAvailable;
     delete result.rawSuspicious;

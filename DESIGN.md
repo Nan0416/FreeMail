@@ -29,10 +29,10 @@ TypeScript · npm workspaces monorepo · Node.js (Lambda) · React (SPA) · AWS 
   2. **Exact-single-origin credentialed CORS** — the API allowlists exactly one origin (`appDomain`), never a wildcard and never a reflected request origin, with `Vary: Origin`. This is the response-**read** boundary and the preflight gate.
   3. **Non-simple request shape** — every state-changing route requires `Content-Type: application/json` (parsed, not string-compared: case-insensitive, parameters tolerated), rejected before any side effect. Includes the *bodyless* `POST /auth/refresh` and `/auth/logout`, which are otherwise "simple" and could be ridden by a sibling form-POST to force a logout.
   Layers 2 and 3 are **jointly necessary** for the same-site-sibling case (`evil.example.com`), where Strict does nothing because the request *is* same-site: layer 3 forces a preflight, layer 2 refuses it. A double-submit CSRF token stays **deferred** behind these.
-- **CORS is not authorization.** A foreign, `null`, malformed, or absent `Origin` merely gets no usable CORS headers; the request still reaches the Lambda authorizer, which remains the sole authorization boundary. Agents send no `Origin` and are entirely unaffected.
+- **CORS is not authorization.** A foreign, `null`, malformed, or absent `Origin` merely gets no usable CORS headers; the request still reaches the Lambda authorizer, which remains the sole authorization boundary for every route but `/api/*` (IAM-authorized by API Gateway, below). Agents send no `Origin` and are entirely unaffected.
 - **Both `appDomain` and `apiDomain` are required config** — a browser deployment needs a canonical app origin to allowlist and an absolute API origin to call.
 - **API keys** for agents → the MCP server. Registered via the React app; stored **hashed**, shown raw once. **One key = full agent access over MCP: send AND (when inbound is enabled) read the mailbox** — but **not** key management and **not** the REST mailbox-read routes, which stay cookie-session only (no per-key scopes for v1). Validated by a **Lambda authorizer** (the agent `x-api-key` path is unchanged by the cookie work).
-- **API Gateway itself is unauthenticated; auth lives in the backend** (a Lambda authorizer covers both the web access-token cookie and MCP API-keys).
+- **API Gateway itself is unauthenticated; auth lives in the backend** (a Lambda authorizer covers both the web access-token cookie and MCP API-keys). The one exception is `ANY /api/{proxy+}`, for other AWS services in the account: API Gateway authorizes it with IAM (SigV4), and the handler serves `/api` paths only to such callers and never lets one through a session/API-key guard.
 
 ## APIs
 1. **REST API** (React app): login (enrolls on first use), refresh/logout, send email, manage API keys; (with inbound) list/read emails + attachment download.
@@ -68,12 +68,12 @@ The logic lives in `packages/service/src/processors/inbound-processor.ts`, with 
 | 7 | **Spam `FAIL`**, virus `PASS` | `quarantined` | Yes (own-link files skipped) | No | Inbox, tagged spam, content hidden until opened |
 | 8 | **Good**: virus `PASS`, spam not `FAIL`, parsed OK | Normal | Yes, plus own-link files | No | Inbox |
 | 9 | **Duplicate delivery** of the same S3 event | Already exists (conditional write): `duplicate` | Same keys, overwritten | – | No change |
-| 10 | **Infrastructure error** (S3 or DynamoDB failure) | Not yet | – | – | Lambda retries twice, then the dead-letter queue (14 days) |
+| 10 | **Infrastructure error** (S3, DynamoDB or SNS failure) | Not yet — or, for an SNS failure, already written | – | – | Lambda retries twice, then the dead-letter queue (14 days) |
 
 - **Where content lives:** attachment bytes are always separate S3 objects (`attachments/inbound/<id>/<part>`). The row only holds descriptors. The body is stored inline in the row (up to 256 KB) or as `bodies/inbound/<id>.json` (`storeEmailBody`).
 - **Raw MIME:** once a row is written (cases 3–8), SES's raw copy under `inbound/` is tagged and expires after 14 days. In case 10 it is never tagged, so it stays until the event is redriven.
 - **Case 3 is rare:** SES itself won't store a message over 40 MB in S3, so the check is mostly a safety net.
-- **Notifications:** cases 7, 8 and 9 publish an `email.received` message to the SNS topic (`<stack>-email-received`), right after the row is written and before the raw MIME is tagged. A failed publish fails the invocation; the retry hits case 9 and publishes again, so delivery is at-least-once. See DEPLOY.md, "New-mail notifications".
+- **Notifications:** cases 7 and 8, and a redelivery of either (case 9), publish an `email.received` message to the SNS topic (`<stack>-email-received`), right after the row is written and before the raw MIME is tagged. A failed publish fails the invocation; the retry hits case 9 and publishes again. Delivery is at-least-once as long as dead-lettered events are redriven: an SNS outage longer than Lambda's two retries (a few minutes) leaves the message in the inbox but its notification in the parser's dead-letter queue, and its raw MIME untagged (kept). See DEPLOY.md, "New-mail notifications".
 
 ## Attachments ✅
 - **Inbound (received):** parsed to S3, downloaded by the **authenticated app user** via **presigned S3 URLs**.
