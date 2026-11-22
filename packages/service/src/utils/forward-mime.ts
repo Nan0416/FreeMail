@@ -16,13 +16,30 @@
  *   receiver that trusts the first one it sees;
  * - added: the new `From`, `Reply-To` (only when the message had none), and
  *   {@link FORWARDED_MARKER_HEADER}, which stops a copy that comes back here being forwarded again.
+ *
+ * A copy whose sender SES could not verify (only a rule that skips DMARC forwards one) says so:
+ * "(unverified)" in the From display name and {@link SENDER_UNVERIFIED_HEADER}. Signed by this
+ * domain, it would otherwise pass for authenticated mail from whoever the From claimed.
  */
 import { encodeWord } from 'nodemailer/lib/mime-funcs/index.js';
 
 /** Marks a forwarded copy. A received message carrying it is never forwarded (loop guard). */
 export const FORWARDED_MARKER_HEADER = 'X-FreeMail-Forwarded';
+/** Added, with the value `no`, to a copy whose original sender failed (or had no) DMARC. */
+export const SENDER_UNVERIFIED_HEADER = 'X-FreeMail-Sender-Verified';
 
-const DROPPED_HEADERS: ReadonlySet<string> = new Set(['from', 'sender', 'return-path', 'message-id', 'dkim-signature', 'authentication-results', 'received-spf']);
+// The sender-verified header too: only this code may say whether the sender was verified.
+const DROPPED_HEADERS: ReadonlySet<string> = new Set([
+  'from',
+  'sender',
+  'return-path',
+  'message-id',
+  'dkim-signature',
+  'authentication-results',
+  'received-spf',
+  SENDER_UNVERIFIED_HEADER.toLowerCase(),
+]);
+
 const DROPPED_PREFIX = 'x-ses-';
 
 /** A bare address safe to write into a header as is: an ASCII dot-atom local part and a host. */
@@ -41,6 +58,8 @@ export interface BuildForwardedMimeInput {
   readonly fromName?: string | undefined;
   /** The received message's id, recorded in the marker header. */
   readonly messageId: string;
+  /** Whether SES's DMARC check passed for the original sender's domain. */
+  readonly senderVerified: boolean;
 }
 
 /** The forwarded copy, or undefined when the message has no header block to rewrite. */
@@ -58,7 +77,11 @@ export function buildForwardedMime(input: BuildForwardedMimeInput): Buffer | und
   const name = input.fromName?.trim();
   const sender = name ? (plainFrom ? `${name} (${from})` : name) : from;
 
-  const added = [`${FORWARDED_MARKER_HEADER}: ${input.messageId}`, `From: ${displayName(`${sender} via ${input.forwarderLabel}`, eol)} <${input.forwarderAddress}>`];
+  const label = input.senderVerified ? `${sender} via ${input.forwarderLabel}` : `${sender} (unverified) via ${input.forwarderLabel}`;
+  const added = [`${FORWARDED_MARKER_HEADER}: ${input.messageId}`, `From: ${displayName(label, eol)} <${input.forwarderAddress}>`];
+  if (!input.senderVerified) {
+    added.push(`${SENDER_UNVERIFIED_HEADER}: no`);
+  }
   if (plainFrom && !fields.some((field) => field.name === 'reply-to')) {
     added.push(`Reply-To: ${name ? `${displayName(name, eol)} <${from}>` : from}`);
   }
@@ -83,7 +106,9 @@ function headerBlockEnd(raw: Buffer): number | undefined {
 
 function splitHeaderFields(text: string): HeaderField[] {
   const fields: HeaderField[] = [];
-  for (const line of text.split(/\r\n|\n/)) {
+  // A bare CR ends a line too, as the inbound header parser reads it: a header smuggled after one
+  // is then its own field here as well (and dropped if it is one of the dropped kinds).
+  for (const line of text.split(/\r\n|\n|\r/)) {
     const last = fields[fields.length - 1];
     if ((line.startsWith(' ') || line.startsWith('\t')) && last !== undefined) {
       last.lines.push(line);

@@ -192,13 +192,13 @@ describe('ForwardingRulesView', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'Edit Amazon returns' }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).queryByText(/can be spoofed/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/claiming to be from anyone/)).not.toBeInTheDocument();
     fireEvent.click(
       within(dialog).getByRole('checkbox', {
         name: 'Forward even if the sender isn’t verified (skip DMARC)',
       }),
     );
-    expect(within(dialog).getByText(/can be spoofed/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/claiming to be from anyone/)).toBeInTheDocument();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
 
     await screen.findByText('Unverified senders');
@@ -247,12 +247,26 @@ describe('ForwardingRulesView', () => {
     expect(callsTo(fetchMock, '/forwarding-rules/r1', 'DELETE')).toHaveLength(1);
   });
 
-  it('says so when the rules can’t be loaded', async () => {
+  it('says so when the rules can’t be loaded — never “no rules yet” — and retries', async () => {
+    let failing = true;
     renderWithApp(
       <ForwardingRulesView />,
-      vi.fn<typeof fetch>(async (url) => (pathOf(url) === '/me' ? json(200, { subject: 'owner' }) : json(500, { error: 'invalid_request', message: 'Internal error.' }))),
+      vi.fn<typeof fetch>(async (url) => {
+        if (pathOf(url) === '/me') {
+          return json(200, { subject: 'owner' });
+        }
+        return failing ? json(500, { error: 'invalid_request', message: 'Internal error.' }) : json(200, { rules: [] });
+      }),
     );
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Internal error.');
+    expect(screen.queryByText('No forwarding rules yet.')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New rule' })).toBeDisabled();
+
+    failing = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('No forwarding rules yet.')).toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'New rule' })).toBeEnabled();
   });
 });

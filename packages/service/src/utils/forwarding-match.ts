@@ -26,7 +26,7 @@ export function matchForwardingRules(rules: readonly ForwardingRule[], candidate
   const message: NormalizedCandidate = {
     from,
     fromDomain,
-    senderAuthenticated: fromDomain !== '' && candidate.authenticatedDomain?.toLowerCase() === fromDomain,
+    senderAuthenticated: isSenderAuthenticated(candidate.from, candidate.authenticatedDomain),
     recipients: candidate.recipients.map(normalizeAddress),
   };
   const ruleIds: string[] = [];
@@ -44,6 +44,12 @@ export function matchForwardingRules(rules: readonly ForwardingRule[], candidate
     }
   }
   return { ruleIds, forwardTo: [...forwardTo] };
+}
+
+/** Whether SES's DMARC check passed for this From address's own domain. */
+export function isSenderAuthenticated(from: string, authenticatedDomain: string | undefined): boolean {
+  const fromDomain = domainOf(normalizeAddress(from));
+  return fromDomain !== '' && authenticatedDomain?.toLowerCase() === fromDomain;
 }
 
 /** The lowercased domain of an address, or `''` when it has none. */

@@ -35,19 +35,27 @@ export function ForwardingRulesView(props: ForwardingRulesViewProps): React.JSX.
   const auth = useAuth();
   const [rules, setRules] = useState<readonly ForwardingRule[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from `rules`: an empty list would read as "no rules" and invite a duplicate.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [editing, setEditing] = useState<Editing | null>(null);
   const [deleting, setDeleting] = useState<ForwardingRule | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
+    setLoadFailed(false);
     try {
       const response = await auth.client.listForwardingRules();
       setRules(response.rules);
     } catch (err) {
-      setRules([]);
+      setLoadFailed(true);
       setError(err instanceof ApiError ? err.message : 'Could not load the forwarding rules.');
     }
   }, [auth.client]);
+
+  function retry(): void {
+    setError(null);
+    void refresh();
+  }
 
   useEffect(() => {
     void refresh();
@@ -101,7 +109,7 @@ export function ForwardingRulesView(props: ForwardingRulesViewProps): React.JSX.
           </Button>
         )}
         <h1 className="text-[15px] font-semibold tracking-tight">Forwarding</h1>
-        <Button size="sm" className="ml-auto gap-1.5" onClick={() => openEditor(null)}>
+        <Button size="sm" className="ml-auto gap-1.5" disabled={rules === null} onClick={() => openEditor(null)}>
           <Plus className="size-4" />
           New rule
         </Button>
@@ -116,7 +124,14 @@ export function ForwardingRulesView(props: ForwardingRulesViewProps): React.JSX.
           )}
 
           <div className="rounded-md border">
-            {rules === null ? (
+            {rules === null && loadFailed ? (
+              <div className="flex flex-col items-center px-4 py-10 text-center">
+                <p className="text-[13px] text-muted-foreground">The rules couldn&rsquo;t be loaded.</p>
+                <Button variant="outline" size="sm" className="mt-4" onClick={retry}>
+                  Try again
+                </Button>
+              </div>
+            ) : rules === null ? (
               <p className="px-4 py-6 text-center text-[13px] text-muted-foreground">Loading…</p>
             ) : rules.length === 0 ? (
               <div className="flex flex-col items-center px-4 py-10 text-center">
@@ -283,7 +298,8 @@ function RuleEditor(props: { rule: ForwardingRule | null; onClose: () => void; o
               </div>
               {form.ignoreDmarcVerification && (
                 <p className="mt-1.5 ml-6 text-xs text-amber-700 dark:text-amber-400">
-                  Anyone can fake a From address, so this rule&rsquo;s From entries can be spoofed. Use it only for senders whose domain has no DMARC record.
+                  Anyone can fake a From address, so this rule will forward mail claiming to be from anyone it matches. Copies of unverified mail are marked &ldquo;(unverified)&rdquo;. Use it only for
+                  senders whose domain has no DMARC record.
                 </p>
               )}
             </div>

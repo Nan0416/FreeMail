@@ -27,7 +27,7 @@ flowchart TB
         Rest["REST handler Lambda"]
         Mcp["MCP handler Lambda<br/>(POST /mcp · send_email)"]
         SES["Amazon SES<br/>(send + optional inbound)"]
-        DDB["DynamoDB<br/>(auth · api keys · emails · download tokens)"]
+        DDB["DynamoDB<br/>(auth · api keys · emails · download tokens · forwarding rules)"]
         S3mail["S3 · mail bucket<br/>(inbound MIME · attachments)"]
         Parse["Inbound parser Lambda<br/>(optional)"]
         Fwd["Forwarder Lambda<br/>(forwarding rules)"]

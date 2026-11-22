@@ -1,6 +1,6 @@
 import { simpleParser } from 'mailparser';
 import { describe, expect, it } from 'vitest';
-import { FORWARDED_MARKER_HEADER, buildForwardedMime } from '../../src/utils/forward-mime.js';
+import { FORWARDED_MARKER_HEADER, SENDER_UNVERIFIED_HEADER, buildForwardedMime } from '../../src/utils/forward-mime.js';
 import { parseHeaderLines, headerValues } from '../../src/utils/inbound-headers.js';
 
 const HEADERS = [
@@ -30,7 +30,7 @@ function rawMessage(headers: readonly string[] = HEADERS, eol = '\r\n', body = B
   return Buffer.from(`${headers.join(eol)}${eol}${eol}${body}`, 'utf8');
 }
 
-function forward(raw: Buffer, overrides: { from?: string; fromName?: string } = {}): Buffer {
+function forward(raw: Buffer, overrides: { from?: string; fromName?: string; senderVerified?: boolean } = {}): Buffer {
   const out = buildForwardedMime({
     raw,
     forwarderAddress: 'forwarding@warehouse.example',
@@ -38,6 +38,7 @@ function forward(raw: Buffer, overrides: { from?: string; fromName?: string } = 
     from: 'alice@customer.com',
     fromName: 'Alice Smith',
     messageId: 'msg-1',
+    senderVerified: true,
     ...overrides,
   });
   if (out === undefined) {
@@ -149,7 +150,33 @@ describe('buildForwardedMime', () => {
         forwarderLabel: 'warehouse.example',
         from: 'a@b.example',
         messageId: 'msg-1',
+        senderVerified: true,
       }),
     ).toBeUndefined();
+  });
+
+  it('says so when the sender is unverified: "(unverified)" in the From name and a header', () => {
+    const out = forward(rawMessage(), { senderVerified: false });
+    const lines = headersOf(out);
+    expect(headerValues(lines, 'from')).toEqual(['"Alice Smith (alice@customer.com) (unverified) via warehouse.example" <forwarding@warehouse.example>']);
+    expect(headerValues(lines, SENDER_UNVERIFIED_HEADER)).toEqual(['no']);
+  });
+
+  it('adds no verification header for a verified sender', () => {
+    expect(headerValues(headersOf(forward(rawMessage())), SENDER_UNVERIFIED_HEADER)).toEqual([]);
+  });
+
+  it('drops a sender-verified header the message brought with it (only the forwarder may say)', () => {
+    const forged = rawMessage([...HEADERS, `${SENDER_UNVERIFIED_HEADER}: yes`]);
+    expect(headerValues(headersOf(forward(forged)), SENDER_UNVERIFIED_HEADER)).toEqual([]);
+    expect(headerValues(headersOf(forward(forged, { senderVerified: false })), SENDER_UNVERIFIED_HEADER)).toEqual(['no']);
+  });
+
+  it('treats a bare CR as a line break, so a header smuggled after one is dropped like any other', () => {
+    const smuggled = rawMessage([...HEADERS.slice(0, -1), 'X-Note: hi\rX-SES-Configuration-Set: theirs', HEADERS[HEADERS.length - 1]!]);
+    const out = forward(smuggled);
+    expect(out.toString('latin1')).not.toContain('X-SES-Configuration-Set');
+    expect(out.toString('latin1')).not.toContain('\r\r');
+    expect(headerValues(headersOf(out), 'x-note')).toEqual(['hi']);
   });
 });
