@@ -23,6 +23,9 @@
 import { normalizeDomain } from './domain.js';
 import { isValidEmailAddress } from './email.js';
 
+/** The forwarding address's local part, on the email domain: `forwarding@<domain>`. */
+export const FORWARDER_LOCAL_PART = 'forwarding';
+
 /** Upper bound on stored rules. A single-tenant deployment needs a handful. */
 export const MAX_FORWARDING_RULES = 100;
 /** Upper bound on a rule's name, after trimming. */

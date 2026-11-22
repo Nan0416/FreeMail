@@ -88,6 +88,7 @@ With inbound enabled, rules re-send received mail to outside addresses. A rule m
 - **Rules: their own small table, scanned per message.** One row per rule, keyed by a random id (which is what each forward records). The forwarder scans it for every notification, with no cache, so a saved or paused rule applies to the next message; a handful of rows is one cheap scan. A malformed row is skipped and logged, never fatal to the others.
 - **One check, shared.** `checkForwardingRule` (`@freemail/shared`) trims, lowercases and de-duplicates, validates domains and addresses, needs a condition and a target, and caps the lists. The REST service enforces it with the email domain, refusing targets there (a loop), and the web page pre-runs it, so the two never disagree.
 - **Owner only.** `/forwarding-rules` is `requireAccessScheme`-guarded like key management: an agent's API key could otherwise add a rule copying all received mail out.
+- **The forwarder holds only what a forward needs.** On the emails table: `GetItem` and `UpdateItem` held to the `INBOUND` partition (`dynamodb:LeadingKeys`), the update to the `forward` attribute (`dynamodb:Attributes`, with the key attributes DynamoDB requires) returning nothing; on the rules table, `Scan`; on the mail bucket, reads under `inbound/`; and SES send only From `forwarding@<domain>` (`ses:FromAddress`).
 
 ## Attachments ✅
 - **Inbound (received):** parsed to S3, downloaded by the **authenticated app user** via **presigned S3 URLs**.

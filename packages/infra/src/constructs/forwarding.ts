@@ -2,6 +2,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Duration, RemovalPolicy } from 'aws-cdk-lib';
 import type { ITable } from 'aws-cdk-lib/aws-dynamodb';
+import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Architecture, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { SqsEventSource } from 'aws-cdk-lib/aws-lambda-event-sources';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -11,6 +12,8 @@ import { SubscriptionFilter, type ITopic } from 'aws-cdk-lib/aws-sns';
 import { SqsSubscription } from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Queue } from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
+import { FORWARDER_LOCAL_PART } from '@freemail/shared';
+import { INBOUND_PARTITION } from '@freemail/shared/storage';
 import { SELF_CONTAINED_BUNDLING } from './bundling.js';
 import { grantSesSend } from './ses-grants.js';
 
@@ -75,12 +78,33 @@ export class ForwardingConstruct extends Construct {
       }),
     });
 
-    // Reads the row and records the forward on it; never creates or deletes one.
-    props.emailsTable.grant(this.forwarder, 'dynamodb:GetItem', 'dynamodb:UpdateItem');
+    // Reads a received row and records the forward on it — nothing else. Both actions are held to
+    // the INBOUND partition (never a sent row, the Errors folder or an idempotency record), and the
+    // update to the `forward` attribute (plus the key attributes, which DynamoDB requires listed),
+    // returning nothing. It never creates, deletes or queries a row.
+    const onlyInbound = { 'dynamodb:LeadingKeys': [INBOUND_PARTITION] };
+    this.forwarder.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['dynamodb:GetItem'],
+        resources: [props.emailsTable.tableArn],
+        conditions: { 'ForAllValues:StringEquals': onlyInbound },
+      }),
+    );
+    this.forwarder.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['dynamodb:UpdateItem'],
+        resources: [props.emailsTable.tableArn],
+        conditions: {
+          'ForAllValues:StringEquals': { ...onlyInbound, 'dynamodb:Attributes': ['pk', 'sk', 'forward'] },
+          StringEqualsIfExists: { 'dynamodb:ReturnValues': ['NONE'] },
+        },
+      }),
+    );
     // Lists the rules; never edits them.
     props.forwardingRulesTable.grant(this.forwarder, 'dynamodb:Scan');
     props.mailBucket.grantRead(this.forwarder, `${INBOUND_PREFIX}*`);
-    grantSesSend(this.forwarder, props.emailDomain, props.configurationSetName);
+    // Sends only From the forwarding address.
+    grantSesSend(this.forwarder, props.emailDomain, props.configurationSetName, { fromAddress: `${FORWARDER_LOCAL_PART}@${props.emailDomain}` });
 
     // A message keeps its first enqueue time when dead-lettered, so both keep the 14-day maximum.
     this.deadLetterQueue = new Queue(this, 'ForwarderDlq', {

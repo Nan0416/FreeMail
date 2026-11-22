@@ -12,8 +12,11 @@ import type { IFunction } from 'aws-cdk-lib/aws-lambda';
  * sesIdentity `import` mode), and SES authorizes such a send against the configuration-set
  * resource as well as the identity. Granting the identity alone fails at runtime, not at deploy,
  * with a 403 AccessDeniedException naming the configuration set.
+ *
+ * `fromAddress` narrows the grant to that one sender (`ses:FromAddress`, which SES takes from the
+ * request's `FromEmailAddress`): the forwarder only ever sends From `forwarding@<domain>`.
  */
-export function grantSesSend(fn: IFunction, emailDomain: string, configurationSetName: string): void {
+export function grantSesSend(fn: IFunction, emailDomain: string, configurationSetName: string, options: { readonly fromAddress?: string } = {}): void {
   const stack = Stack.of(fn);
   fn.addToRolePolicy(
     new PolicyStatement({
@@ -22,6 +25,7 @@ export function grantSesSend(fn: IFunction, emailDomain: string, configurationSe
         stack.formatArn({ service: 'ses', resource: 'identity', resourceName: emailDomain }),
         stack.formatArn({ service: 'ses', resource: 'configuration-set', resourceName: configurationSetName }),
       ],
+      ...(options.fromAddress !== undefined ? { conditions: { StringEquals: { 'ses:FromAddress': options.fromAddress } } } : {}),
     }),
   );
 }
