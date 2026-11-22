@@ -21,6 +21,8 @@ export interface ServiceConfig {
   readonly apiKeysTable: string;
   /** Sent + inbound email metadata. */
   readonly emailsTable: string;
+  /** Forwarding rules, managed by the `/forwarding-rules` routes. */
+  readonly forwardingRulesTable: string;
   /** Outbound large-attachment download tokens (#14). */
   readonly downloadTokensTable: string;
   /** Inbound raw MIME, extracted attachments, and outbound large attachments. */
@@ -45,6 +47,7 @@ const ENV_SCHEMA = z.object({
   AUTH_TABLE: envString(),
   API_KEYS_TABLE: envString(),
   EMAILS_TABLE: envString(),
+  FORWARDING_RULES_TABLE: envString(),
   DOWNLOAD_TOKENS_TABLE: envString(),
   MAIL_BUCKET: envString(),
   QUARANTINE_BUCKET: envString(),
@@ -80,6 +83,7 @@ export function readServiceConfig(env: NodeJS.ProcessEnv = process.env): Service
     authTable: parsed.AUTH_TABLE,
     apiKeysTable: parsed.API_KEYS_TABLE,
     emailsTable: parsed.EMAILS_TABLE,
+    forwardingRulesTable: parsed.FORWARDING_RULES_TABLE,
     downloadTokensTable: parsed.DOWNLOAD_TOKENS_TABLE,
     mailBucket: parsed.MAIL_BUCKET,
     quarantineBucket: parsed.QUARANTINE_BUCKET,

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getAuthorizerConfig } from '../../src/handlers/authorizer-config.js';
+import { getForwardingConfig } from '../../src/handlers/forwarding-config.js';
 import { getInboundConfig } from '../../src/handlers/inbound-config.js';
 import { getMcpConfig } from '../../src/handlers/mcp-config.js';
 import { getSesEventsConfig } from '../../src/handlers/ses-events-config.js';
@@ -80,5 +81,27 @@ describe('the SES events handler config', () => {
   it('needs only the emails table', () => {
     expect(getSesEventsConfig({ EMAILS_TABLE: 'emails' })).toEqual({ emailsTable: 'emails' });
     expect(() => getSesEventsConfig({})).toThrow(/EMAILS_TABLE/);
+  });
+});
+
+describe('the forwarding handler config', () => {
+  it('needs the emails and rules tables, the mail bucket, the email domain, and the configuration set', () => {
+    expect(
+      getForwardingConfig({
+        EMAILS_TABLE: 'emails',
+        FORWARDING_RULES_TABLE: 'rules',
+        MAIL_BUCKET: 'bucket',
+        EMAIL_DOMAIN: 'example.com',
+        SES_CONFIGURATION_SET: 'cfg',
+      }),
+    ).toEqual({
+      emailsTable: 'emails',
+      forwardingRulesTable: 'rules',
+      mailBucket: 'bucket',
+      emailDomain: 'example.com',
+      sesConfigurationSet: 'cfg',
+    });
+    // Every forward goes through the configuration set (suppression + bounce tracking).
+    expect(() => getForwardingConfig({ EMAILS_TABLE: 'emails', MAIL_BUCKET: 'bucket', EMAIL_DOMAIN: 'x.com' })).toThrow(/FORWARDING_RULES_TABLE, .*SES_CONFIGURATION_SET/);
   });
 });

@@ -25,7 +25,7 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2, Context } from 'aws-lambda';
 import { DependencyFactory } from '../dependencies/index.js';
 import { authMiddleware, errorHandler, notFoundHandler } from '../middleware/index.js';
-import { AuthEndpoints, DownloadEndpoints, EmailEndpoints, KeysEndpoints, ServiceApiEndpoints } from '../routes/index.js';
+import { AuthEndpoints, DownloadEndpoints, EmailEndpoints, ForwardingRuleEndpoints, KeysEndpoints, ServiceApiEndpoints } from '../routes/index.js';
 import { FreeMailService } from './service.js';
 import { getServiceConfig } from './service-config.js';
 import { toApiGatewayHandler, type ApiGatewayHandler } from './serverless-express.js';
@@ -53,6 +53,7 @@ function buildHandler(): ApiGatewayHandler {
       new KeysEndpoints(deps.apiKeyService),
       new EmailEndpoints(deps.emailService, deps.emailReadService, deps.attachmentService),
       new DownloadEndpoints(deps.attachmentService),
+      new ForwardingRuleEndpoints(deps.forwardingRuleService),
       new ServiceApiEndpoints(deps.emailReadService),
     ],
     notFoundHandler,

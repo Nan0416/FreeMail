@@ -44,6 +44,30 @@ export function optionalString(body: Record<string, unknown>, field: string): st
   return value;
 }
 
+/** An optional array of strings: undefined when absent; anything else is a 400. */
+export function optionalStringArray(body: Record<string, unknown>, field: string): string[] | undefined {
+  const value = body[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw authErrors.invalidRequest(`"${field}" must be an array of strings.`);
+  }
+  return value as string[];
+}
+
+/** An optional boolean: undefined when absent; anything else is a 400. */
+export function optionalBoolean(body: Record<string, unknown>, field: string): boolean | undefined {
+  const value = body[field];
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== 'boolean') {
+    throw authErrors.invalidRequest(`"${field}" must be true or false.`);
+  }
+  return value;
+}
+
 /**
  * A required path parameter. Express only runs the route when the pattern matched, so an
  * absent value means the route pattern and the handler disagree — a 400 is the honest

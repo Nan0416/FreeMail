@@ -41,7 +41,12 @@ function synthWithInbound(emailDomain = 'mail.example.com', zoneName = 'example.
     emailDomain,
     region: 'us-east-1',
     emailsTable,
-    inbound: { mailBucket, emailsTable, quarantineBucket: new Bucket(stack, 'QuarantineBucket') },
+    inbound: {
+      mailBucket,
+      emailsTable,
+      quarantineBucket: new Bucket(stack, 'QuarantineBucket'),
+      forwardingRulesTable: new Table(stack, 'ForwardingRulesTable', { partitionKey: { name: 'id', type: AttributeType.STRING } }),
+    },
   });
   linkOwnDownloads(stack, ses);
   return Template.fromStack(stack);
@@ -63,7 +68,12 @@ function synthCreateWithInbound(emailDomain = 'mail.example.com', zoneName = 'ex
     region: 'us-east-1',
     sesIdentityMode: 'create',
     emailsTable,
-    inbound: { mailBucket, emailsTable, quarantineBucket: new Bucket(stack, 'QuarantineBucket') },
+    inbound: {
+      mailBucket,
+      emailsTable,
+      quarantineBucket: new Bucket(stack, 'QuarantineBucket'),
+      forwardingRulesTable: new Table(stack, 'ForwardingRulesTable', { partitionKey: { name: 'id', type: AttributeType.STRING } }),
+    },
   });
   linkOwnDownloads(stack, ses);
   return Template.fromStack(stack);

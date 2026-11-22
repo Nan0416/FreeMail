@@ -1,10 +1,9 @@
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Duration, Stack } from 'aws-cdk-lib';
+import { Duration } from 'aws-cdk-lib';
 import { ApiMapping, CorsHttpMethod, DomainName, HttpApi, HttpMethod } from 'aws-cdk-lib/aws-apigatewayv2';
 import { Certificate, CertificateValidation } from 'aws-cdk-lib/aws-certificatemanager';
 import type { Table } from 'aws-cdk-lib/aws-dynamodb';
-import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Architecture, Runtime } from 'aws-cdk-lib/aws-lambda';
 import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { AaaaRecord, ARecord, RecordTarget } from 'aws-cdk-lib/aws-route53';
@@ -16,6 +15,7 @@ import { Construct } from 'constructs';
 import type { AttachmentsConfig } from '@freemail/shared/config';
 import type { CustomDomainProps } from './web.js';
 import { SELF_CONTAINED_BUNDLING } from './bundling.js';
+import { grantSesSend } from './ses-grants.js';
 
 const HANDLERS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'service', 'src', 'handlers');
 
@@ -28,6 +28,8 @@ export interface ApiConstructProps {
   readonly emailsTable: Table;
   /** Outbound large-attachment download tokens (#14) — send mints them, `GET /d/{token}` claims them. */
   readonly downloadTokensTable: Table;
+  /** Forwarding rules — the `/forwarding-rules` routes edit them; the forwarder only reads them. */
+  readonly forwardingRulesTable: Table;
   /** Inbound raw MIME + extracted attachments, sent MIME + attachment copies, outbound large attachments. */
   readonly mailBucket: IBucket;
   /** Raw MIME of Errors-folder messages — the REST read routes presign their `.eml` downloads. */
@@ -128,7 +130,7 @@ export class ApiConstruct extends Construct {
       // are entirely unaffected.
       corsPreflight: {
         allowOrigins: [props.appOrigin],
-        allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.POST, CorsHttpMethod.DELETE, CorsHttpMethod.OPTIONS],
+        allowMethods: [CorsHttpMethod.GET, CorsHttpMethod.POST, CorsHttpMethod.PUT, CorsHttpMethod.DELETE, CorsHttpMethod.OPTIONS],
         // Only what the SPA actually sends. `content-type` is required because Layer 3
         // makes every cookie-authenticated mutation carry `application/json`.
         allowHeaders: ['content-type'],
@@ -154,6 +156,7 @@ export class ApiConstruct extends Construct {
         QUARANTINE_BUCKET: props.quarantineBucket.bucketName,
         EMAIL_DOMAIN: props.emailDomain,
         SES_CONFIGURATION_SET: props.sesConfigurationSetName,
+        FORWARDING_RULES_TABLE: props.forwardingRulesTable.tableName,
         ...embedEnv(props.attachments),
         // Public base for `/d/{token}` links — the API's own domain (no bucket exposure).
         DOWNLOAD_BASE_URL: this.downloadBaseUrl,
@@ -166,6 +169,8 @@ export class ApiConstruct extends Construct {
     props.emailsTable.grantReadWriteData(this.restHandler);
     // Large-attachment tokens: send mints them, GET /d/{token} claims (conditional update).
     props.downloadTokensTable.grantReadWriteData(this.restHandler);
+    // The /forwarding-rules routes list, create, update, and delete rules.
+    props.forwardingRulesTable.grantReadWriteData(this.restHandler);
     // The read routes presign the original (.eml) and attachment downloads, and re-parse raw
     // inbound MIME only for a legacy row with no stored body — scoped to these prefixes only.
     props.mailBucket.grantRead(this.restHandler, 'inbound/*');
@@ -192,7 +197,7 @@ export class ApiConstruct extends Construct {
     props.quarantineBucket.grantRead(this.restHandler);
 
     // The REST `/emails` route sends.
-    this.grantSesSend(this.restHandler, props.emailDomain, props.sesConfigurationSetName);
+    grantSesSend(this.restHandler, props.emailDomain, props.sesConfigurationSetName);
 
     // MCP server: its own handler, but reuses the same EmailService (send) and, when
     // inbound is enabled, the same EmailReadService (#13 read tools). It gets the
@@ -232,7 +237,7 @@ export class ApiConstruct extends Construct {
     // makes a HEAD on a missing upload a 404 rather than a 403 — but reads no other object.)
     props.mailBucket.grantPut(this.mcpHandler, 'uploads/*');
     props.mailBucket.grantRead(this.mcpHandler, 'uploads/*');
-    this.grantSesSend(this.mcpHandler, props.emailDomain, props.sesConfigurationSetName);
+    grantSesSend(this.mcpHandler, props.emailDomain, props.sesConfigurationSetName);
     // #13 read tools: read-only access scoped to exactly what EmailReadService touches —
     // the emails table (list/get), stored bodies, the inbound raw MIME + extracted-attachment
     // prefixes and the sent raw MIME archive (#29) (legacy body re-parse + presigns), and the
@@ -304,6 +309,13 @@ export class ApiConstruct extends Construct {
     });
     this.addRestRoute('/emails/{id}/raw', HttpMethod.GET, { authorized: true });
 
+    // Forwarding rules (access-token only — the handler enforces the scheme: one rule could
+    // copy every received message out, so an agent's API key must not edit them).
+    this.addRestRoute('/forwarding-rules', HttpMethod.GET, { authorized: true });
+    this.addRestRoute('/forwarding-rules', HttpMethod.POST, { authorized: true });
+    this.addRestRoute('/forwarding-rules/{id}', HttpMethod.PUT, { authorized: true });
+    this.addRestRoute('/forwarding-rules/{id}', HttpMethod.DELETE, { authorized: true });
+
     // Outbound large-attachment download (#14) — PUBLIC (no authorizer): the token IS the
     // capability. The handler validates it and 302s to a short-lived presigned GET, or
     // returns a uniform 404 for any unknown/expired/revoked/exhausted token.
@@ -373,39 +385,6 @@ export class ApiConstruct extends Construct {
       integration: this.restIntegration,
       ...(opts.authorized ? { authorizer: this.authorizer } : {}),
     });
-  }
-
-  /**
-   * Grant a handler SES send under the domain identity (SES domain identities cover
-   * subdomains too). `SendEmail` with raw content also authorizes `SendRawEmail`.
-   * Shared by the REST send route and the MCP server, which send through the same
-   * EmailService.
-   *
-   * BOTH the identity and the configuration-set ARN are required. The sender passes
-   * `ConfigurationSetName` on every call (that is how suppression and bounce/complaint
-   * events keep working in sesIdentity `import` mode), and SES authorizes such a send
-   * against the configuration-set resource as well as the identity. Granting the
-   * identity alone fails at runtime, not at deploy, with a 403 AccessDeniedException
-   * naming the configuration set.
-   */
-  private grantSesSend(fn: NodejsFunction, emailDomain: string, configurationSetName: string): void {
-    fn.addToRolePolicy(
-      new PolicyStatement({
-        actions: ['ses:SendEmail', 'ses:SendRawEmail'],
-        resources: [
-          Stack.of(this).formatArn({
-            service: 'ses',
-            resource: 'identity',
-            resourceName: emailDomain,
-          }),
-          Stack.of(this).formatArn({
-            service: 'ses',
-            resource: 'configuration-set',
-            resourceName: configurationSetName,
-          }),
-        ],
-      }),
-    );
   }
 
   private nodeFunction(

@@ -29,6 +29,12 @@ export class DataConstruct extends Construct {
   readonly emailsTable: Table;
   /** Large-attachment download tokens (TTL on `ttl`). */
   readonly downloadTokensTable: Table;
+  /**
+   * Forwarding rules: edited in the web app, read by the forwarder on every received message.
+   * Created whether or not inbound is enabled, like the quarantine bucket; with inbound off
+   * nothing is received, so nothing reads it.
+   */
+  readonly forwardingRulesTable: Table;
   /** Inbound raw MIME (expiring), stored bodies, parsed attachments, sent MIME + attachments. */
   readonly mailBucket: Bucket;
   /**
@@ -77,6 +83,12 @@ export class DataConstruct extends Construct {
       partitionKey: { name: 'token', type: STRING },
       billingMode: BillingMode.PAY_PER_REQUEST,
       timeToLiveAttribute: 'ttl',
+      removalPolicy: RemovalPolicy.RETAIN,
+    });
+
+    this.forwardingRulesTable = new Table(this, 'ForwardingRulesTable', {
+      partitionKey: { name: 'id', type: STRING },
+      billingMode: BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.RETAIN,
     });
 

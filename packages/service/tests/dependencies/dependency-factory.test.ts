@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { DependencyFactory } from '../../src/dependencies/index.js';
+import { DependencyFactory, ForwardingDependencyFactory } from '../../src/dependencies/index.js';
 import { InboundDependencyFactory } from '../../src/dependencies/inbound-dependency-factory.js';
 import { McpDependencyFactory } from '../../src/dependencies/mcp-dependency-factory.js';
+import { DdbForwardingRulesDao } from '../../src/data/ddb-forwarding-rules-dao.js';
 import type { McpConfig } from '../../src/handlers/mcp-config.js';
 import type { ServiceConfig } from '../../src/handlers/service-config.js';
 
@@ -9,6 +10,7 @@ const STAGE_CONFIG: ServiceConfig = {
   authTable: 'auth',
   apiKeysTable: 'keys',
   emailsTable: 'emails',
+  forwardingRulesTable: 'rules',
   downloadTokensTable: 'tokens',
   mailBucket: 'bucket',
   emailDomain: 'example.com',
@@ -81,5 +83,20 @@ describe('InboundDependencyFactory', () => {
     expect(deps.processor).toBeDefined();
     expect(deps.emailsDao).toBeDefined();
     expect(deps.objectStore).toBeDefined();
+  });
+});
+
+describe('ForwardingDependencyFactory', () => {
+  it('wires the processor over the rules table and the repos it exposes', () => {
+    const deps = new ForwardingDependencyFactory({
+      emailsTable: 'emails',
+      forwardingRulesTable: 'rules',
+      mailBucket: 'bucket',
+      emailDomain: 'example.com',
+      sesConfigurationSet: 'cfg',
+    }).build();
+    expect(deps.processor).toBeDefined();
+    expect(deps.emailsDao).toBeDefined();
+    expect(deps.forwardingRulesDao).toBeInstanceOf(DdbForwardingRulesDao);
   });
 });

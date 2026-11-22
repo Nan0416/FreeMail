@@ -281,6 +281,28 @@ SES receipt rule → writes raw MIME to the mail S3 bucket → a parser Lambda e
 
 **Raw messages are kept for 14 days once processed.** After the parser has stored what a message needs (its body and attachments, or its quarantined copy), SES's raw copy under `inbound/` is only needed for **Download original (.eml)**: the parser tags it, and a lifecycle rule deletes tagged copies after 14 days. For fully processed mail the `.eml` download is offered only while it is younger than that, and a body part over 1 MB keeps only its truncated stored copy afterwards. A raw copy that is still the only copy of a message is never tagged and never expires: a message whose processing dead-lettered (redrive it from the parser DLQ, which keeps events for 14 days), and anything received before tagging existed. Sent mail's original is kept permanently.
 
+### Forwarding
+
+**Forwarding rules** re-send received mail to outside addresses. Manage them in the web app under **Settings → Forwarding** (shown when inbound is enabled): create, edit, pause or delete a rule. A saved rule applies to the next received message. Only the signed-in owner can change rules; an API key can't, since one rule could copy all your mail out. The rules live in the stack's forwarding rules table (`/forwarding-rules` in the REST API).
+
+A rule has a name, conditions, and the addresses to forward to:
+
+- **The sender is always checked.** Every rule, whatever its conditions, matches only mail that passed SES's DMARC check for its From domain. Anyone can write any From header, and the forwarded copy comes from your domain, so its recipient can't check the original sender. Mail from a domain with no DMARC record (SES reports `dmarc=none`), or that failed DMARC on the way (some forwarding services and mailing lists), isn't forwarded unless the rule has **Forward even if the sender isn't verified (skip DMARC)** on (`ignoreDmarcVerification`). That rule's From entries then match a From anyone can forge, so use it only where a forged forward is harmless.
+- **From** (`senderDomains` / `senderAddresses`) matches the From address.
+- **To or Cc** (`recipientDomains` / `recipientAddresses`) matches any To or Cc header address. These are the addresses the message was written to. The SMTP recipient is always one of your own addresses, and a Bcc'd recipient isn't listed.
+- Any one entry of a kind is enough. A rule with both kinds needs both to match. Domains match exactly (`example.com` doesn't match `mail.example.com`), case-insensitively. A message that matches several rules is sent once, to all their addresses together.
+- A paused rule matches nothing. A rule needs at least one condition and one target; there can be up to 100 rules with up to 50 entries per list, and a target on your own email domain is refused (it would loop). One message is forwarded to at most 50 addresses in all: if the rules it matches name more, the first 50 are used (and a warning is logged).
+
+The forwarded copy is the original message with a few headers rewritten. It comes from `forwarding@<email domain>`, with the display name `Alice (alice@x.com) via <email domain>`, and its Reply-To is the original sender, so replies go to them. The body and attachments are unchanged. Because SES signs the copy with your domain, it passes SPF, DKIM and DMARC as your domain.
+
+- **Never forwarded:** spam-flagged and Errors-folder mail, mail that fails DMARC (unless its rule opts out), a message carrying the `X-FreeMail-Forwarded` header (a copy that came back here), mail addressed to `forwarding@<email domain>` or marked `Auto-Submitted: auto-replied` (replies to a forward, which could otherwise loop between a rule and an outside auto-responder), and targets on your own email domain. Automatic notifications (`Auto-Submitted: auto-generated`) are forwarded like any other mail.
+- **Unverified senders:** when a rule that skips DMARC forwards mail whose sender didn't pass, the copy's From name says `(unverified)` and it carries `X-FreeMail-Sender-Verified: no`.
+- **Once, normally:** the forward is recorded on the received message's row (`forward`), and a repeated notification finds it there. Two copies of one notification processed at the same moment, or a crash between the send and the record, can forward a message twice.
+- **Failures:** notifications reach the forwarder through an SQS queue. One it fails on (SES or AWS errors) is retried for about half an hour (5 tries, 6 minutes apart), then kept for 14 days in the dead-letter queue whose name contains `ForwarderDlq`. To retry those, use **Start DLQ redrive** on that queue in the SQS console. To pause forwarding, disable the forwarder Lambda's SQS trigger; notifications wait in the queue (up to 14 days) until it's enabled again.
+- **Bounces:** a bounce from a target goes through the configuration set like any send, so SES suppresses that address afterwards.
+- **SES sandbox:** until the account has production access ([§4](#4-ses-production-access-sandbox-exit)), SES delivers only to verified addresses, so a forward to any other address is rejected. A rejection like that (or any message SES refuses to send) is logged and skipped, not retried; throttling and AWS errors are retried as above.
+- Forwarded copies don't appear in the Sent folder.
+
 ## 8. Attachments
 
 Attachment bytes never travel through the API. Sending a file is two steps:

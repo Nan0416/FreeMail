@@ -77,6 +77,23 @@ vi.mock('../../src/services/api-key-service.js', () => ({
 }));
 vi.mock('../../src/data/ddb-api-keys-dao.js', () => ({ DdbApiKeysDao: class {} }));
 
+// Stub the forwarding-rule service: these tests cover routing, guards and body parsing; the
+// service's own tests cover what a rule may contain.
+const rulesMocks = vi.hoisted(() => ({
+  list: vi.fn(),
+  create: vi.fn(),
+  update: vi.fn(),
+  remove: vi.fn(),
+}));
+vi.mock('../../src/services/forwarding-rule-service.js', () => ({
+  ForwardingRuleService: class {
+    listForwardingRules = rulesMocks.list;
+    createForwardingRule = rulesMocks.create;
+    updateForwardingRule = rulesMocks.update;
+    deleteForwardingRule = rulesMocks.remove;
+  },
+}));
+
 // Stub the attachment service so POST /attachments/uploads and the public GET /d/{token}
 // exercise routing/validation and the redirect/uniform-404 plumbing without DDB or S3.
 const attachmentMocks = vi.hoisted(() => ({
@@ -105,6 +122,10 @@ const ROUTES: ReadonlyArray<readonly [string, Record<string, string>]> = [
   ['POST /keys', {}],
   ['GET /keys', {}],
   ['DELETE /keys/{id}', { id: 'key-1' }],
+  ['GET /forwarding-rules', {}],
+  ['POST /forwarding-rules', {}],
+  ['PUT /forwarding-rules/{id}', { id: 'rule-1' }],
+  ['DELETE /forwarding-rules/{id}', { id: 'rule-1' }],
   ['POST /emails', {}],
   ['POST /attachments/uploads', {}],
   ['GET /emails', {}],
@@ -183,6 +204,7 @@ function lambdaContext(scheme: string | undefined): Record<string, unknown> {
 beforeEach(() => {
   process.env.AUTH_TABLE = 'auth-test';
   process.env.API_KEYS_TABLE = 'keys-test';
+  process.env.FORWARDING_RULES_TABLE = 'rules-test';
   process.env.EMAIL_DOMAIN = 'example.com';
   process.env.EMAILS_TABLE = 'emails-test';
   process.env.MAIL_BUCKET = 'mail-test';
@@ -204,6 +226,7 @@ beforeEach(() => {
 afterEach(() => {
   delete process.env.AUTH_TABLE;
   delete process.env.API_KEYS_TABLE;
+  delete process.env.FORWARDING_RULES_TABLE;
   delete process.env.EMAIL_DOMAIN;
   delete process.env.EMAILS_TABLE;
   delete process.env.MAIL_BUCKET;
@@ -220,6 +243,10 @@ describe('rest handler — the Express routes match the CDK route table', () => 
     keysMocks.create.mockResolvedValue({ id: 'k', name: null, createdAt: 'now', key: 'raw' });
     keysMocks.list.mockResolvedValue({ keys: [] });
     keysMocks.revoke.mockResolvedValue(undefined);
+    rulesMocks.list.mockResolvedValue({ rules: [] });
+    rulesMocks.create.mockResolvedValue({ id: 'rule-1' });
+    rulesMocks.update.mockResolvedValue({ id: 'rule-1' });
+    rulesMocks.remove.mockResolvedValue(undefined);
     readMocks.listEmails.mockResolvedValue({ emails: [] });
     readMocks.getEmail.mockResolvedValue({ id: 'h', direction: 'inbound' });
     readMocks.getAttachmentUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
@@ -267,6 +294,132 @@ describe('rest handler — key-management is access-token-only', () => {
     const res = await invoke('POST /keys');
     expect(res.statusCode).toBe(403);
     expect(JSON.parse(res.body ?? '{}').error).toBe('forbidden');
+  });
+});
+
+describe('rest handler — forwarding rules are access-token-only', () => {
+  // One rule can copy every received message to an outside address: an agent's API key must
+  // never be able to add one.
+  it.each(['GET /forwarding-rules', 'POST /forwarding-rules', 'PUT /forwarding-rules/{id}', 'DELETE /forwarding-rules/{id}'])(
+    'rejects an x-api-key credential on %s with 403 forbidden',
+    async (routeKey) => {
+      const res = await invoke(routeKey, { lambda: lambdaContext('apiKey'), body: {} });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.body ?? '{}').error).toBe('forbidden');
+    },
+  );
+
+  it('also rejects a missing scheme, or no authorizer context (fails closed)', async () => {
+    for (const lambda of [lambdaContext(undefined), undefined]) {
+      const res = await invoke('POST /forwarding-rules', { lambda, body: {} });
+      expect(res.statusCode).toBe(403);
+    }
+    expect(rulesMocks.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('rest handler — forwarding rules reach the service', () => {
+  const FIELDS = {
+    name: 'Vendor invoices',
+    enabled: true,
+    senderDomains: ['billing.example.com'],
+    senderAddresses: [],
+    recipientDomains: [],
+    recipientAddresses: [],
+    forwardTo: ['alex@example.com'],
+    ignoreDmarcVerification: false,
+  };
+
+  beforeEach(() => {
+    rulesMocks.list.mockReset();
+    rulesMocks.create.mockReset();
+    rulesMocks.update.mockReset();
+    rulesMocks.remove.mockReset();
+  });
+
+  it('lists: GET /forwarding-rules → 200', async () => {
+    rulesMocks.list.mockResolvedValue({ rules: [] });
+    const res = await invoke('GET /forwarding-rules', {
+      lambda: lambdaContext('access'),
+      contentType: null,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body ?? '{}')).toEqual({ rules: [] });
+    expect(rulesMocks.list).toHaveBeenCalledWith({});
+  });
+
+  it('creates: POST /forwarding-rules → 201 with the body’s fields', async () => {
+    rulesMocks.create.mockResolvedValue({ ...FIELDS, id: 'rule-1' });
+    const res = await invoke('POST /forwarding-rules', {
+      lambda: lambdaContext('access'),
+      body: FIELDS,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.body ?? '{}').id).toBe('rule-1');
+    expect(rulesMocks.create).toHaveBeenCalledWith(FIELDS);
+  });
+
+  it('defaults absent fields: lists empty, enabled on, DMARC checked', async () => {
+    rulesMocks.create.mockResolvedValue({ id: 'rule-1' });
+    await invoke('POST /forwarding-rules', {
+      lambda: lambdaContext('access'),
+      body: { name: 'x', senderDomains: ['a.com'], forwardTo: ['b@c.com'] },
+    });
+    expect(rulesMocks.create).toHaveBeenCalledWith({
+      name: 'x',
+      enabled: true,
+      senderDomains: ['a.com'],
+      senderAddresses: [],
+      recipientDomains: [],
+      recipientAddresses: [],
+      forwardTo: ['b@c.com'],
+      ignoreDmarcVerification: false,
+    });
+  });
+
+  it.each([
+    ['a non-array list', { forwardTo: 'b@c.com' }, '"forwardTo" must be an array of strings.'],
+    ['a non-string value', { senderDomains: [1] }, '"senderDomains" must be an array of strings.'],
+    ['a non-boolean flag', { ignoreDmarcVerification: 'yes' }, '"ignoreDmarcVerification" must be true or false.'],
+    ['a non-string name', { name: 5 }, '"name" must be a string.'],
+  ])('rejects %s with 400 before reaching the service', async (_label, body, message) => {
+    const res = await invoke('POST /forwarding-rules', { lambda: lambdaContext('access'), body });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.body ?? '{}')).toEqual({ error: 'invalid_request', message });
+    expect(rulesMocks.create).not.toHaveBeenCalled();
+  });
+
+  it('updates: PUT /forwarding-rules/{id} → 200 with the id and fields', async () => {
+    rulesMocks.update.mockResolvedValue({ ...FIELDS, id: 'rule-1' });
+    const res = await invoke('PUT /forwarding-rules/{id}', {
+      lambda: lambdaContext('access'),
+      params: { id: 'rule-1' },
+      body: { ...FIELDS, enabled: false },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(rulesMocks.update).toHaveBeenCalledWith({ ...FIELDS, enabled: false, id: 'rule-1' });
+  });
+
+  it('maps an unknown rule on update to a 404', async () => {
+    rulesMocks.update.mockRejectedValue(emailErrors.notFound('No forwarding rule has that id.'));
+    const res = await invoke('PUT /forwarding-rules/{id}', {
+      lambda: lambdaContext('access'),
+      params: { id: 'gone' },
+      body: FIELDS,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(JSON.parse(res.body ?? '{}').error).toBe('not_found');
+  });
+
+  it('deletes: DELETE /forwarding-rules/{id} → 204, no content type needed', async () => {
+    rulesMocks.remove.mockResolvedValue(undefined);
+    const res = await invoke('DELETE /forwarding-rules/{id}', {
+      lambda: lambdaContext('access'),
+      params: { id: 'rule-1' },
+      contentType: null,
+    });
+    expect(res.statusCode).toBe(204);
+    expect(rulesMocks.remove).toHaveBeenCalledWith({ id: 'rule-1' });
   });
 });
 
@@ -537,8 +690,10 @@ describe('rest handler — #47 Layer 3: state-changing routes require applicatio
   // wearing `requireJsonContentType` can never disagree.
   const gated = [...JSON_REQUIRED_ROUTES];
 
-  it('gates exactly the documented six routes', () => {
-    expect(gated.sort()).toEqual(['POST /auth/login', 'POST /auth/logout', 'POST /auth/refresh', 'POST /emails', 'POST /keys', 'POST /attachments/uploads'].sort());
+  it('gates exactly the documented eight routes', () => {
+    expect(gated.sort()).toEqual(
+      ['POST /auth/login', 'POST /auth/logout', 'POST /auth/refresh', 'POST /emails', 'POST /keys', 'POST /attachments/uploads', 'POST /forwarding-rules', 'PUT /forwarding-rules/{id}'].sort(),
+    );
   });
 
   it.each(gated)('rejects %s with 415 when the content type is a simple-request type', async (routeKey) => {

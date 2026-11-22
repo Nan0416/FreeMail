@@ -85,7 +85,7 @@ describe('ApiConstruct', () => {
         AllowOrigins: ['https://app.example.com'],
         AllowCredentials: true,
         AllowHeaders: ['content-type'],
-        AllowMethods: Match.arrayWith(['GET', 'POST', 'DELETE', 'OPTIONS']),
+        AllowMethods: Match.arrayWith(['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS']),
       },
     });
   });
@@ -126,14 +126,14 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('exposes 16 routes: 4 public (3 auth + download), 11 behind the Lambda authorizer (me + 3 keys + send + upload + 4 reads + mcp), 1 IAM (/api/*)', () => {
+  it('exposes 20 routes: 4 public (3 auth + download), 15 behind the Lambda authorizer (me + 3 keys + 4 forwarding rules + send + upload + 4 reads + mcp), 1 IAM (/api/*)', () => {
     const template = synth();
     // 3 auth routes, not 4: #42 folded enrollment into login and dropped /auth/set-password.
-    template.resourceCountIs('AWS::ApiGatewayV2::Route', 16);
+    template.resourceCountIs('AWS::ApiGatewayV2::Route', 20);
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const authorizationTypes = routes.map((r) => r.Properties.AuthorizationType ?? 'NONE');
     // The public GET /d/{token} download is unauthenticated (the token is the capability).
-    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(11);
+    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(15);
     expect(authorizationTypes.filter((t) => t === 'AWS_IAM')).toHaveLength(1);
     expect(authorizationTypes.filter((t) => t === 'NONE')).toHaveLength(4);
   });
@@ -144,6 +144,27 @@ describe('ApiConstruct', () => {
     const api = byKey('ANY /api/{proxy+}');
     expect(api?.Properties.AuthorizationType).toBe('AWS_IAM');
     expect(api?.Properties.Target).toEqual(byKey('GET /me')?.Properties.Target);
+  });
+
+  it('registers the forwarding-rule routes behind the authorizer, on the REST handler', () => {
+    const routes = Object.values(synth().findResources('AWS::ApiGatewayV2::Route'));
+    const byKey = (key: string) => routes.find((r) => r.Properties.RouteKey === key);
+    for (const key of ['GET /forwarding-rules', 'POST /forwarding-rules', 'PUT /forwarding-rules/{id}', 'DELETE /forwarding-rules/{id}']) {
+      expect(byKey(key)?.Properties.AuthorizationType, key).toBe('CUSTOM');
+      expect(byKey(key)?.Properties.Target, key).toEqual(byKey('GET /me')?.Properties.Target);
+    }
+  });
+
+  it('gives the REST handler the forwarding rules table', () => {
+    const template = synth();
+    template.hasResourceProperties('AWS::Lambda::Function', {
+      Description: REST_DESCRIPTION,
+      Environment: { Variables: Match.objectLike({ FORWARDING_RULES_TABLE: Match.anyValue() }) },
+    });
+    const actions = roleActions(template, REST_DESCRIPTION);
+    for (const action of ['dynamodb:PutItem', 'dynamodb:UpdateItem', 'dynamodb:DeleteItem', 'dynamodb:Scan']) {
+      expect(actions, action).toContain(action);
+    }
   });
 
   it('registers POST /attachments/uploads behind the authorizer', () => {
