@@ -79,19 +79,18 @@ export interface CreateSentEmailInput {
   readonly status?: SentStatus;
   /**
    * S3 pointer to the archived composed raw MIME (`sent/<id>`) — permanent; backs the `.eml`
-   * download (and the body of a legacy row stored before `body`). Absent on a pre-#29 row.
+   * download. Absent on a pre-#29 row.
    */
   readonly rawS3Key?: string;
   /** Short failure reason on a `send_failed` row — server-side only, never surfaced in the read DTO. */
   readonly error?: string;
   /**
    * One descriptor per attachment the message carried, in request order, each pointing at its
-   * permanent copy `attachments/sent/<id>/<index>` (embedded or linked alike; rows from before
-   * direct uploads point linked ones at `attachments/outbound/*`). Absent on a row written
-   * before attachments were recorded (the read path treats that as none).
+   * permanent copy `attachments/sent/<id>/<index>` (embedded or linked alike). Absent on a row
+   * written before attachments were recorded (the read path treats that as none).
    */
   readonly attachments?: readonly SentAttachmentDescriptor[];
-  /** The body as sent (download links included). Absent on a row written before bodies were stored. */
+  /** The body as sent (download links included). Rows from before bodies were stored were backfilled. */
   readonly body?: StoredEmailBody;
   /** `Reply-To` addresses the message carried, if any. */
   readonly replyTo?: readonly string[];

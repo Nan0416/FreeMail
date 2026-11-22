@@ -171,15 +171,12 @@ export class ApiConstruct extends Construct {
     props.downloadTokensTable.grantReadWriteData(this.restHandler);
     // The /forwarding-rules routes list, create, update, and delete rules.
     props.forwardingRulesTable.grantReadWriteData(this.restHandler);
-    // The read routes presign the original (.eml) and attachment downloads, and re-parse raw
-    // inbound MIME only for a legacy row with no stored body — scoped to these prefixes only.
+    // The read routes presign the original (.eml) and attachment downloads — scoped to these
+    // prefixes only.
     props.mailBucket.grantRead(this.restHandler, 'inbound/*');
     props.mailBucket.grantRead(this.restHandler, 'attachments/inbound/*');
-    // Legacy linked attachments (before direct uploads): GET /d/{token} and the attachment
-    // route still presign them. Nothing writes here any more.
-    props.mailBucket.grantRead(this.restHandler, 'attachments/outbound/*');
-    // Sent raw MIME archive (#29): the send route writes it; the read routes presign it as the
-    // .eml download and re-parse it only for a legacy row with no stored body.
+    // Sent raw MIME archive (#29): the send route writes it; the raw route presigns it as the
+    // .eml download.
     props.mailBucket.grantReadWrite(this.restHandler, 'sent/*');
     // Sent attachments (embedded or linked): the send route copies each upload — or a forwarded
     // stored attachment — here; the attachment route and GET /d/{token} presign them.
@@ -224,8 +221,7 @@ export class ApiConstruct extends Construct {
     props.emailsTable.grantWriteData(this.mcpHandler);
     // Send-only: mint tokens for linked attachments; the MCP handler never serves downloads.
     props.downloadTokensTable.grantWriteData(this.mcpHandler);
-    // Sent raw MIME archive (#29): send_email writes it. Write-only here — reading it back is
-    // the get_email path, granted below only when inbound (and thus the read tools) is enabled.
+    // Sent raw MIME archive (#29): send_email writes it. Write-only: MCP never reads raw MIME.
     props.mailBucket.grantWrite(this.mcpHandler, 'sent/*');
     // Sent attachments: send_email copies each upload here. Write-only — the embed bytes are
     // read from uploads/*; reading these back is a read tool, granted below like sent/*.
@@ -238,21 +234,17 @@ export class ApiConstruct extends Construct {
     props.mailBucket.grantPut(this.mcpHandler, 'uploads/*');
     props.mailBucket.grantRead(this.mcpHandler, 'uploads/*');
     grantSesSend(this.mcpHandler, props.emailDomain, props.sesConfigurationSetName);
-    // #13 read tools: read-only access scoped to exactly what EmailReadService touches —
-    // the emails table (list/get), stored bodies, the inbound raw MIME + extracted-attachment
-    // prefixes and the sent raw MIME archive (#29) (legacy body re-parse + presigns), and the
-    // sent attachments (plus legacy linked ones under attachments/outbound/*) for
-    // get_email_attachment_url. send_email depends on these too, with inbound on: replies look
-    // up the original (the table), and forwarding copies + embeds from all three attachments/*
-    // prefixes — don't narrow them without checking the send path.
+    // #13 read tools: read-only access scoped to exactly what EmailReadService touches over MCP —
+    // the emails table (list/get), stored bodies, and the received and sent attachments for
+    // get_email_attachment_url. No raw MIME: MCP offers no .eml download, and every row has a
+    // stored body. send_email depends on these too, with inbound on: replies look up the
+    // original (the table), and forwarding copies + embeds from both attachments/* prefixes —
+    // don't narrow them without checking the send path.
     // Added only when inbound is enabled (fail-closed, gates get_email too).
     if (props.inboundEnabled) {
       props.emailsTable.grantReadData(this.mcpHandler);
-      props.mailBucket.grantRead(this.mcpHandler, 'inbound/*');
       props.mailBucket.grantRead(this.mcpHandler, 'attachments/inbound/*');
-      props.mailBucket.grantRead(this.mcpHandler, 'sent/*');
       props.mailBucket.grantRead(this.mcpHandler, 'attachments/sent/*');
-      props.mailBucket.grantRead(this.mcpHandler, 'attachments/outbound/*');
       props.mailBucket.grantRead(this.mcpHandler, 'bodies/*');
     }
 

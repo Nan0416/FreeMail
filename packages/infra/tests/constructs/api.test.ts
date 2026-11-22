@@ -54,7 +54,9 @@ function roleGrantsOnPrefix(template: Template, description: string, action: str
     .flatMap((p) => (p.Properties?.PolicyDocument?.Statement ?? []) as Record<string, unknown>[])
     .some((stmt) => {
       const actions = Array.isArray(stmt.Action) ? stmt.Action : [stmt.Action];
-      return actions.some((a) => typeof a === 'string' && a.startsWith(action)) && JSON.stringify(stmt.Resource).includes(`/${prefix}`);
+      // The prefix is its own string in the ARN join, so match it whole: `sent/*` must not match
+      // `attachments/sent/*`.
+      return actions.some((a) => typeof a === 'string' && a.startsWith(action)) && JSON.stringify(stmt.Resource).includes(`"/${prefix}"`);
     });
 }
 
@@ -181,12 +183,15 @@ describe('ApiConstruct', () => {
     }
   });
 
-  it('writes nothing to the legacy attachments/outbound/* prefix — REST only presigns old links', () => {
-    const template = synth();
-    expect(roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'attachments/outbound/*')).toBe(true);
-    for (const description of [REST_DESCRIPTION, MCP_DESCRIPTION]) {
-      expect(roleGrantsOnPrefix(template, description, 's3:PutObject', 'attachments/outbound/*')).toBe(false);
+  it('grants no access to prefixes nothing uses: raw MIME for MCP, and the old linked-upload prefix', () => {
+    const template = synthWithInbound();
+    for (const prefix of ['inbound/*', 'sent/*', 'attachments/outbound/*']) {
+      expect(roleGrantsOnPrefix(template, MCP_DESCRIPTION, 's3:GetObject', prefix), prefix).toBe(false);
     }
+    expect(roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'attachments/outbound/*')).toBe(false);
+    // REST still presigns the .eml downloads.
+    expect(roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'inbound/*')).toBe(true);
+    expect(roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'sent/*')).toBe(true);
   });
 
   it('gives both send paths 29 s (copying uploads), just under the HTTP API cap', () => {
@@ -347,14 +352,13 @@ describe('ApiConstruct', () => {
     expect(roleGrantsOnPrefix(template, REST_DESCRIPTION, 's3:GetObject', 'attachments/sent/*')).toBe(true);
   });
 
-  it('MCP writes sent-attachment copies, and reads sent + linked attachments only with inbound ON', () => {
+  it('MCP writes sent-attachment copies, and reads them back only with inbound ON', () => {
     const off = synth();
     expect(roleGrantsOnPrefix(off, MCP_DESCRIPTION, 's3:PutObject', 'attachments/sent/*')).toBe(true);
     expect(roleGrantsOnPrefix(off, MCP_DESCRIPTION, 's3:GetObject', 'attachments/sent/*')).toBe(false);
 
     const on = synthWithInbound();
     expect(roleGrantsOnPrefix(on, MCP_DESCRIPTION, 's3:GetObject', 'attachments/sent/*')).toBe(true);
-    expect(roleGrantsOnPrefix(on, MCP_DESCRIPTION, 's3:GetObject', 'attachments/outbound/*')).toBe(true);
   });
 
   it('gives the authorizer the API-keys table so it can validate presented keys', () => {

@@ -1,7 +1,7 @@
 /**
  * The read side of the mailbox: list the merged sent/inbound timeline, read one message,
  * and mint a presigned download URL for one attachment. Injectable (repo + presigner + body
- * store + raw-MIME source + clock + parser) so every branch is testable without AWS, and so
+ * store + clock) so every branch is testable without AWS, and so
  * #13's MCP read tools can reuse this exact service — the REST routes are thin adapters,
  * mirroring how #6's send route and #7's MCP tool share one {@link EmailService}.
  *
@@ -9,14 +9,9 @@
  * or in S3 for a large one — so opening it is a row read, never a raw-MIME parse. INBOUND mail
  * is still gated on the stored verdicts (fail-closed via `decideExposure`): only an exposable
  * message ever has a stored body, and a quarantined one yields none. HTML is returned RAW as
- * data — the client owns safe rendering (#12).
- *
- * Legacy rows (written before bodies were stored) fall back to the old path: re-parse the raw
- * MIME through #10's `parseInbound` (no-op attachment sink, same untrusted-MIME hardening),
- * with `assumeExposed` for our own sent archive. Inbound raw MIME expires after
- * {@link INBOUND_RAW_RETENTION_DAYS} days, after which such a row reads envelope-only.
+ * data — the client owns safe rendering (#12). Every row has a stored body: the ones written
+ * before bodies were stored were backfilled (`backfill-bodies`, run once per deployment).
  */
-import type { Readable } from 'node:stream';
 import {
   ATTACHMENT_URL_TTL_SECONDS,
   type AttachmentDownloadResponse,
@@ -39,18 +34,6 @@ import { type EmailsDao, FAILED_PARTITION, type EmailSummary, type GetEmailOutpu
 import { INBOUND_RAW_RETENTION_DAYS } from '@freemail/shared/storage';
 import type { AttachmentPresigner } from '../facades/s3-attachment-presigner.js';
 import type { MailBodyContent, MailBodyStore } from '../facades/s3-mail-body-store.js';
-import {
-  MAX_ATTACHMENT_BYTES,
-  MAX_ATTACHMENT_TOTAL_BYTES,
-  MAX_ATTACHMENTS,
-  MAX_HEADER_BLOCK_BYTES,
-  MAX_HTML_BODY_BYTES,
-  MAX_MIME_PARTS,
-  MAX_RAW_MESSAGE_BYTES,
-  MAX_TEXT_BODY_BYTES,
-  MAX_TOTAL_BODY_BYTES,
-} from '../utils/inbound-limits.js';
-import { type AttachmentSink, type ParsedInbound, type ParseLimits, type ParseOptions, parseInbound } from '../utils/inbound-parse.js';
 import { decideExposure } from '../utils/verdicts.js';
 import { fitBodyToBudget } from '../utils/body-budget.js';
 import { contentDispositionForDownload } from '../utils/content-disposition.js';
@@ -62,14 +45,6 @@ import { getLogger } from '../utils/logger.js';
 import { loadEmailBody } from './email-body-storage.js';
 import { mapWithConcurrency } from '../utils/concurrency.js';
 
-/** The raw-MIME source legacy rows re-parse their bodies from — satisfied by the inbound S3 store. */
-export interface RawMimeSource {
-  getStream(key: string): Promise<Readable>;
-}
-
-/** The parse function — defaulted to #10's `parseInbound`, overridable in tests. */
-export type ParseInbound = (source: Readable, sink: AttachmentSink, limits?: ParseLimits, options?: ParseOptions) => Promise<ParsedInbound>;
-
 export interface EmailReadServiceDeps {
   readonly emailsDao: EmailsDao;
   readonly presigner: AttachmentPresigner;
@@ -80,9 +55,7 @@ export interface EmailReadServiceDeps {
   readonly quarantinePresigner?: AttachmentPresigner;
   /** Reads bodies stored outside the row (`bodies/...`). */
   readonly bodies: MailBodyStore;
-  readonly rawMime: RawMimeSource;
   readonly now?: () => Date;
-  readonly parse?: ParseInbound;
 }
 
 export interface ListEmailsServiceRequest {
@@ -93,29 +66,7 @@ export interface ListEmailsServiceRequest {
   readonly filters?: EmailListFilters;
 }
 
-/**
- * Read limits for on-demand body materialization: identical to #10's parse limits (so the
- * exposure decision can't drift) EXCEPT we retain more of the body — up to the per-part read
- * cap — instead of only a snippet-sized slice. Typed as `ParseLimits`, so if #10 adds a limit
- * field this fails to compile until updated (no silent drift).
- */
-const READ_PARSE_LIMITS: ParseLimits = {
-  maxRawBytes: MAX_RAW_MESSAGE_BYTES,
-  maxChildNodes: MAX_MIME_PARTS,
-  maxHeadSize: MAX_HEADER_BLOCK_BYTES,
-  maxAttachments: MAX_ATTACHMENTS,
-  maxAttachmentBytes: MAX_ATTACHMENT_BYTES,
-  maxAttachmentTotalBytes: MAX_ATTACHMENT_TOTAL_BYTES,
-  maxTextBodyBytes: MAX_TEXT_BODY_BYTES,
-  maxHtmlBodyBytes: MAX_HTML_BODY_BYTES,
-  maxTotalBodyBytes: MAX_TOTAL_BODY_BYTES,
-  maxRetainedBodyChars: MAX_READ_BODY_BYTES,
-};
-
 const logger = getLogger('EmailReadService');
-
-/** S3's error name for a missing object — an expired raw message on the legacy path. */
-const NO_SUCH_KEY = 'NoSuchKey';
 
 /** At most this many attachments are presigned at once. */
 const PRESIGN_CONCURRENCY = 5;
@@ -124,18 +75,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Rows per list-index read while scanning for filter matches. */
 const FILTER_BATCH_ROWS = 200;
-
-/** A no-op attachment sink: the reader re-parses only for the body, never re-storing attachments. */
-const NOOP_SINK: AttachmentSink = {
-  store: (partIndex, filename, contentType, bytes) =>
-    Promise.resolve({
-      id: String(partIndex),
-      filename: filename ?? '',
-      contentType,
-      sizeBytes: bytes.length,
-      s3Key: '',
-    }),
-};
 
 function refForRow(row: Pick<EmailSummary, 'pk' | 'sk'>): { pk: string; sk: string } {
   return {
@@ -169,18 +108,14 @@ export class EmailReadService {
   private readonly presigner: AttachmentPresigner;
   private readonly quarantinePresigner: AttachmentPresigner | undefined;
   private readonly bodies: MailBodyStore;
-  private readonly rawMime: RawMimeSource;
   private readonly now: () => Date;
-  private readonly parse: ParseInbound;
 
   constructor(deps: EmailReadServiceDeps) {
     this.emailsDao = deps.emailsDao;
     this.presigner = deps.presigner;
     this.quarantinePresigner = deps.quarantinePresigner;
     this.bodies = deps.bodies;
-    this.rawMime = deps.rawMime;
     this.now = deps.now ?? (() => new Date());
-    this.parse = deps.parse ?? parseInbound;
   }
 
   /**
@@ -362,45 +297,9 @@ export class EmailReadService {
       }
       return fitToResponse(content, envelopeBytes);
     }
-    return this.legacyBody(row, envelopeBytes);
-  }
-
-  /**
-   * A row written before bodies were stored: re-parse its raw MIME, as the reader used to.
-   * Our own sent archive is permanent and always exposable (`assumeExposed`); a legacy sent
-   * row without one (pre-#29) stays envelope-only. Inbound raw MIME expires, so once it is
-   * gone the row reads envelope-only too.
-   */
-  private async legacyBody(row: GetEmailOutput, envelopeBytes: number): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
-    if (row.direction === 'sent') {
-      if (!row.rawS3Key) {
-        return {};
-      }
-      return this.parseBody(row.rawS3Key, envelopeBytes, { assumeExposed: true });
-    }
-    return this.parseBody(row.rawS3Key, envelopeBytes, {});
-  }
-
-  /**
-   * Re-parse a raw MIME object into a body fitted to the response budget. `parsed.exposed` is
-   * the defense-in-depth fail-closed — a corrupt/parse-failed archive yields no body rather
-   * than throwing — and an expired (deleted) object yields none either.
-   */
-  private async parseBody(rawS3Key: string, envelopeBytes: number, options: ParseOptions): Promise<{ text?: string; html?: string; bodyTruncated?: boolean }> {
-    let stream: Readable;
-    try {
-      stream = await this.rawMime.getStream(rawS3Key);
-    } catch (err) {
-      if (err instanceof Error && err.name === NO_SUCH_KEY) {
-        return {};
-      }
-      throw err;
-    }
-    const parsed = await this.parse(stream, NOOP_SINK, READ_PARSE_LIMITS, options);
-    if (!parsed.exposed) {
-      return {};
-    }
-    return fitToResponse({ text: parsed.textBody, html: parsed.htmlBody }, envelopeBytes);
+    // Every row this code writes stores a body, and older rows were backfilled.
+    logger.warn(`${row.direction} message ${row.id} has no stored body.`);
+    return {};
   }
 
   private toListItem(row: EmailSummary): EmailListItem {
