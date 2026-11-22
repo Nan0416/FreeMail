@@ -133,6 +133,7 @@ const ROUTES: ReadonlyArray<readonly [string, Record<string, string>]> = [
   ['GET /emails/{id}/attachments/{attachmentId}', { id: 'handle-1', attachmentId: '0' }],
   ['GET /emails/{id}/raw', { id: 'handle-1' }],
   ['GET /d/{token}', { token: 'tok-abc' }],
+  ['GET /api/emails/{id}', { id: 'handle-1' }],
 ];
 
 const DEFAULT_PARAMS = new Map(ROUTES);
@@ -158,17 +159,12 @@ interface EventOptions {
   readonly contentType?: string | null;
   /** The authorizer's SIMPLE-response context; omitted entirely when absent. */
   readonly lambda?: Record<string, unknown>;
-  /** API Gateway's IAM context, for an IAM-authorized route. */
-  readonly iam?: Record<string, unknown>;
-  /** Overrides for a greedy route (`{proxy+}`), whose template has no concrete method or path. */
-  readonly method?: string;
-  readonly path?: string;
 }
 
 /** A payload-format-2.0 event, shaped exactly as API Gateway delivers one. */
 function apiEvent(routeKey: string, options: EventOptions = {}): APIGatewayProxyEventV2 {
-  const method = options.method ?? routeKey.slice(0, routeKey.indexOf(' '));
-  const path = options.path ?? pathFor(routeKey, options.params ?? DEFAULT_PARAMS.get(routeKey) ?? {});
+  const method = routeKey.slice(0, routeKey.indexOf(' '));
+  const path = pathFor(routeKey, options.params ?? DEFAULT_PARAMS.get(routeKey) ?? {});
   const headers: Record<string, string> = {};
   if (options.contentType !== null) {
     headers['content-type'] = options.contentType ?? 'application/json';
@@ -185,7 +181,6 @@ function apiEvent(routeKey: string, options: EventOptions = {}): APIGatewayProxy
     requestContext: {
       http: { method, path, protocol: 'HTTP/1.1', sourceIp: '203.0.113.1', userAgent: 'test' },
       ...(options.lambda ? { authorizer: { lambda: options.lambda } } : {}),
-      ...(options.iam ? { authorizer: { iam: options.iam } } : {}),
     },
   } as unknown as APIGatewayProxyEventV2;
 }
@@ -251,6 +246,7 @@ describe('rest handler — the Express routes match the CDK route table', () => 
     readMocks.getEmail.mockResolvedValue({ id: 'h', direction: 'inbound' });
     readMocks.getAttachmentUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
     readMocks.getRawUrl.mockResolvedValue({ url: 'u', expiresAt: 't' });
+    readMocks.getEmailWithDownloadUrls.mockResolvedValue({ id: 'h', direction: 'inbound', attachments: [] });
     attachmentMocks.resolveAttachmentDownloadPresignedUrl.mockResolvedValue(null);
     authMocks.refresh.mockResolvedValue(TOKEN_PAIR);
 
@@ -930,49 +926,7 @@ describe('rest handler — public token download (GET /d/{token})', () => {
   });
 });
 
-describe('rest handler — /api/* serves IAM callers only', () => {
-  const API_ROUTE = 'ANY /api/{proxy+}';
-  const CALLER = {
-    accountId: '111111111111',
-    userArn: 'arn:aws:sts::111111111111:assumed-role/caller-role/session',
-  };
-  const get = (path: string, options: EventOptions) => invoke(API_ROUTE, { method: 'GET', path, contentType: null, ...options });
-
-  it('answers GET /api/test with the verified caller', async () => {
-    const res = await get('/api/test', { iam: CALLER });
-    expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body ?? '{}')).toEqual({ ok: true, caller: CALLER });
-  });
-
-  it.each([
-    ['a session (cookie) caller', { lambda: lambdaContext('access') }],
-    ['an API-key caller', { lambda: lambdaContext('apiKey') }],
-    ['a request with no authorizer context', {}],
-  ])('refuses %s with 403', async (_label, options) => {
-    expect((await get('/api/test', options)).statusCode).toBe(403);
-  });
-
-  it('refuses a non-IAM caller on an unknown /api path too (403, not 404)', async () => {
-    expect((await get('/api/nope', { lambda: lambdaContext('access') })).statusCode).toBe(403);
-  });
-
-  it('gives an IAM caller the 404 on an unknown /api path', async () => {
-    expect(reachedTerminal404(await get('/api/nope', { iam: CALLER }))).toBe(true);
-  });
-
-  it.each(['GET /me', 'GET /keys', 'GET /emails', 'POST /emails', 'POST /attachments/uploads'])('never lets an IAM caller through the session/API-key guards on %s', async (routeKey) => {
-    const res = await invoke(routeKey, { iam: CALLER, body: { from: 'me@example.com' } });
-    expect([401, 403]).toContain(res.statusCode);
-    expect(sendMock).not.toHaveBeenCalled();
-  });
-});
-
-describe('rest handler — GET /api/emails/{id} (IAM only)', () => {
-  const API_ROUTE = 'ANY /api/{proxy+}';
-  const CALLER = {
-    accountId: '111111111111',
-    userArn: 'arn:aws:sts::111111111111:assumed-role/caller-role/session',
-  };
+describe('rest handler — GET /api/emails/{id} (API key, like MCP)', () => {
   const DETAIL = {
     id: 'handle-1',
     direction: 'inbound',
@@ -988,15 +942,18 @@ describe('rest handler — GET /api/emails/{id} (IAM only)', () => {
       },
     ],
   };
-  const get = (path: string, options: EventOptions) => invoke(API_ROUTE, { method: 'GET', path, contentType: null, ...options });
+  const get = (options: EventOptions) => invoke('GET /api/emails/{id}', { contentType: null, ...options });
 
   beforeEach(() => {
     readMocks.getEmailWithDownloadUrls.mockReset();
   });
 
-  it('returns the message, with download URLs, for the handle in the path', async () => {
+  it.each([
+    ['an API-key caller', 'apiKey'],
+    ['a session (cookie) caller', 'access'],
+  ])('returns the message, with download URLs, to %s', async (_label, scheme) => {
     readMocks.getEmailWithDownloadUrls.mockResolvedValue(DETAIL);
-    const res = await get('/api/emails/handle-1', { iam: CALLER });
+    const res = await get({ lambda: lambdaContext(scheme) });
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body ?? '{}')).toEqual(DETAIL);
     expect(readMocks.getEmailWithDownloadUrls).toHaveBeenCalledWith({ handle: 'handle-1' });
@@ -1004,17 +961,14 @@ describe('rest handler — GET /api/emails/{id} (IAM only)', () => {
 
   it('maps an unknown handle to a 404', async () => {
     readMocks.getEmailWithDownloadUrls.mockRejectedValue(emailErrors.notFound('No such email.'));
-    const res = await get('/api/emails/nope', { iam: CALLER });
+    const res = await get({ lambda: lambdaContext('apiKey'), params: { id: 'nope' } });
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body ?? '{}')).toMatchObject({ error: 'not_found' });
   });
 
-  it.each([
-    ['a session (cookie) caller', { lambda: lambdaContext('access') }],
-    ['an API-key caller', { lambda: lambdaContext('apiKey') }],
-    ['a request with no authorizer context', {}],
-  ])('refuses %s with 403, without reading the message', async (_label, options) => {
-    expect((await get('/api/emails/handle-1', options)).statusCode).toBe(403);
+  it('refuses a request with no authorizer context (401), without reading the message', async () => {
+    const res = await get({});
+    expect(res.statusCode).toBe(401);
     expect(readMocks.getEmailWithDownloadUrls).not.toHaveBeenCalled();
   });
 });

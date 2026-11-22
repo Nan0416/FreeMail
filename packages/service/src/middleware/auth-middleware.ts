@@ -12,7 +12,7 @@ import { getCurrentInvoke } from '@codegenie/serverless-express';
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import { authErrors } from '../utils/errors.js';
-import { iamCallerFromContext, optionalSubjectFromContext, schemeFromContext, type IamCaller } from '../utils/request-context.js';
+import { optionalSubjectFromContext, schemeFromContext } from '../utils/request-context.js';
 
 /** What the Lambda authorizer resolved for this request. */
 export interface AuthContext {
@@ -26,11 +26,6 @@ declare module 'express-serve-static-core' {
   interface Request {
     /** Attached by {@link authMiddleware}; absent on the public routes. */
     readonly authContext?: AuthContext;
-    /**
-     * Attached by {@link authMiddleware} on IAM-authorized (`/api/*`) requests only. Kept
-     * apart from `authContext`, so an IAM caller passes none of the session/API-key guards.
-     */
-    readonly iamCaller?: IamCaller;
   }
 }
 
@@ -42,20 +37,11 @@ function attachAuthContext(req: Request, context: AuthContext): void {
   (req as { authContext?: AuthContext }).authContext = context;
 }
 
-/** The single writer of `iamCaller`, `readonly` on `Request` for the same reason. */
-function attachIamCaller(req: Request, caller: IamCaller): void {
-  (req as { iamCaller?: IamCaller }).iamCaller = caller;
-}
-
 export const authMiddleware: RequestHandler = (req, _res, next) => {
   const event = getCurrentInvoke().event as APIGatewayProxyEventV2 | undefined;
   const subject = event ? optionalSubjectFromContext(event) : undefined;
   if (event && subject !== undefined) {
     attachAuthContext(req, { subject, scheme: schemeFromContext(event) });
-  }
-  const iamCaller = event ? iamCallerFromContext(event) : undefined;
-  if (iamCaller) {
-    attachIamCaller(req, iamCaller);
   }
   next();
 };
@@ -75,7 +61,7 @@ export function getAuthContext(req: Request): AuthContext {
 /**
  * Guard: only a Bearer access token (the human, via the app) may reach this route. An
  * `x-api-key`-authenticated caller is authenticated but must NOT be able to escalate to
- * managing the account's key set, to reading the mailbox over REST, or to editing forwarding
+ * managing the account's key set, to the web app's mailbox routes, or to editing forwarding
  * rules (one rule could copy every received message out) — so anything other than the
  * `access` scheme is forbidden. Fails closed on a missing scheme, and on a request with no
  * authorizer context at all.
@@ -93,7 +79,8 @@ export function requireAccessScheme(req: Request, _res: Response, next: NextFunc
  * scheme. This is the MCP route's guard: an `x-api-key` agent and a Bearer human are
  * equally legitimate there, because `send_email` is the same capability as `POST /emails`
  * — so unlike {@link requireAccessScheme} it does not discriminate on scheme, only on
- * whether an identity was resolved at all.
+ * whether an identity was resolved at all. The send, upload and `GET /api/emails/{id}`
+ * routes use it for the same reason.
  *
  * The authorizer already guards that route, so this is defense-in-depth: it fails closed if
  * that wiring ever regresses, and documents that the caller's identity comes ONLY from the
@@ -102,19 +89,6 @@ export function requireAccessScheme(req: Request, _res: Response, next: NextFunc
 export function requireAuthenticated(req: Request, _res: Response, next: NextFunction): void {
   if (!req.authContext) {
     next(authErrors.invalidToken());
-    return;
-  }
-  next();
-}
-
-/**
- * Guard for `/api/*`: only a caller API Gateway authorized with IAM (SigV4). A session or
- * API-key caller is refused, and so is a request with no authorizer context, so a
- * misconfigured gateway route fails closed.
- */
-export function requireIamCaller(req: Request, _res: Response, next: NextFunction): void {
-  if (!req.iamCaller) {
-    next(authErrors.forbidden('This route requires AWS IAM authorization.'));
     return;
   }
   next();

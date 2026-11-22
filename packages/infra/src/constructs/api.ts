@@ -9,7 +9,7 @@ import { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { AaaaRecord, ARecord, RecordTarget } from 'aws-cdk-lib/aws-route53';
 import { ApiGatewayv2DomainProperties } from 'aws-cdk-lib/aws-route53-targets';
 import type { IBucket } from 'aws-cdk-lib/aws-s3';
-import { HttpIamAuthorizer, HttpLambdaAuthorizer, HttpLambdaResponseType } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
+import { HttpLambdaAuthorizer, HttpLambdaResponseType } from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import { Construct } from 'constructs';
 import type { AttachmentsConfig } from '@freemail/shared/config';
@@ -84,8 +84,7 @@ function embedEnv(attachments: AttachmentsConfig | undefined): Record<string, st
  * integration behind the same authorizer.
  *
  * API Gateway itself stays unauthenticated (managed CORS answers preflight, auth
- * routes are open); all authentication happens in the backend authorizer — except for
- * `ANY /api/{proxy+}`, which API Gateway authorizes with IAM for other AWS services.
+ * routes are open); all authentication happens in the backend authorizer.
  */
 export class ApiConstruct extends Construct {
   readonly httpApi: HttpApi;
@@ -324,15 +323,10 @@ export class ApiConstruct extends Construct {
       authorizer: this.authorizer,
     });
 
-    // Other backend services in the account: SigV4-signed requests, authorized by IAM. The
-    // handler serves `/api` paths only to IAM callers, and an IAM caller passes none of the
-    // session/API-key guards on the other routes.
-    this.httpApi.addRoutes({
-      path: '/api/{proxy+}',
-      methods: [HttpMethod.ANY],
-      integration: this.restIntegration,
-      authorizer: new HttpIamAuthorizer(),
-    });
+    // Backend services: one message, with presigned attachment URLs, by the id in the
+    // email-received notification. Dual-scheme like `/mcp`: the handler takes an `x-api-key`
+    // or the session, with no scheme guard.
+    this.addRestRoute('/api/emails/{id}', HttpMethod.GET, { authorized: true });
 
     // The API's custom domain — where the browser AND agents both reach it (#47). A
     // DNS-validated ACM cert (in the stack region — a REGIONAL HTTP-API custom domain

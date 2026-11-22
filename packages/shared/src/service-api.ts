@@ -1,6 +1,6 @@
 /**
  * Contracts for other backend services: the email-received SNS notification, and the
- * IAM-authorized `GET /api/emails/{id}` response.
+ * `GET /api/emails/{id}` response (authorized with an API key, like MCP).
  */
 import type { EmailAttachmentInfo, EmailDetail, InboundVerdict } from './email.js';
 
