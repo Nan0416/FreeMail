@@ -1,0 +1,54 @@
+{
+  "name": "@freemail/client",
+  "version": "0.1.0",
+  "description": "TypeScript client for the FreeMail API: send email, upload attachments, fetch received messages, and read new-mail notifications.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "!dist/.tsbuildinfo",
+    "src"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Nan0416/FreeMail.git",
+    "directory": "packages/client"
+  },
+  "homepage": "https://github.com/Nan0416/FreeMail/tree/main/packages/client#readme",
+  "bugs": {
+    "url": "https://github.com/Nan0416/FreeMail/issues"
+  },
+  "keywords": [
+    "freemail",
+    "email",
+    "ses",
+    "client"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "tsc -p tsconfig.test.json && vitest run",
+    "clean": "tsc -b --clean"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@freemail/shared": "*"
+  }
+}
