@@ -43,7 +43,7 @@ export class FreeMailClientImpl implements FreeMailClient {
 
   async uploadAttachment(request: UploadAttachmentRequest, options?: FreeMailRequestOptions): Promise<UploadAttachmentRef> {
     const upload = await this.createAttachmentUpload({ filename: request.filename, contentType: request.contentType, sizeBytes: request.content.byteLength }, options);
-    await this.requester.putUpload(upload.uploadUrl, request.content, request.contentType, options);
+    await this.requester.putUpload(upload.uploadUrl, request.content, options);
     return { uploadId: upload.uploadId };
   }
 

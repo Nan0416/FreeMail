@@ -1,5 +1,5 @@
 import { inspect } from 'node:util';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { FreeMailClientImpl } from '../../src/clients/freemail-client-impl.js';
 import { FreeMailApiError, FreeMailAuthError, FreeMailEmailNotFoundError, FreeMailResponseValidationError, FreeMailUploadError } from '../../src/errors/common.js';
 import type { FetchLike } from '../../src/types/http.js';
@@ -26,12 +26,32 @@ describe('FreeMailClientImpl construction', () => {
   it.each([
     ['a baseUrl that is not a URL', { baseUrl: 'api.example.com', apiKey: API_KEY }],
     ['a baseUrl that is not http(s)', { baseUrl: 'ftp://api.example.com', apiKey: API_KEY }],
+    ['a plain-http baseUrl that is not localhost', { baseUrl: 'http://api.example.com', apiKey: API_KEY }],
     ['a baseUrl with a query', { baseUrl: 'https://api.example.com/?a=1', apiKey: API_KEY }],
     ['an empty apiKey', { baseUrl: BASE_URL, apiKey: ' ' }],
     ['a zero timeout', { baseUrl: BASE_URL, apiKey: API_KEY, timeoutMs: 0 }],
     ['an infinite timeout', { baseUrl: BASE_URL, apiKey: API_KEY, timeoutMs: Infinity }],
+    ['a timeout longer than a timer can hold', { baseUrl: BASE_URL, apiKey: API_KEY, timeoutMs: 2 ** 31 }],
   ])('rejects %s', (_label, props) => {
     expect(() => new FreeMailClientImpl(props)).toThrow(TypeError);
+  });
+
+  it('rejects an API key that cannot go in a header, without echoing it', () => {
+    const badKey = 'fm_secret\nInjected: yes';
+    const error = (() => {
+      try {
+        new FreeMailClientImpl({ baseUrl: BASE_URL, apiKey: badKey });
+      } catch (caughtError: unknown) {
+        return caughtError as Error;
+      }
+      throw new Error('Expected the constructor to throw.');
+    })();
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error.message).not.toContain('fm_secret');
+  });
+
+  it.each(['http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000'])('allows plain http for a local server (%s)', (baseUrl) => {
+    expect(() => new FreeMailClientImpl({ baseUrl, apiKey: API_KEY })).not.toThrow();
   });
 
   it('never prints the API key when the client is logged', () => {
@@ -55,6 +75,8 @@ describe('FreeMailClientImpl.sendEmail', () => {
     expect(request.init.method).toBe('POST');
     expect(request.init.headers).toEqual({ accept: 'application/json', 'content-type': 'application/json', 'x-api-key': API_KEY });
     expect(JSON.parse(String(request.init.body))).toEqual(REQUEST);
+    // The key must not follow a redirect to another host.
+    expect(request.init.redirect).toBe('error');
   });
 
   it('keeps a path prefix on the base URL, with or without a trailing slash', async () => {
@@ -94,6 +116,15 @@ describe('FreeMailClientImpl.sendEmail', () => {
 
     expect(error).toBeInstanceOf(FreeMailAuthError);
     expect(error).toMatchObject({ status: 403, code: null, message: 'FreeMail POST /emails returned HTTP 403: Forbidden' });
+  });
+
+  it('maps an error code that names an Object.prototype member to plain FreeMailApiError', async () => {
+    for (const code of ['constructor', 'toString', '__proto__']) {
+      const fake = clientReplying(() => ({ status: 400, body: { error: code, message: 'from a proxy' } }));
+      const error = await caught(fake.client.sendEmail(REQUEST));
+      expect(error, code).toBeInstanceOf(FreeMailApiError);
+      expect(error, code).toMatchObject({ name: 'FreeMailApiError', code });
+    }
   });
 
   it('throws FreeMailApiError with the start of the body for an error that is not JSON', async () => {
@@ -146,8 +177,8 @@ describe('FreeMailClientImpl.sendEmail', () => {
 });
 
 describe('FreeMailClientImpl.createAttachmentUpload', () => {
-  it('POSTs the declaration to /attachments/uploads', async () => {
-    const fake = clientReplying(() => ({ body: UPLOAD }));
+  it("POSTs the declaration to /attachments/uploads, reading the service's 201", async () => {
+    const fake = clientReplying(() => ({ status: 201, body: UPLOAD }));
 
     await expect(fake.client.createAttachmentUpload({ filename: 'a.pdf', contentType: 'application/pdf', sizeBytes: 3 })).resolves.toEqual(UPLOAD);
 
@@ -165,8 +196,12 @@ describe('FreeMailClientImpl.createAttachmentUpload', () => {
 describe('FreeMailClientImpl.uploadAttachment', () => {
   const CONTENT = new TextEncoder().encode('%PDF');
 
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('creates an upload for the exact size, then PUTs the bytes to its URL without the API key', async () => {
-    const fake = clientReplying((request) => (request.init.method === 'PUT' ? { body: '' } : { body: UPLOAD }));
+    const fake = clientReplying((request) => (request.init.method === 'PUT' ? { body: '' } : { status: 201, body: UPLOAD }));
 
     await expect(fake.client.uploadAttachment({ filename: 'a.pdf', contentType: 'application/pdf', content: CONTENT })).resolves.toEqual({ uploadId: 'up-1' });
 
@@ -174,16 +209,26 @@ describe('FreeMailClientImpl.uploadAttachment', () => {
     expect(JSON.parse(String(fake.http.requests[0].init.body))).toEqual({ filename: 'a.pdf', contentType: 'application/pdf', sizeBytes: 4 });
     const put = fake.http.requests[1];
     expect(put.init.body).toBe(CONTENT);
-    expect(put.init.headers).toEqual({ 'content-type': 'application/pdf' });
+    // The type was declared with the upload; the PUT sends a fixed one, which fetch can always put in a header.
+    expect(put.init.headers).toEqual({ 'content-type': 'application/octet-stream' });
   });
 
-  it('declares the default content type when none is given, and sends no content type field', async () => {
+  it('leaves the content type out of the declaration when none is given', async () => {
     const fake = clientReplying((request) => (request.init.method === 'PUT' ? { body: '' } : { body: UPLOAD }));
 
     await fake.client.uploadAttachment({ filename: 'blob.bin', content: CONTENT });
 
     expect(JSON.parse(String(fake.http.requests[0].init.body))).toEqual({ filename: 'blob.bin', sizeBytes: 4 });
-    expect(fake.http.requests[1].init.headers).toEqual({ 'content-type': 'application/octet-stream' });
+  });
+
+  it("gives the PUT the upload URL's 15 minutes, not the client's API timeout, unless the call sets one", async () => {
+    const timeout = vi.spyOn(AbortSignal, 'timeout');
+    const fake = clientReplying((request) => (request.init.method === 'PUT' ? { body: '' } : { body: UPLOAD }));
+
+    await fake.client.uploadAttachment({ filename: 'a.pdf', content: CONTENT });
+    await fake.client.uploadAttachment({ filename: 'a.pdf', content: CONTENT }, { timeoutMs: 60_000 });
+
+    expect(timeout.mock.calls.map((call) => call[0])).toEqual([30_000, 15 * 60_000, 60_000, 60_000]);
   });
 
   it("throws FreeMailUploadError with S3's error code when the PUT is refused", async () => {

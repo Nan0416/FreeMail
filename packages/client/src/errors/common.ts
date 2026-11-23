@@ -40,7 +40,9 @@ export type FreeMailApiErrorClasses = Readonly<Partial<Record<string, typeof Fre
 /** Reads FreeMail's `{ error, message }` body, or API Gateway's `{ message }`, into the matching error class. */
 export function createFreeMailApiError(request: string, status: number, rawBody: string, errorClasses: FreeMailApiErrorClasses = {}): FreeMailApiError {
   const body = readErrorBody(rawBody);
-  const ErrorClass = (body.code === null ? undefined : errorClasses[body.code]) ?? (status === 401 || status === 403 ? FreeMailAuthError : FreeMailApiError);
+  // `Object.hasOwn`: a code like `constructor` (from a proxy's body, say) must not find `Object.prototype`'s.
+  const codeClass = body.code !== null && Object.hasOwn(errorClasses, body.code) ? errorClasses[body.code] : undefined;
+  const ErrorClass = codeClass ?? (status === 401 || status === 403 ? FreeMailAuthError : FreeMailApiError);
   return new ErrorClass(request, status, body.code, body.detail);
 }
 

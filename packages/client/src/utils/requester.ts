@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { DEFAULT_TIMEOUT_MS, DEFAULT_UPLOAD_TIMEOUT_MS } from '../constants.js';
+import { DEFAULT_TIMEOUT_MS, DEFAULT_UPLOAD_TIMEOUT_MS, MAX_TIMEOUT_MS } from '../constants.js';
 import { createFreeMailApiError, FreeMailResponseValidationError, FreeMailUploadError, type FreeMailApiErrorClasses } from '../errors/common.js';
 import type { FetchLike } from '../types/http.js';
 import type { FreeMailRequestOptions } from '../types/service.js';
@@ -23,8 +23,9 @@ export class FreeMailRequester {
 
   constructor(props: FreeMailRequesterProps) {
     this.baseUrl = parseBaseUrl(props.baseUrl);
-    if (typeof props.apiKey !== 'string' || props.apiKey.trim() === '') {
-      throw new TypeError('FreeMail client: apiKey is required.');
+    // Checked here, without echoing the key: fetch's own error for a bad header value prints the whole value.
+    if (typeof props.apiKey !== 'string' || !API_KEY_RE.test(props.apiKey)) {
+      throw new TypeError('FreeMail client: apiKey is required, and must be printable ASCII with no spaces.');
     }
     this.#apiKey = props.apiKey;
     this.timeoutMs = requireTimeout(props.timeoutMs ?? DEFAULT_TIMEOUT_MS, 'timeoutMs');
@@ -41,11 +42,15 @@ export class FreeMailRequester {
     return this.call('POST', path, body, schema, errorClasses, options);
   }
 
-  /** PUTs an attachment's bytes to its presigned upload URL. The URL is the credential: the API key is never sent to S3. */
-  async putUpload(uploadUrl: string, content: Uint8Array, contentType: string | undefined, options: FreeMailRequestOptions = {}): Promise<void> {
+  /**
+   * PUTs an attachment's bytes to its presigned upload URL. The URL is the credential: the API key is never sent to S3.
+   * The content type was declared when the upload was created; FreeMail ignores the object's own, so the PUT sends a
+   * fixed one rather than a declared type `fetch` might not be able to put in a header.
+   */
+  async putUpload(uploadUrl: string, content: Uint8Array, options: FreeMailRequestOptions = {}): Promise<void> {
     const response = await this.fetchFn(uploadUrl, {
       method: 'PUT',
-      headers: { 'content-type': contentType ?? 'application/octet-stream' },
+      headers: { 'content-type': 'application/octet-stream' },
       // A file's bytes (a Buffer from `readFile`, say) sit in an ArrayBuffer; fetch refuses a SharedArrayBuffer view anyway.
       body: content as Uint8Array<ArrayBuffer>,
       signal: this.signalFor(options, DEFAULT_UPLOAD_TIMEOUT_MS),
@@ -67,6 +72,7 @@ export class FreeMailRequester {
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
       signal: this.signalFor(options, this.timeoutMs),
+      redirect: 'error',
     });
     const text = await response.text();
     if (!response.ok) {
@@ -93,6 +99,12 @@ export class FreeMailRequester {
   }
 }
 
+/** An access key is `fm_` plus base64url today; any printable ASCII without spaces fits in a header. */
+const API_KEY_RE = /^[\x21-\x7E]+$/;
+
+/** Plain `http:` would send the key in the clear, so it is for a local server only. */
+const LOCAL_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 function parseBaseUrl(value: string): URL {
   let url: URL;
   try {
@@ -100,8 +112,8 @@ function parseBaseUrl(value: string): URL {
   } catch {
     throw new TypeError(`FreeMail client: baseUrl is not a URL: ${String(value)}`);
   }
-  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
-    throw new TypeError(`FreeMail client: baseUrl must be an http(s) URL: ${value}`);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && LOCAL_HOSTNAMES.has(url.hostname))) {
+    throw new TypeError(`FreeMail client: baseUrl must be an https URL (http only for localhost): ${value}`);
   }
   if (url.search !== '' || url.hash !== '') {
     throw new TypeError(`FreeMail client: baseUrl must not have a query or fragment: ${value}`);
@@ -113,8 +125,8 @@ function parseBaseUrl(value: string): URL {
 }
 
 function requireTimeout(value: number, name: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    throw new TypeError(`FreeMail client: ${name} must be a positive number of milliseconds.`);
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || value > MAX_TIMEOUT_MS) {
+    throw new TypeError(`FreeMail client: ${name} must be a positive number of milliseconds, at most ${MAX_TIMEOUT_MS}.`);
   }
   return value;
 }

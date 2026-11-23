@@ -174,7 +174,7 @@ export interface UploadAttachmentRequest {
 export interface FreeMailRequestOptions {
   /** Aborts the call. */
   readonly signal?: AbortSignal;
-  /** Overrides the client's `timeoutMs` for this call. */
+  /** Overrides the client's `timeoutMs` for this call (for `uploadAttachment`, both of its requests). */
   readonly timeoutMs?: number;
 }
 

@@ -6,7 +6,7 @@ A TypeScript client for the API of a [FreeMail](https://github.com/Nan0416/FreeM
 npm install @freemail/client
 ```
 
-Requires Node.js 22 or later (or any runtime with `fetch`). ESM only.
+Requires Node.js 22 or later (or any runtime with `fetch`). ESM only. The types need TypeScript 5.7 or later.
 
 ## Setup
 
