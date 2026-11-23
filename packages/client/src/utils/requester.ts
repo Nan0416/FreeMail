@@ -99,7 +99,7 @@ export class FreeMailRequester {
   }
 }
 
-/** An access key is `fm_` plus base64url today; any printable ASCII without spaces fits in a header. */
+/** An API key is `fm_` plus base64url today; any printable ASCII without spaces fits in a header. */
 const API_KEY_RE = /^[\x21-\x7E]+$/;
 
 /** Plain `http:` would send the key in the clear, so it is for a local server only. */

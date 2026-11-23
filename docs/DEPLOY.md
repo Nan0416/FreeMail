@@ -341,8 +341,8 @@ A download-token **revoke** endpoint is [#35](https://github.com/Nan0416/FreeMai
 
 Agents send email through the MCP server — no browser, no cookies:
 
-1. In the web app, open **MCP server** and **create an access key**. It's shown **once** (copy it then); it's stored hashed and can't be retrieved again. An access key authorizes an agent to **send and (when inbound is enabled) read the mailbox via the MCP server**, and lets a backend service fetch messages with [`GET /api/emails/{id}`](#get-apiemailsid) — it does **not** grant key management or the REST mailbox-read routes, which require signing in to the web app with your password (the cookie session).
-2. Point your MCP client at **`POST https://{apiDomain}/mcp`** with header **`x-api-key: fm_<your-key>`**. For Claude Code, the **MCP server** page shows a ready-to-paste `.mcp.json` that reads the key from `$FREEMAIL_API_KEY`.
+1. In the web app, open **API keys** and **create a key**. It's shown **once** (copy it then); it's stored hashed and can't be retrieved again. An API key authorizes an agent to **send and (when inbound is enabled) read the mailbox via the MCP server**, and lets a backend service fetch messages with [`GET /api/emails/{id}`](#get-apiemailsid) — it does **not** grant key management or the REST mailbox-read routes, which require signing in to the web app with your password (the cookie session).
+2. Point your MCP client at **`POST https://{apiDomain}/mcp`** with header **`x-api-key: fm_<your-key>`**. For Claude Code, the **API keys** page shows a ready-to-paste `.mcp.json` that reads the key from `$FREEMAIL_API_KEY`.
 3. Call the **`send_email`** tool. A valid call needs **`from`** (an address under your domain), **at least one recipient** across `to`/`cc`/`bcc`, and **at least one body** — `text` and/or `html`:
 
 ```jsonc
@@ -364,7 +364,7 @@ The MCP server is stateless (Streamable HTTP), so no session setup is required. 
 
 ### Backend services
 
-Other services call `/api/*` with an API key, the same **`x-api-key: fm_<key>`** header the MCP server takes. Create the key on the web app's **MCP server** page (one key per service lets you revoke one without the others) and send requests to `https://<apiDomain>/api/...`. A missing or revoked key gets a 403 from API Gateway. From TypeScript, [`@freemail/client`](../packages/client/README.md) wraps these routes, sending, attachment uploads and the notification below.
+Other services call `/api/*` with an API key, the same **`x-api-key: fm_<key>`** header the MCP server takes. Create the key on the web app's **API keys** page (one key per service lets you revoke one without the others) and send requests to `https://<apiDomain>/api/...`. A missing or revoked key gets a 403 from API Gateway. From TypeScript, [`@freemail/client`](../packages/client/README.md) wraps these routes, sending, attachment uploads and the notification below.
 
 - **Check a key works:** `GET https://<apiDomain>/me` with the key returns `{ "subject": "owner" }`.
 

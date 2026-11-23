@@ -13,7 +13,7 @@ Requires Node.js 22 or later (or any runtime with `fetch`). ESM only. The types 
 You need two things from your deployment:
 
 - **The API's address:** `https://<apiDomain>`, the `ApiCustomDomainUrl` stack output.
-- **An API key:** in the FreeMail web app, open **MCP server** and create an access key (`fm_...`). It's shown once. One key per service lets you revoke one without the others.
+- **An API key:** in the FreeMail web app, open **API keys** and create a key (`fm_...`). It's shown once. One key per service lets you revoke one without the others.
 
 ```ts
 import { FreeMailClientImpl, type FreeMailClient } from '@freemail/client';

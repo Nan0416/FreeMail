@@ -1,11 +1,11 @@
-import { FileText, Forward, Inbox, Layers, LogOut, Mail, PenSquare, Plug, Send, ShieldAlert } from 'lucide-react';
+import { FileText, Forward, Inbox, KeyRound, Layers, LogOut, Mail, PenSquare, Send, ShieldAlert } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Kbd } from './Kbd.js';
 import { cn } from '@/lib/utils';
 
-export type FolderId = 'inbox' | 'all' | 'sent' | 'drafts' | 'errors' | 'forwarding' | 'mcp';
+export type FolderId = 'inbox' | 'all' | 'sent' | 'drafts' | 'errors' | 'forwarding' | 'api-keys';
 
 interface NavItem {
   readonly id: FolderId;
@@ -69,7 +69,7 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
         )}
         <p className="mt-5 mb-1 px-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Developers</p>
         <ul>
-          <NavRow item={{ id: 'mcp', label: 'MCP server', icon: Plug }} active={props.folder === 'mcp'} onSelect={props.onSelectFolder} />
+          <NavRow item={{ id: 'api-keys', label: 'API keys', icon: KeyRound }} active={props.folder === 'api-keys'} onSelect={props.onSelectFolder} />
         </ul>
       </nav>
 
@@ -90,9 +90,9 @@ export function Sidebar(props: SidebarProps): React.JSX.Element {
           <DropdownMenuContent side="top" align="start" className="w-56">
             <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Signed in as {props.subject}</DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => props.onSelectFolder('mcp')}>
-              <Plug />
-              MCP server
+            <DropdownMenuItem onSelect={() => props.onSelectFolder('api-keys')}>
+              <KeyRound />
+              API keys
             </DropdownMenuItem>
             <DropdownMenuItem disabled={props.signingOut} onSelect={props.onSignOut}>
               <LogOut />

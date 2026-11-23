@@ -1,8 +1,8 @@
 /**
  * Wire contract for agent API keys, shared by the service (which mints and
  * validates them) and the React app / CLI (which manage them). An API key is the
- * single credential an agent presents to the MCP server; one key grants full
- * access — there are no per-key scopes in v1.
+ * single credential an agent presents to the MCP server, or a backend service to the
+ * REST API; one key grants full access — there are no per-key scopes in v1.
  *
  * The raw key is `fm_<keyId>_<secret>`: `keyId` is a public lookup id (it keys the
  * stored row and is what the management list shows), while `secret` is the
