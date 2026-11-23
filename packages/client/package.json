@@ -1,6 +1,6 @@
 {
   "name": "@freemail/client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript client for the FreeMail API: send email, upload attachments, fetch received messages, and read new-mail notifications.",
   "license": "MIT",
   "type": "module",
