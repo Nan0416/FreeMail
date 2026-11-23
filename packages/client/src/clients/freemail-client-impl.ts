@@ -18,7 +18,7 @@ import { FreeMailRequester } from '../utils/requester.js';
 export interface FreeMailClientProps {
   /** The deployment's API origin, `https://<apiDomain>`. */
   readonly baseUrl: string;
-  /** An access key from the web app's MCP server page (`fm_...`). */
+  /** An API key from the web app's API keys page (`fm_...`). */
   readonly apiKey: string;
   /** How long an API call may take, in milliseconds; 30 seconds by default. */
   readonly timeoutMs?: number;

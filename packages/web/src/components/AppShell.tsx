@@ -10,11 +10,11 @@ import { applyListView, DEFAULT_VIEW, type ListView } from '../lib/mail-filter.j
 import { buildPrefill, type ReplyMode } from '../lib/reply.js';
 import { cn } from '@/lib/utils';
 import type { ComposeHandle, ComposeInit } from './ComposeWindow.js';
+import { ApiKeysView } from './ApiKeysView.js';
 import { DraftList } from './DraftList.js';
 import { EmailReader } from './EmailReader.js';
 import { ForwardingRulesView } from './ForwardingRulesView.js';
 import { Kbd } from './Kbd.js';
-import { McpServerView } from './McpServerView.js';
 import { MessageList } from './MessageList.js';
 import { Sidebar, type FolderId } from './Sidebar.js';
 
@@ -67,7 +67,7 @@ function isTypingTarget(target: EventTarget | null): boolean {
  * The authenticated app: folders | message list | reading pane, plus a docked compose
  * window. Below `lg` the sidebar becomes a sheet; below `md` the list and the reader
  * share one column and the reader shows with a back button. Views unmount on navigation
- * (not merely hide), so leaving the MCP server page drops any revealed key.
+ * (not merely hide), so leaving the API keys page drops any revealed key.
  */
 export function AppShell(props: AppShellProps): React.JSX.Element {
   const auth = useAuth();
@@ -276,9 +276,9 @@ export function AppShell(props: AppShellProps): React.JSX.Element {
         </SheetContent>
       </Sheet>
 
-      {folder === 'mcp' ? (
+      {folder === 'api-keys' ? (
         <main className="min-w-0 flex-1">
-          <McpServerView onOpenNav={() => setNavOpen(true)} inboundEnabled={props.inboundEnabled ?? false} />
+          <ApiKeysView onOpenNav={() => setNavOpen(true)} inboundEnabled={props.inboundEnabled ?? false} />
         </main>
       ) : folder === 'forwarding' ? (
         <main className="min-w-0 flex-1">

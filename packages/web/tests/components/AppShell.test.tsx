@@ -389,7 +389,7 @@ describe('AppShell — drafts', () => {
   });
 });
 
-it('opens the MCP server page from the sidebar', async () => {
+it('opens the API keys page from the sidebar', async () => {
   const fetchMock = vi.fn<typeof fetch>(async (url) => {
     const path = pathOf(url);
     if (path === '/me') {
@@ -401,8 +401,9 @@ it('opens the MCP server page from the sidebar', async () => {
     return json(200, { emails: [] });
   });
   renderWithApp(<AppShell inboundEnabled />, fetchMock);
-  fireEvent.click(screen.getByRole('button', { name: 'MCP server' }));
-  expect(await screen.findByText('No access keys yet.')).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'API keys' }));
+  expect(await screen.findByText('No API keys yet.')).toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'API keys' })).toBeInTheDocument();
   expect(screen.getByTestId('mcp-server-url')).toHaveTextContent('http://api.test/mcp');
 });
 
@@ -425,6 +426,6 @@ it('opens the forwarding rules page from the sidebar', async () => {
 
 it('offers forwarding only when inbound is enabled (it acts on received mail)', async () => {
   renderWithApp(<AppShell inboundEnabled={false} />, mockApi([[]]));
-  await screen.findByRole('button', { name: 'MCP server' });
+  await screen.findByRole('button', { name: 'API keys' });
   expect(screen.queryByRole('button', { name: 'Forwarding' })).not.toBeInTheDocument();
 });
