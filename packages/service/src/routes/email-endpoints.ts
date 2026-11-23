@@ -5,8 +5,9 @@
  *  - `POST /emails` is dual-scheme. A Bearer human and an `x-api-key` agent may both send,
  *    so there is NO `requireAccessScheme` — sending is the capability an agent key is for.
  *  - the reads are access-token only. The agent read path is the MCP `list_emails` /
- *    `get_email` / `get_email_attachment_url` tools over the same read service, not these
- *    routes, so an agent key must not reach the REST mailbox.
+ *    `get_email` / `get_email_attachment_url` tools over the same read service (and, for a
+ *    backend service, `GET /api/emails/{id}`), not these routes, so an agent key must not
+ *    reach them.
  *
  * Request coercion here is types-only. The semantic rules — sender domain, recipient
  * presence, size caps — live in `EmailService`, and list defaulting/clamping lives in
@@ -36,7 +37,7 @@ export class EmailEndpoints implements Endpoints {
 
     // Step one of sending an attachment: a presigned PUT straight to S3 (the bytes never come
     // through here). Dual-scheme like the send it serves: any authorizer identity, not just
-    // the session (and never an IAM caller, which has none).
+    // the session.
     this.router.post('/attachments/uploads', requireJsonContentType, requireAuthenticated, async (req: Request, res: Response, next: NextFunction) => {
       try {
         const request = parseCreateUploadBody(requireBody(req));

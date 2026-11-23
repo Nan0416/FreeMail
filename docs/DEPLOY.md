@@ -341,7 +341,7 @@ A download-token **revoke** endpoint is [#35](https://github.com/Nan0416/FreeMai
 
 Agents send email through the MCP server — no browser, no cookies:
 
-1. In the web app, open **MCP server** and **create an access key**. It's shown **once** (copy it then); it's stored hashed and can't be retrieved again. An access key authorizes an agent to **send and (when inbound is enabled) read the mailbox via the MCP server** — it does **not** grant key management or the REST mailbox-read routes, which require signing in to the web app with your password (the cookie session).
+1. In the web app, open **MCP server** and **create an access key**. It's shown **once** (copy it then); it's stored hashed and can't be retrieved again. An access key authorizes an agent to **send and (when inbound is enabled) read the mailbox via the MCP server**, and lets a backend service fetch messages with [`GET /api/emails/{id}`](#get-apiemailsid) — it does **not** grant key management or the REST mailbox-read routes, which require signing in to the web app with your password (the cookie session).
 2. Point your MCP client at **`POST https://{apiDomain}/mcp`** with header **`x-api-key: fm_<your-key>`**. For Claude Code, the **MCP server** page shows a ready-to-paste `.mcp.json` that reads the key from `$FREEMAIL_API_KEY`.
 3. Call the **`send_email`** tool. A valid call needs **`from`** (an address under your domain), **at least one recipient** across `to`/`cc`/`bcc`, and **at least one body** — `text` and/or `html`:
 
@@ -362,13 +362,11 @@ To attach a file, first call **`create_attachment_upload`** with `{ "filename", 
 
 The MCP server is stateless (Streamable HTTP), so no session setup is required. **`send_email`** and **`create_attachment_upload`** are always available; when **inbound is enabled**, the read tools **`list_emails`**, **`get_email`**, and **`get_email_attachment_url`** are also registered, so agents can read received mail and mint short-lived presigned attachment download URLs. Received email is untrusted external content — the read tools return it marked as data (with a `trust` field and a delimited text frame), not as instructions to the agent. With inbound disabled, only `send_email` and `create_attachment_upload` are offered.
 
-### Backend services (IAM)
+### Backend services
 
-Other AWS services in your account call `/api/*` with IAM instead of a password or API key. API Gateway's `ANY /api/{proxy+}` route uses IAM authorization and goes to the same REST handler. The handler serves `/api` paths only to IAM-authorized callers, and never lets one reach a web route.
+Other services call `/api/*` with an API key, the same **`x-api-key: fm_<key>`** header the MCP server takes. Create the key on the web app's **MCP server** page (one key per service lets you revoke one without the others) and send requests to `https://<apiDomain>/api/...`. A missing or revoked key gets a 403 from API Gateway.
 
-- **Who can call:** any principal in the deployment's account whose IAM policy allows `execute-api:Invoke` on the API. HTTP APIs have no resource policies, so a caller in another account would need to assume a role in this one.
-- **How:** sign each request with SigV4 (service `execute-api`, region `us-east-1`) and send it to `https://<apiDomain>/api/...`. The generated `execute-api` URL is disabled.
-- **Check it works:** `GET /api/test` returns `{ "ok": true, "caller": { "accountId", "userArn" } }`, the identity API Gateway verified. An unsigned request gets a 403 from API Gateway.
+- **Check a key works:** `GET https://<apiDomain>/me` with the key returns `{ "subject": "owner" }`.
 
 #### New-mail notifications
 

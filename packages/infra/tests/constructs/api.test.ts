@@ -128,23 +128,25 @@ describe('ApiConstruct', () => {
     });
   });
 
-  it('exposes 20 routes: 4 public (3 auth + download), 15 behind the Lambda authorizer (me + 3 keys + 4 forwarding rules + send + upload + 4 reads + mcp), 1 IAM (/api/*)', () => {
+  it('exposes 20 routes: 4 public (3 auth + download), 16 behind the Lambda authorizer (me + 3 keys + 4 forwarding rules + send + upload + 4 reads + mcp + api email)', () => {
     const template = synth();
     // 3 auth routes, not 4: #42 folded enrollment into login and dropped /auth/set-password.
     template.resourceCountIs('AWS::ApiGatewayV2::Route', 20);
     const routes = Object.values(template.findResources('AWS::ApiGatewayV2::Route'));
     const authorizationTypes = routes.map((r) => r.Properties.AuthorizationType ?? 'NONE');
     // The public GET /d/{token} download is unauthenticated (the token is the capability).
-    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(15);
-    expect(authorizationTypes.filter((t) => t === 'AWS_IAM')).toHaveLength(1);
+    expect(authorizationTypes.filter((t) => t === 'CUSTOM')).toHaveLength(16);
     expect(authorizationTypes.filter((t) => t === 'NONE')).toHaveLength(4);
+    // No IAM-authorized route: backend services use an API key, like MCP.
+    expect(authorizationTypes).not.toContain('AWS_IAM');
   });
 
-  it('sends every /api/* request, IAM-authorized, to the REST handler', () => {
+  it('registers GET /api/emails/{id} behind the Lambda authorizer, on the REST handler', () => {
     const routes = Object.values(synth().findResources('AWS::ApiGatewayV2::Route'));
     const byKey = (key: string) => routes.find((r) => r.Properties.RouteKey === key);
-    const api = byKey('ANY /api/{proxy+}');
-    expect(api?.Properties.AuthorizationType).toBe('AWS_IAM');
+    const api = byKey('GET /api/emails/{id}');
+    expect(api?.Properties.AuthorizationType).toBe('CUSTOM');
+    expect(api?.Properties.AuthorizerId).toEqual(byKey('POST /mcp')?.Properties.AuthorizerId);
     expect(api?.Properties.Target).toEqual(byKey('GET /me')?.Properties.Target);
   });
 

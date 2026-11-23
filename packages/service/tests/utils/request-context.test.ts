@@ -1,6 +1,6 @@
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { describe, expect, it } from 'vitest';
-import { iamCallerFromContext, optionalSubjectFromContext, schemeFromContext } from '../../src/utils/request-context.js';
+import { optionalSubjectFromContext, schemeFromContext } from '../../src/utils/request-context.js';
 
 function eventWith(lambda: Record<string, unknown> | undefined): APIGatewayProxyEventV2 {
   return {
@@ -27,26 +27,5 @@ describe('schemeFromContext', () => {
     expect(schemeFromContext(eventWith({ sub: 'owner', scheme: 'apiKey' }))).toBe('apiKey');
     expect(schemeFromContext(eventWith({ sub: 'owner' }))).toBeUndefined();
     expect(schemeFromContext(eventWith(undefined))).toBeUndefined();
-  });
-});
-
-describe('iamCallerFromContext', () => {
-  const iamEvent = (iam: Record<string, unknown>) => ({ requestContext: { authorizer: { iam } } }) as unknown as APIGatewayProxyEventV2;
-  const ARN = 'arn:aws:sts::111111111111:assumed-role/caller-role/session';
-
-  it('returns the caller API Gateway verified', () => {
-    expect(iamCallerFromContext(iamEvent({ accountId: '111111111111', userArn: ARN }))).toEqual({
-      accountId: '111111111111',
-      userArn: ARN,
-    });
-  });
-
-  it.each([
-    ['a Lambda-authorizer context', eventWith({ sub: 'owner', scheme: 'access' })],
-    ['no authorizer context at all', eventWith(undefined)],
-    ['an IAM context missing the ARN', iamEvent({ accountId: '111111111111' })],
-    ['a non-string account', iamEvent({ accountId: 111111111111, userArn: ARN })],
-  ])('returns undefined for %s', (_label, event) => {
-    expect(iamCallerFromContext(event)).toBeUndefined();
   });
 });
