@@ -364,7 +364,7 @@ The MCP server is stateless (Streamable HTTP), so no session setup is required. 
 
 ### Backend services
 
-Other services call `/api/*` with an API key, the same **`x-api-key: fm_<key>`** header the MCP server takes. Create the key on the web app's **MCP server** page (one key per service lets you revoke one without the others) and send requests to `https://<apiDomain>/api/...`. A missing or revoked key gets a 403 from API Gateway.
+Other services call `/api/*` with an API key, the same **`x-api-key: fm_<key>`** header the MCP server takes. Create the key on the web app's **MCP server** page (one key per service lets you revoke one without the others) and send requests to `https://<apiDomain>/api/...`. A missing or revoked key gets a 403 from API Gateway. From TypeScript, [`@freemail/client`](../packages/client/README.md) wraps these routes, sending, attachment uploads and the notification below.
 
 - **Check a key works:** `GET https://<apiDomain>/me` with the key returns `{ "subject": "owner" }`.
 

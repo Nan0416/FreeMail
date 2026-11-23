@@ -1,0 +1,13 @@
+{
+  // Type-checks the tests, including `tests/shared-types.typecheck.ts`, which fails the build when
+  // the client's copies of the wire types drift from `@freemail/shared` (run after `npm run build`).
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true
+  },
+  "include": ["src", "tests"]
+}

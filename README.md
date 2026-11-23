@@ -75,13 +75,14 @@ Agents and backend services skip the browser entirely and call the HTTP API dire
 
 ## Monorepo layout
 
-| Package            | Purpose                                                 |
-| ------------------ | ------------------------------------------------------- |
-| `packages/shared`  | Shared TypeScript types, config schema, utilities       |
-| `packages/service` | Lambda handlers — REST API + MCP server                 |
-| `packages/web`     | React single-page app (login, compose, inbox, key mgmt) |
-| `packages/infra`   | AWS CDK app (the single `FreeMailStack`)                |
-| `packages/cli`     | `freemail init` / `validate` deploy-configuration CLI   |
+| Package            | Purpose                                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------------------- |
+| `packages/shared`  | Shared TypeScript types, config schema, utilities                                                 |
+| `packages/service` | Lambda handlers — REST API + MCP server                                                           |
+| `packages/web`     | React single-page app (login, compose, inbox, key mgmt)                                           |
+| `packages/infra`   | AWS CDK app (the single `FreeMailStack`)                                                          |
+| `packages/cli`     | `freemail init` / `validate` deploy-configuration CLI                                             |
+| `packages/client`  | [`@freemail/client`](./packages/client), the API client on npm ([releasing](./docs/RELEASING.md)) |
 
 ## Prerequisites
 

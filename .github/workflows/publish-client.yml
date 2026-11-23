@@ -1,0 +1,47 @@
+name: Publish client
+
+# Stages @freemail/client on npm when a `client-v<version>` tag is pushed. npm holds the staged version until a
+# maintainer approves it with 2FA. One-time setup and the release steps are in docs/RELEASING.md.
+on:
+  push:
+    tags: ['client-v*']
+
+permissions:
+  contents: read
+  id-token: write # npm trusted publishing: npm exchanges the job's OIDC token, so no npm token is stored
+
+concurrency:
+  group: publish-client
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # the tag check below needs origin/main
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - name: Check the tag matches the package version and is on main
+        run: |
+          package_version="$(node -p "require('./packages/client/package.json').version")"
+          if [ "${GITHUB_REF_NAME#client-v}" != "$package_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match packages/client/package.json version $package_version."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tag $GITHUB_REF_NAME is not on main."
+            exit 1
+          fi
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test -w @freemail/client
+      # Trusted publishing needs npm 11.5.1+, and staged publishing 11.15.0+; Node 22 comes with npm 10.
+      - run: npm install -g npm@12
+      - name: Stage the release on npm
+        working-directory: packages/client
+        run: npm stage publish .
